@@ -71,10 +71,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     readable_message = "Validation error: " + ("; ".join(error_msgs) if error_msgs else "Invalid input data")
     
+    # Sanitize errors to ensure they are JSON-serializable (Pydantic v2 custom validators include raw ValueError exceptions in ctx)
+    sanitized_errors = []
+    for err in errors:
+        sanitized_err = err.copy()
+        if "ctx" in sanitized_err and isinstance(sanitized_err["ctx"], dict):
+            ctx_clean = {}
+            for k, v in sanitized_err["ctx"].items():
+                if isinstance(v, Exception):
+                    ctx_clean[k] = str(v)
+                else:
+                    ctx_clean[k] = v
+            sanitized_err["ctx"] = ctx_clean
+        sanitized_errors.append(sanitized_err)
+    
     response_data = APIResponse(
         success=False,
         message=readable_message,
-        data={"errors": errors}
+        data={"errors": sanitized_errors}
     ).model_dump()
     
     return JSONResponse(

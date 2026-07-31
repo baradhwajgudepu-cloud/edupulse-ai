@@ -77,6 +77,12 @@ class School(Base, BaseModelMixin, TenantMixin):
     )
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="schools")
     
+    academic_years: Mapped[list["AcademicYear"]] = relationship(
+        "AcademicYear",
+        back_populates="school",
+        cascade="all, delete-orphan"
+    )
+    
     # Versioning column for optimistic concurrency control (OCC)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
     
@@ -94,3 +100,6 @@ class School(Base, BaseModelMixin, TenantMixin):
     __mapper_args__ = {
         "version_id_col": version
     }
+
+# Import AcademicYear here to ensure SQLAlchemy mapper configuration resolves relationships at startup
+from app.models.academic_year import AcademicYear  # noqa: F401

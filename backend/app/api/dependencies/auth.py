@@ -15,7 +15,7 @@ from app.services.auth import AuthService
 from app.api.dependencies.school import get_school_repository
 
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_PREFIX}/auth/login",
+    tokenUrl=f"{settings.API_PREFIX}/auth/token",
     auto_error=False
 )
 

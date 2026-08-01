@@ -1,24 +1,29 @@
 import time
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+
 from app.core.settings import settings
 from app.core.logging import setup_logging, logger
 from app.api.router import api_router
 from app.api.exceptions.handlers import setup_exception_handlers
 from app.api.middlewares.logging import RequestLoggingMiddleware
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Log starting timestamp for health uptime calculations
     app.state.start_time = time.time()
-    
-    # Configure structlog
+
     setup_logging()
-    
+
     logger.info("Starting up EduPulse AI backend foundation...")
+
     yield
+
     logger.info("Shutting down EduPulse AI backend foundation...")
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -27,13 +32,44 @@ app = FastAPI(
     openapi_url=f"{settings.API_PREFIX}/openapi.json",
     docs_url=f"{settings.API_PREFIX}/docs",
     redoc_url=f"{settings.API_PREFIX}/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# Request logging middleware
+
+def custom_openapi():
+
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+
+    for path in openapi_schema["paths"].values():
+        for operation in path.values():
+            operation["security"] = [{"BearerAuth": []}]
+
+    app.openapi_schema = openapi_schema
+
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
 app.add_middleware(RequestLoggingMiddleware)
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[str(origin) for origin in settings.CORS_ORIGINS],
@@ -42,8 +78,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Bind standardized exception handlers
 setup_exception_handlers(app)
 
-# Include main router registry under the configured prefix
 app.include_router(api_router, prefix=settings.API_PREFIX)

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import health, tenants, schools, academic_years, auth
+from app.api.v1.endpoints import health, tenants, schools, academic_years, auth, classes, sections, students
 
 api_router = APIRouter()
 
@@ -17,3 +17,12 @@ api_router.include_router(schools.router, prefix="/schools", tags=["schools"])
 
 # Include academic_years endpoints (using school path parameters)
 api_router.include_router(academic_years.router, prefix="/schools/{school_id}/academic-years", tags=["academic_years"])
+
+# Include classes endpoints
+api_router.include_router(classes.router, prefix="/classes", tags=["classes"])
+
+# Include sections endpoints
+api_router.include_router(sections.router, prefix="/sections", tags=["sections"])
+
+# Include students endpoints
+api_router.include_router(students.router, prefix="/students", tags=["students"])

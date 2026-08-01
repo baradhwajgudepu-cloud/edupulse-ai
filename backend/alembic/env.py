@@ -20,6 +20,9 @@ from app.models.user import User  # noqa: F401
 from app.models.role import Role  # noqa: F401
 from app.models.permission import Permission  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
+from app.models.class_entity import Class  # noqa: F401
+from app.models.section import Section  # noqa: F401
+from app.models.student import Student  # noqa: F401
 from app.core.settings import settings
 
 # This is the Alembic Config object, which provides access to the .ini file values.

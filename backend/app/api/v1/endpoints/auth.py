@@ -1,6 +1,7 @@
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Request, Header, Query, status, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.auth import get_auth_service, get_current_user, require_permission
 from app.services.auth import AuthService
@@ -263,4 +264,38 @@ async def bootstrap(
         success=True,
         message="System initialized successfully.",
         data=bootstrap_res
+    )
+@router.post(
+    "/auth/token",
+    response_model=APIResponse[TokenResponse],
+    summary="Swagger OAuth2 Login",
+    include_in_schema=False,
+)
+async def swagger_login(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: AuthService = Depends(get_auth_service),
+):
+    login_data = LoginRequest(
+        email=form_data.username,
+        password=form_data.password,
+    )
+
+    client_ip = request.client.host if request.client else None
+
+    user = await service.authenticate(
+        tenant_id,
+        login_data,
+    )
+
+    token_data = await service.create_tokens(
+        user,
+        client_ip=client_ip,
+    )
+
+    return APIResponse(
+        success=True,
+        message="Login successful.",
+        data=token_data,
     )

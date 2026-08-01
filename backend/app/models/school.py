@@ -83,6 +83,24 @@ class School(Base, BaseModelMixin, TenantMixin):
         cascade="all, delete-orphan"
     )
     
+    classes: Mapped[list["Class"]] = relationship(
+        "Class",
+        back_populates="school",
+        cascade="all, delete-orphan"
+    )
+    
+    sections: Mapped[list["Section"]] = relationship(
+        "Section",
+        back_populates="school",
+        cascade="all, delete-orphan"
+    )
+    
+    students: Mapped[list["Student"]] = relationship(
+        "Student",
+        back_populates="school",
+        cascade="all, delete-orphan"
+    )
+    
     # Versioning column for optimistic concurrency control (OCC)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
     
@@ -103,3 +121,6 @@ class School(Base, BaseModelMixin, TenantMixin):
 
 # Import AcademicYear here to ensure SQLAlchemy mapper configuration resolves relationships at startup
 from app.models.academic_year import AcademicYear  # noqa: F401
+from app.models.class_entity import Class  # noqa: F401
+from app.models.section import Section  # noqa: F401
+from app.models.student import Student  # noqa: F401

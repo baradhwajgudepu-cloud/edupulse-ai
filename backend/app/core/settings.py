@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # Security and JWT configurations
     SECRET_KEY: str = "SUPER_SECRET_KEY_FOR_LOCAL_DEV_CHANGE_IN_PRODUCTION"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     ENABLE_BOOTSTRAP: bool = True
 
     @field_validator("CORS_ORIGINS", mode="before")

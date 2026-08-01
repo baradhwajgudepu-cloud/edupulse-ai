@@ -54,6 +54,20 @@ async def test_engine():
             {"id": uuid.uuid4(), "name": "Read User", "code": "user.read", "description": "View user profiles"},
             {"id": uuid.uuid4(), "name": "Update User", "code": "user.update", "description": "Modify user properties"},
             {"id": uuid.uuid4(), "name": "Delete User", "code": "user.delete", "description": "Soft delete users"},
+            {"id": uuid.uuid4(), "name": "Create Class", "code": "class.create", "description": "Create school classes"},
+            {"id": uuid.uuid4(), "name": "Read Class", "code": "class.read", "description": "View school classes"},
+            {"id": uuid.uuid4(), "name": "Update Class", "code": "class.update", "description": "Modify class configurations"},
+            {"id": uuid.uuid4(), "name": "Delete Class", "code": "class.delete", "description": "Soft delete class records"},
+            {"id": uuid.uuid4(), "name": "Archive Class", "code": "class.archive", "description": "Archive class configurations"},
+            {"id": uuid.uuid4(), "name": "Promote Class", "code": "class.promote", "description": "Configure or run class promotion sequence"},
+            {"id": uuid.uuid4(), "name": "Create Section", "code": "section.create", "description": "Create school sections"},
+            {"id": uuid.uuid4(), "name": "Read Section", "code": "section.read", "description": "View school sections"},
+            {"id": uuid.uuid4(), "name": "Update Section", "code": "section.update", "description": "Modify section configurations"},
+            {"id": uuid.uuid4(), "name": "Delete Section", "code": "section.delete", "description": "Soft delete section records"},
+            {"id": uuid.uuid4(), "name": "Create Student", "code": "student.create", "description": "Register school students"},
+            {"id": uuid.uuid4(), "name": "Read Student", "code": "student.read", "description": "View school students profile"},
+            {"id": uuid.uuid4(), "name": "Update Student", "code": "student.update", "description": "Modify student profiles"},
+            {"id": uuid.uuid4(), "name": "Delete Student", "code": "student.delete", "description": "Soft delete student records"},
         ]
         await conn.execute(insert(Permission), permissions_data)
         

@@ -71,6 +71,24 @@ class Tenant(Base, BaseModelMixin):
         cascade="all, delete-orphan"
     )
 
+    classes: Mapped[list["Class"]] = relationship(
+        "Class",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    sections: Mapped[list["Section"]] = relationship(
+        "Section",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    students: Mapped[list["Student"]] = relationship(
+        "Student",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
     # Enable optimistic concurrency control in SQLAlchemy mapper args
     __mapper_args__ = {
         "version_id_col": version
@@ -78,3 +96,6 @@ class Tenant(Base, BaseModelMixin):
 
 # Import School here to ensure SQLAlchemy mapper configuration resolves the name 'School' at startup
 from app.models.school import School  # noqa: F401
+from app.models.class_entity import Class  # noqa: F401
+from app.models.section import Section  # noqa: F401
+from app.models.student import Student  # noqa: F401

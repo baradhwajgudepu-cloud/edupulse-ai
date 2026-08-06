@@ -1,0 +1,22 @@
+name: edupulse_core
+resolution: workspace
+description: Core utilities, logging configurations, and common exceptions for EduPulse AI.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  equatable: ^2.0.6
+  connectivity_plus: ^6.0.3
+  logger: ^2.2.0
+  shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

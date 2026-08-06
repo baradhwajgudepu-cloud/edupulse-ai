@@ -1,0 +1,24 @@
+name: edupulse_api
+resolution: workspace
+description: API client repositories, endpoint specifications, and DTO mappings for EduPulse AI.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.3
+  edupulse_core:
+    path: ../edupulse_core
+  edupulse_network:
+    path: ../edupulse_network
+  edupulse_models:
+    path: ../edupulse_models
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

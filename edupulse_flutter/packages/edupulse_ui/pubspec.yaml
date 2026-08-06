@@ -1,0 +1,34 @@
+name: edupulse_ui
+resolution: workspace
+description: Shared UI components, charts, calendar, and design system elements for EduPulse AI.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.1
+  syncfusion_flutter_charts: ^26.2.1
+  table_calendar: ^3.1.0
+  flutter_pdfview: ^1.3.2
+  open_filex: ^4.4.0
+  path_provider: ^2.1.2
+  edupulse_core:
+    path: ../edupulse_core
+  edupulse_theme:
+    path: ../edupulse_theme
+  edupulse_localization:
+    path: ../edupulse_localization
+  edupulse_assets:
+    path: ../edupulse_assets
+  edupulse_models:
+    path: ../edupulse_models
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

@@ -1,0 +1,19 @@
+name: edupulse_theme
+resolution: workspace
+description: Visual design tokens, typography, and dark/light color schemes for EduPulse AI.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  edupulse_core:
+    path: ../edupulse_core
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

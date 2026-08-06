@@ -1,0 +1,42 @@
+name: parent_app
+resolution: workspace
+description: EduPulse Parent App - Mobile application client for parents and guardians.
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.0.1
+
+  # Workspace Packages
+  edupulse_core:
+    path: ../../packages/edupulse_core
+  edupulse_config:
+    path: ../../packages/edupulse_config
+  edupulse_assets:
+    path: ../../packages/edupulse_assets
+  edupulse_models:
+    path: ../../packages/edupulse_models
+  edupulse_network:
+    path: ../../packages/edupulse_network
+  edupulse_api:
+    path: ../../packages/edupulse_api
+  edupulse_auth:
+    path: ../../packages/edupulse_auth
+  edupulse_theme:
+    path: ../../packages/edupulse_theme
+  edupulse_localization:
+    path: ../../packages/edupulse_localization
+  edupulse_ui:
+    path: ../../packages/edupulse_ui
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

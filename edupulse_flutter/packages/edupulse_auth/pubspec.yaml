@@ -1,0 +1,28 @@
+name: edupulse_auth
+resolution: workspace
+description: Authentication and credential storage management for EduPulse AI.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^9.0.0
+  shared_preferences: ^2.2.2
+  flutter_riverpod: ^2.5.1
+  edupulse_core:
+    path: ../edupulse_core
+  edupulse_network:
+    path: ../edupulse_network
+  edupulse_api:
+    path: ../edupulse_api
+  edupulse_models:
+    path: ../edupulse_models
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

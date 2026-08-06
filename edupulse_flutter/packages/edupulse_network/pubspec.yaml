@@ -1,0 +1,23 @@
+name: edupulse_network
+resolution: workspace
+description: Networking core client based on Dio, including interceptors and retry adapters.
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.3
+  connectivity_plus: ^6.0.3
+  edupulse_core:
+    path: ../edupulse_core
+  edupulse_config:
+    path: ../edupulse_config
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1

@@ -62,4 +62,13 @@ class Settings(BaseSettings):
         
         return f"postgresql+asyncpg://{user}:{password}@{server}:{port}/{db}"
 
+    # AI Service Settings
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str | None = None
+    OPENAI_API_KEY: str | None = None
+    AI_MODEL: str | None = None
+    AI_TIMEOUT: float = 30.0
+    AI_RETRIES: int = 3
+    AI_RATE_LIMIT_PER_MINUTE: int = 20
+
 settings = Settings()

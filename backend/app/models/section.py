@@ -70,6 +70,36 @@ class Section(Base, BaseModelMixin):
         cascade="all, delete-orphan"
     )
 
+    teacher_subject_assignments: Mapped[list["TeacherSubjectAssignment"]] = relationship(
+        "TeacherSubjectAssignment",
+        back_populates="section",
+        cascade="all, delete-orphan"
+    )
+
+    timetables: Mapped[list["Timetable"]] = relationship(
+        "Timetable",
+        back_populates="section",
+        cascade="all, delete-orphan"
+    )
+    
+    attendance_sessions: Mapped[list["AttendanceSession"]] = relationship(
+        "AttendanceSession",
+        back_populates="section",
+        cascade="all, delete-orphan"
+    )
+
+    attendances: Mapped[list["Attendance"]] = relationship(
+        "Attendance",
+        back_populates="section",
+        cascade="all, delete-orphan"
+    )
+
+    homeworks: Mapped[list["Homework"]] = relationship(
+        "Homework",
+        back_populates="section",
+        cascade="all, delete-orphan"
+    )
+
     __mapper_args__ = {
         "version_id_col": version
     }
@@ -87,3 +117,7 @@ class Section(Base, BaseModelMixin):
 
 # Import Student here to ensure SQLAlchemy mapper configuration resolves relationships at startup
 from app.models.student import Student  # noqa: F401
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment  # noqa: F401
+from app.models.timetable import Timetable  # noqa: F401
+from app.models.attendance import AttendanceSession, Attendance  # noqa: F401
+from app.models.homework import Homework  # noqa: F401

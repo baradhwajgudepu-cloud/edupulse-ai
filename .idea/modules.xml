@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_api/melos_edupulse_api.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_api/melos_edupulse_api.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_assets/melos_edupulse_assets.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_assets/melos_edupulse_assets.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_auth/melos_edupulse_auth.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_auth/melos_edupulse_auth.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_config/melos_edupulse_config.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_config/melos_edupulse_config.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_core/melos_edupulse_core.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_core/melos_edupulse_core.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_localization/melos_edupulse_localization.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_localization/melos_edupulse_localization.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_models/melos_edupulse_models.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_models/melos_edupulse_models.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_network/melos_edupulse_network.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_network/melos_edupulse_network.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_theme/melos_edupulse_theme.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_theme/melos_edupulse_theme.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/packages/edupulse_ui/melos_edupulse_ui.iml" filepath="$PROJECT_DIR$/edupulse_flutter/packages/edupulse_ui/melos_edupulse_ui.iml"/>
+<module fileurl="file://$PROJECT_DIR$/edupulse_flutter/apps/parent_app/melos_parent_app.iml" filepath="$PROJECT_DIR$/edupulse_flutter/apps/parent_app/melos_parent_app.iml"/>
+<module fileurl="file://$PROJECT_DIR$/melos_edupulse_workspace.iml" filepath="$PROJECT_DIR$/melos_edupulse_workspace.iml"/>
+    </modules>
+  </component>
+</project>

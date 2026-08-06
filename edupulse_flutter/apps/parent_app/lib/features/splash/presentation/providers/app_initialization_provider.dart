@@ -9,12 +9,12 @@ class AppInitializationNotifier extends AutoDisposeNotifier<AsyncValue<void>> {
 
   Future<void> initialize() async {
     state = const AsyncValue.loading();
-    
+
     final result = ref.read(bootstrapResultProvider);
-    
+
     // Brief delay to ensure smooth logo fading transition
     await Future.delayed(const Duration(milliseconds: 1500));
-    
+
     if (result.success) {
       state = const AsyncValue.data(null);
     } else {

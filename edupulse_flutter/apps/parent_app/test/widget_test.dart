@@ -5,7 +5,8 @@ import 'package:parent_app/app.dart';
 import 'package:parent_app/core/providers/bootstrap_provider.dart';
 
 void main() {
-  testWidgets('App bootstraps and routes to Dashboard', (WidgetTester tester) async {
+  testWidgets('App bootstraps and routes to Dashboard',
+      (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [

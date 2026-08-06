@@ -1,0 +1,41 @@
+name: edupulse_workspace
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+workspace:
+  - edupulse_flutter/apps/parent_app
+  - edupulse_flutter/packages/edupulse_core
+  - edupulse_flutter/packages/edupulse_config
+  - edupulse_flutter/packages/edupulse_assets
+  - edupulse_flutter/packages/edupulse_models
+  - edupulse_flutter/packages/edupulse_network
+  - edupulse_flutter/packages/edupulse_api
+  - edupulse_flutter/packages/edupulse_auth
+  - edupulse_flutter/packages/edupulse_theme
+  - edupulse_flutter/packages/edupulse_localization
+  - edupulse_flutter/packages/edupulse_ui
+
+dev_dependencies:
+  melos: ^8.2.2
+
+melos:
+  name: edupulse_flutter
+  repository: https://github.com/baradhwajgudepu-cloud/edupulse-ai
+  packages:
+    - edupulse_flutter/apps/*
+    - edupulse_flutter/packages/*
+
+  scripts:
+    analyze:
+      run: melos exec -- flutter analyze
+      description: Run flutter analyze in all packages and apps.
+
+    format:
+      run: melos exec -- dart format .
+      description: Run dart format in all packages and apps.
+
+    test:
+      run: melos exec --dir-exists="test" -- flutter test
+      description: Run flutter test in all packages and apps.

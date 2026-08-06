@@ -89,6 +89,84 @@ class Tenant(Base, BaseModelMixin):
         cascade="all, delete-orphan"
     )
 
+    guardians: Mapped[list["Guardian"]] = relationship(
+        "Guardian",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    teachers: Mapped[list["Teacher"]] = relationship(
+        "Teacher",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    subjects: Mapped[list["Subject"]] = relationship(
+        "Subject",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    teacher_subject_assignments: Mapped[list["TeacherSubjectAssignment"]] = relationship(
+        "TeacherSubjectAssignment",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    timetables: Mapped[list["Timetable"]] = relationship(
+        "Timetable",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    attendance_sessions: Mapped[list["AttendanceSession"]] = relationship(
+        "AttendanceSession",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    attendances: Mapped[list["Attendance"]] = relationship(
+        "Attendance",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    homeworks: Mapped[list["Homework"]] = relationship(
+        "Homework",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    exam_templates: Mapped[list["ExamTemplate"]] = relationship(
+        "ExamTemplate",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    examinations: Mapped[list["Examination"]] = relationship(
+        "Examination",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    exam_schedules: Mapped[list["ExamSchedule"]] = relationship(
+        "ExamSchedule",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    marks: Mapped[list["Marks"]] = relationship(
+        "Marks",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
+    report_cards: Mapped[list["ReportCardPublication"]] = relationship(
+        "ReportCardPublication",
+        back_populates="tenant",
+        cascade="all, delete-orphan"
+    )
+
     # Enable optimistic concurrency control in SQLAlchemy mapper args
     __mapper_args__ = {
         "version_id_col": version
@@ -99,3 +177,13 @@ from app.models.school import School  # noqa: F401
 from app.models.class_entity import Class  # noqa: F401
 from app.models.section import Section  # noqa: F401
 from app.models.student import Student  # noqa: F401
+from app.models.guardian import Guardian, StudentGuardian  # noqa: F401
+from app.models.teacher import Teacher  # noqa: F401
+from app.models.subject import Subject  # noqa: F401
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment  # noqa: F401
+from app.models.timetable import Timetable  # noqa: F401
+from app.models.attendance import AttendanceSession, Attendance  # noqa: F401
+from app.models.homework import Homework  # noqa: F401
+from app.models.examination import ExamTemplate, Examination, ExamSchedule  # noqa: F401
+from app.models.marks import Marks  # noqa: F401
+from app.models.report_card import ReportCardPublication  # noqa: F401

@@ -31,6 +31,7 @@ class User(Base, BaseModelMixin, TenantMixin):
         nullable=False
     )
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     # Brute-force protection
     failed_login_attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)

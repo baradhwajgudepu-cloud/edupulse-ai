@@ -92,6 +92,36 @@ class Class(Base, BaseModelMixin):
         cascade="all, delete-orphan"
     )
     
+    teacher_subject_assignments: Mapped[list["TeacherSubjectAssignment"]] = relationship(
+        "TeacherSubjectAssignment",
+        back_populates="class_obj",
+        cascade="all, delete-orphan"
+    )
+    
+    timetables: Mapped[list["Timetable"]] = relationship(
+        "Timetable",
+        back_populates="class_obj",
+        cascade="all, delete-orphan"
+    )
+    
+    attendance_sessions: Mapped[list["AttendanceSession"]] = relationship(
+        "AttendanceSession",
+        back_populates="class_obj",
+        cascade="all, delete-orphan"
+    )
+
+    attendances: Mapped[list["Attendance"]] = relationship(
+        "Attendance",
+        back_populates="class_obj",
+        cascade="all, delete-orphan"
+    )
+
+    homeworks: Mapped[list["Homework"]] = relationship(
+        "Homework",
+        back_populates="class_obj",
+        cascade="all, delete-orphan"
+    )
+    
     # Self-referential relationship for promotion paths
     next_class = relationship("Class", remote_side="Class.id", backref="prev_classes")
 
@@ -113,3 +143,7 @@ class Class(Base, BaseModelMixin):
 # Import Section here to ensure SQLAlchemy mapper configuration resolves relationships at startup
 from app.models.section import Section  # noqa: F401
 from app.models.student import Student  # noqa: F401
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment  # noqa: F401
+from app.models.timetable import Timetable  # noqa: F401
+from app.models.attendance import AttendanceSession, Attendance  # noqa: F401
+from app.models.homework import Homework  # noqa: F401

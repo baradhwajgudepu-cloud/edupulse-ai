@@ -96,13 +96,19 @@ async def test_tenant_crud_workflow_with_indian_specs(client: AsyncClient) -> No
     assert payload["data"]["id"] == tenant_id
     assert payload["data"]["display_name"] == "Sri Chaitanya"
     
-    # 4. List Tenants (with status filter check)
-    response = await client.get("/api/v1/tenants", params={"status": "ACTIVE"})
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["success"] is True
-    assert len(payload["data"]) >= 1
-    assert any(t["id"] == tenant_id for t in payload["data"])
+    # 4. List Tenants (with status filter check, paginated search)
+    found = False
+    for skip_val in range(0, 1000, 100):
+        response = await client.get("/api/v1/tenants", params={"status": "ACTIVE", "skip": skip_val, "limit": 100})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["success"] is True
+        if not payload["data"]:
+            break
+        if any(t["id"] == tenant_id for t in payload["data"]):
+            found = True
+            break
+    assert found is True
     
     # 5. Update the Tenant (Change status, is_active flag, and display name)
     update_data = {

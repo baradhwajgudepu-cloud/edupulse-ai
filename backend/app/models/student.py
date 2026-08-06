@@ -103,6 +103,30 @@ class Student(Base, BaseModelMixin):
     academic_year = relationship("AcademicYear", back_populates="students")
     class_obj = relationship("Class", back_populates="students")
     section = relationship("Section", back_populates="students")
+    
+    guardians: Mapped[list["StudentGuardian"]] = relationship(
+        "StudentGuardian",
+        back_populates="student",
+        cascade="all, delete-orphan"
+    )
+
+    attendances: Mapped[list["Attendance"]] = relationship(
+        "Attendance",
+        back_populates="student",
+        cascade="all, delete-orphan"
+    )
+
+    marks: Mapped[list["Marks"]] = relationship(
+        "Marks",
+        back_populates="student",
+        cascade="all, delete-orphan"
+    )
+
+    report_cards: Mapped[list["ReportCardPublication"]] = relationship(
+        "ReportCardPublication",
+        back_populates="student",
+        cascade="all, delete-orphan"
+    )
 
     __mapper_args__ = {
         "version_id_col": version
@@ -122,3 +146,9 @@ class Student(Base, BaseModelMixin):
             name="uq_students_aadhaar"
         ),
     )
+
+# Import StudentGuardian here to ensure SQLAlchemy mapper configuration resolves relationships at startup
+from app.models.guardian import StudentGuardian  # noqa: F401
+from app.models.attendance import Attendance  # noqa: F401
+from app.models.marks import Marks  # noqa: F401
+from app.models.report_card import ReportCardPublication  # noqa: F401

@@ -20,5 +20,7 @@ class AppRoutes {
   static const String bulkImport = '/bulk-import';
   static const String schoolOnboarding = '/school-onboarding';
   static const String fees = '/fees';
+  static const String feesAssign = '/fees/assign';
+  static const String feesLedger = '/fees/ledger';
 }
 

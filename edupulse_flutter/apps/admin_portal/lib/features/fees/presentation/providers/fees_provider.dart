@@ -4,6 +4,7 @@ import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_core/edupulse_core.dart';
 import '../../data/models/fee_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../students/data/models/student_models.dart';
 
 // --- 1. FEE TYPES PROVIDER ---
 class FeeTypesState {
@@ -444,4 +445,201 @@ class FeesDashboardNotifier extends StateNotifier<FeesDashboardState> {
 final feesDashboardProvider = StateNotifierProvider.family<FeesDashboardNotifier, FeesDashboardState, String>((ref, schoolId) {
   final apiClient = ref.watch(apiClientProvider);
   return FeesDashboardNotifier(apiClient, schoolId);
+});
+
+// --- 5. STUDENT SEARCH PROVIDER ---
+class StudentSearchState {
+  final List<StudentDto> students;
+  final bool isLoading;
+  final String? error;
+
+  const StudentSearchState({
+    required this.students,
+    required this.isLoading,
+    this.error,
+  });
+
+  StudentSearchState copyWith({
+    List<StudentDto>? students,
+    bool? isLoading,
+    String? error,
+  }) {
+    return StudentSearchState(
+      students: students ?? this.students,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class StudentSearchNotifier extends StateNotifier<StudentSearchState> {
+  final BaseApiClient _apiClient;
+  final String _schoolId;
+
+  StudentSearchNotifier(this._apiClient, this._schoolId)
+      : super(const StudentSearchState(students: [], isLoading: false));
+
+  Future<void> search(String query) async {
+    if (query.isEmpty) {
+      state = const StudentSearchState(students: [], isLoading: false);
+      return;
+    }
+
+    state = state.copyWith(isLoading: true, error: null);
+    final result = await _apiClient.get(
+      '/students',
+      queryParameters: {
+        'school_id': _schoolId,
+        'search': query,
+        'limit': 20,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>;
+        return list.map((e) => StudentDto.fromJson(e as Map<String, dynamic>)).toList();
+      },
+    );
+
+    result.when(
+      onSuccess: (data) {
+        state = StudentSearchState(students: data, isLoading: false);
+      },
+      onFailure: (failure) {
+        state = StudentSearchState(students: [], isLoading: false, error: failure.message);
+      },
+    );
+  }
+}
+
+final studentSearchProvider = StateNotifierProvider.family<StudentSearchNotifier, StudentSearchState, String>((ref, schoolId) {
+  final apiClient = ref.watch(apiClientProvider);
+  return StudentSearchNotifier(apiClient, schoolId);
+});
+
+// --- 6. STUDENT LEDGER PROVIDER ---
+class StudentLedgerState {
+  final StudentLedger? ledger;
+  final bool isLoading;
+  final String? error;
+
+  const StudentLedgerState({
+    this.ledger,
+    required this.isLoading,
+    this.error,
+  });
+
+  StudentLedgerState copyWith({
+    StudentLedger? ledger,
+    bool? isLoading,
+    String? error,
+  }) {
+    return StudentLedgerState(
+      ledger: ledger ?? this.ledger,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class StudentLedgerNotifier extends StateNotifier<StudentLedgerState> {
+  final BaseApiClient _apiClient;
+  final String _studentId;
+
+  StudentLedgerNotifier(this._apiClient, this._studentId)
+      : super(const StudentLedgerState(isLoading: false)) {
+    fetchLedger();
+  }
+
+  Future<void> fetchLedger() async {
+    state = state.copyWith(isLoading: true, error: null);
+    final result = await _apiClient.get(
+      '/fees/ledgers/$_studentId',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return StudentLedger.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    result.when(
+      onSuccess: (data) {
+        state = StudentLedgerState(ledger: data, isLoading: false);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+      },
+    );
+  }
+}
+
+final studentLedgerProvider = StateNotifierProvider.family<StudentLedgerNotifier, StudentLedgerState, String>((ref, studentId) {
+  final apiClient = ref.watch(apiClientProvider);
+  return StudentLedgerNotifier(apiClient, studentId);
+});
+
+// --- 7. FEE ASSIGNMENT CREATION PROVIDER ---
+class FeeAssignmentCreationState {
+  final bool isLoading;
+  final String? error;
+  final StudentFeeAssignment? assignment;
+
+  const FeeAssignmentCreationState({
+    required this.isLoading,
+    this.error,
+    this.assignment,
+  });
+
+  FeeAssignmentCreationState copyWith({
+    bool? isLoading,
+    String? error,
+    StudentFeeAssignment? assignment,
+  }) {
+    return FeeAssignmentCreationState(
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+      assignment: assignment ?? this.assignment,
+    );
+  }
+}
+
+class FeeAssignmentCreationNotifier extends StateNotifier<FeeAssignmentCreationState> {
+  final BaseApiClient _apiClient;
+
+  FeeAssignmentCreationNotifier(this._apiClient)
+      : super(const FeeAssignmentCreationState(isLoading: false));
+
+  Future<bool> assignFee({
+    required String studentId,
+    required String feeStructureId,
+    String? scholarshipId,
+  }) async {
+    state = const FeeAssignmentCreationState(isLoading: true);
+    final result = await _apiClient.post(
+      '/fees/assign',
+      data: {
+        'student_id': studentId,
+        'fee_structure_id': feeStructureId,
+        if (scholarshipId != null && scholarshipId.isNotEmpty) 'scholarship_id': scholarshipId,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return StudentFeeAssignment.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (data) {
+        state = FeeAssignmentCreationState(isLoading: false, assignment: data);
+        return true;
+      },
+      onFailure: (failure) {
+        state = FeeAssignmentCreationState(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final feeAssignmentCreationProvider = StateNotifierProvider<FeeAssignmentCreationNotifier, FeeAssignmentCreationState>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return FeeAssignmentCreationNotifier(apiClient);
 });

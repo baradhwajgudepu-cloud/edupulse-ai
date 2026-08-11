@@ -288,3 +288,196 @@ class CollectionAnalytics {
     );
   }
 }
+
+enum FeeAssignmentStatus {
+  UNPAID,
+  PARTIALLY_PAID,
+  PAID;
+
+  static FeeAssignmentStatus fromJson(String val) => FeeAssignmentStatus.values.firstWhere((e) => e.name == val);
+}
+
+class StudentFeeAssignment {
+  final String id;
+  final String tenantId;
+  final String studentId;
+  final String feeStructureId;
+  final String academicYearId;
+  final double assignedAmount;
+  final String? scholarshipId;
+  final double discountAmount;
+  final double fineAmount;
+  final double paidAmount;
+  final FeeAssignmentStatus status;
+  final int version;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  StudentFeeAssignment({
+    required this.id,
+    required this.tenantId,
+    required this.studentId,
+    required this.feeStructureId,
+    required this.academicYearId,
+    required this.assignedAmount,
+    this.scholarshipId,
+    required this.discountAmount,
+    required this.fineAmount,
+    required this.paidAmount,
+    required this.status,
+    required this.version,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory StudentFeeAssignment.fromJson(Map<String, dynamic> json) {
+    return StudentFeeAssignment(
+      id: json['id'] as String,
+      tenantId: json['tenant_id'] as String,
+      studentId: json['student_id'] as String,
+      feeStructureId: json['fee_structure_id'] as String,
+      academicYearId: json['academic_year_id'] as String,
+      assignedAmount: (json['assigned_amount'] as num).toDouble(),
+      scholarshipId: json['scholarship_id'] as String?,
+      discountAmount: (json['discount_amount'] as num).toDouble(),
+      fineAmount: (json['fine_amount'] as num).toDouble(),
+      paidAmount: (json['paid_amount'] as num).toDouble(),
+      status: FeeAssignmentStatus.fromJson(json['status'] as String),
+      version: json['version'] as int? ?? 1,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+}
+
+class FeePaymentAllocation {
+  final String assignmentId;
+  final double amountAllocated;
+
+  FeePaymentAllocation({
+    required this.assignmentId,
+    required this.amountAllocated,
+  });
+
+  factory FeePaymentAllocation.fromJson(Map<String, dynamic> json) {
+    return FeePaymentAllocation(
+      assignmentId: json['assignment_id'] as String,
+      amountAllocated: (json['amount_allocated'] as num).toDouble(),
+    );
+  }
+}
+
+enum PaymentStatus {
+  COMPLETED,
+  CANCELLED;
+
+  static PaymentStatus fromJson(String val) => PaymentStatus.values.firstWhere((e) => e.name == val);
+}
+
+enum PaymentMethod {
+  CASH,
+  CHEQUE,
+  BANK_TRANSFER,
+  ONLINE;
+
+  static PaymentMethod fromJson(String val) => PaymentMethod.values.firstWhere((e) => e.name == val);
+}
+
+class FeePayment {
+  final String id;
+  final String tenantId;
+  final String studentId;
+  final String academicYearId;
+  final double amountPaid;
+  final DateTime paymentDate;
+  final PaymentMethod paymentMethod;
+  final PaymentStatus status;
+  final String? transactionReference;
+  final String? receiptNumber;
+  final String? remarks;
+  final String? cancelReason;
+  final String? cancelledBy;
+  final DateTime? cancelledAt;
+  final List<FeePaymentAllocation> allocations;
+  final int version;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  FeePayment({
+    required this.id,
+    required this.tenantId,
+    required this.studentId,
+    required this.academicYearId,
+    required this.amountPaid,
+    required this.paymentDate,
+    required this.paymentMethod,
+    required this.status,
+    this.transactionReference,
+    this.receiptNumber,
+    this.remarks,
+    this.cancelReason,
+    this.cancelledBy,
+    this.cancelledAt,
+    required this.allocations,
+    required this.version,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory FeePayment.fromJson(Map<String, dynamic> json) {
+    final allocList = json['allocations'] as List<dynamic>? ?? [];
+    return FeePayment(
+      id: json['id'] as String,
+      tenantId: json['tenant_id'] as String,
+      studentId: json['student_id'] as String,
+      academicYearId: json['academic_year_id'] as String,
+      amountPaid: (json['amount_paid'] as num).toDouble(),
+      paymentDate: DateTime.parse(json['payment_date'] as String),
+      paymentMethod: PaymentMethod.fromJson(json['payment_method'] as String),
+      status: PaymentStatus.fromJson(json['status'] as String),
+      transactionReference: json['transaction_reference'] as String?,
+      receiptNumber: json['receipt_number'] as String?,
+      remarks: json['remarks'] as String?,
+      cancelReason: json['cancel_reason'] as String?,
+      cancelledBy: json['cancelled_by'] as String?,
+      cancelledAt: json['cancelled_at'] != null ? DateTime.parse(json['cancelled_at'] as String) : null,
+      allocations: allocList.map((e) => FeePaymentAllocation.fromJson(e as Map<String, dynamic>)).toList(),
+      version: json['version'] as int? ?? 1,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+}
+
+class StudentLedger {
+  final String studentId;
+  final double openingBalance;
+  final List<StudentFeeAssignment> assignments;
+  final List<Scholarship> scholarships;
+  final List<FeePayment> payments;
+  final double closingBalance;
+
+  StudentLedger({
+    required this.studentId,
+    required this.openingBalance,
+    required this.assignments,
+    required this.scholarships,
+    required this.payments,
+    required this.closingBalance,
+  });
+
+  factory StudentLedger.fromJson(Map<String, dynamic> json) {
+    final assignList = json['assignments'] as List<dynamic>? ?? [];
+    final scholarshipList = json['scholarships'] as List<dynamic>? ?? [];
+    final paymentList = json['payments'] as List<dynamic>? ?? [];
+
+    return StudentLedger(
+      studentId: json['student_id'] as String,
+      openingBalance: (json['opening_balance'] as num?)?.toDouble() ?? 0.0,
+      assignments: assignList.map((e) => StudentFeeAssignment.fromJson(e as Map<String, dynamic>)).toList(),
+      scholarships: scholarshipList.map((e) => Scholarship.fromJson(e as Map<String, dynamic>)).toList(),
+      payments: paymentList.map((e) => FeePayment.fromJson(e as Map<String, dynamic>)).toList(),
+      closingBalance: (json['closing_balance'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+}

@@ -22,6 +22,8 @@ import '../../features/students/presentation/pages/student_details_screen.dart';
 import '../../features/bulk_import/presentation/pages/bulk_import_screen.dart';
 import '../../features/bulk_import/presentation/pages/school_onboarding_screen.dart';
 import '../../features/fees/presentation/pages/fees_dashboard_screen.dart';
+import '../../features/fees/presentation/pages/student_fee_assignment_page.dart';
+import '../../features/fees/presentation/pages/student_ledgers_page.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
@@ -161,6 +163,14 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.fees,
             builder: (context, state) => const FeesDashboardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.feesAssign,
+            builder: (context, state) => const StudentFeeAssignmentPage(),
+          ),
+          GoRoute(
+            path: AppRoutes.feesLedger,
+            builder: (context, state) => const StudentLedgersPage(),
           ),
         ],
       ),

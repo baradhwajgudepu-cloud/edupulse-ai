@@ -38,13 +38,12 @@ class StudentRepository:
         self, admission_number: str, school_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> Optional[Student]:
         """
-        Retrieves active student by admission number within school.
+        Retrieves student by admission number within school (including soft-deleted).
         """
         stmt = select(Student).where(
             Student.admission_number == admission_number,
             Student.school_id == school_id,
-            Student.tenant_id == tenant_id,
-            Student.deleted_at.is_(None)
+            Student.tenant_id == tenant_id
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -53,13 +52,12 @@ class StudentRepository:
         self, roll_number: str, section_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> Optional[Student]:
         """
-        Retrieves active student by roll number within section.
+        Retrieves student by roll number within section (including soft-deleted).
         """
         stmt = select(Student).where(
             Student.roll_number == roll_number,
             Student.section_id == section_id,
-            Student.tenant_id == tenant_id,
-            Student.deleted_at.is_(None)
+            Student.tenant_id == tenant_id
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -68,12 +66,11 @@ class StudentRepository:
         self, aadhaar_number: str, tenant_id: uuid.UUID
     ) -> Optional[Student]:
         """
-        Retrieves active student by Aadhaar number within the tenant.
+        Retrieves student by Aadhaar number within the tenant (including soft-deleted).
         """
         stmt = select(Student).where(
             Student.aadhaar_number == aadhaar_number,
-            Student.tenant_id == tenant_id,
-            Student.deleted_at.is_(None)
+            Student.tenant_id == tenant_id
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()

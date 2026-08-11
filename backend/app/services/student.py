@@ -141,7 +141,7 @@ class StudentService:
         db_obj.status = StudentStatus.ACTIVE
         db_obj.is_active = True
 
-        await self.student_repo.db.commit()
+        await self._safe_commit(db_obj, obj_in)
         return await self.student_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
 
     async def update_student(
@@ -224,7 +224,7 @@ class StudentService:
                     update_data["is_active"] = False
 
         await self.student_repo.update(db_obj, update_data, updated_by=updated_by)
-        await self.student_repo.db.commit()
+        await self._safe_commit(db_obj, obj_in)
         return await self.student_repo.get_by_id(student_id, school_id, tenant_id)
 
     async def delete_student(
@@ -248,3 +248,31 @@ class StudentService:
         await self.student_repo.db.commit()
         await self.student_repo.db.refresh(db_obj)
         return db_obj
+
+    async def _safe_commit(self, db_obj: Student, obj_in: StudentCreate | StudentUpdate) -> None:
+        from sqlalchemy.exc import IntegrityError
+        try:
+            await self.student_repo.db.commit()
+        except IntegrityError as e:
+            await self.student_repo.db.rollback()
+            err_msg = str(e.orig).lower() if e.orig else str(e).lower()
+            
+            if "uq_students_admission_school" in err_msg or "admission_number" in err_msg:
+                adm_no = getattr(obj_in, "admission_number", None) or getattr(db_obj, "admission_number", "unknown")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Student with admission number '{adm_no}' already exists in this school."
+                )
+            elif "uq_students_roll_section" in err_msg or "roll_number" in err_msg:
+                roll_no = getattr(obj_in, "roll_number", None) or getattr(db_obj, "roll_number", "unknown")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Student with roll number '{roll_no}' already exists in this section."
+                )
+            elif "uq_students_aadhaar" in err_msg or "aadhaar_number" in err_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Student with this Aadhaar number is already registered."
+                )
+            else:
+                raise

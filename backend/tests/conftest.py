@@ -27,6 +27,8 @@ async def test_engine():
     )
     
     async with engine.begin() as conn:
+        # Ensure a clean database state by dropping all existing tables first
+        await conn.run_sync(Base.metadata.drop_all)
         # Create all tables defined in Base models metadata
         await conn.run_sync(Base.metadata.create_all)
         
@@ -122,7 +124,10 @@ async def test_engine():
             {"id": uuid.uuid4(), "name": "Provision Identity", "code": "identity.provision", "description": "Allows provisioning user identities"},
             {"id": uuid.uuid4(), "name": "Reset Password Identity", "code": "identity.reset_password", "description": "Allows resetting passwords"},
         ]
-        await conn.execute(insert(Permission), permissions_data)
+        from sqlalchemy import select
+        res = await conn.execute(select(Permission))
+        if not res.scalars().all():
+            await conn.execute(insert(Permission), permissions_data)
         
     yield engine
     

@@ -592,3 +592,137 @@ async def test_student_concurrency_control_occ(setup_student_data, db_session) -
             await repo_b.db.commit()
 
         await repo_b.db.close()
+
+@pytest.mark.anyio
+async def test_student_duplicate_regression(client: AsyncClient, setup_student_data, db_session) -> None:
+    """
+    Regression tests for duplicate student attributes (active vs soft-deleted):
+    - active admission duplicate -> 409
+    - soft-deleted admission duplicate -> 409
+    - active roll duplicate -> 409
+    - soft-deleted roll duplicate -> 409
+    - active Aadhaar duplicate -> 409
+    - soft-deleted Aadhaar duplicate -> 409
+    - successful unique student -> 201
+    """
+    data = setup_student_data
+    school_id = data["school_a"].id
+    ay_id = data["ay_a"].id
+    class_id = data["class_a"].id
+    sec_b = data["sec_b"].id
+    headers = data["auth_headers"]
+
+    # 1. Create a student with unique fields (will be our active base)
+    payload_active = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_b),
+        "admission_number": "ADM-REG-ACT",
+        "roll_number": "ROLL-REG-ACT",
+        "first_name": "Active",
+        "last_name": "Student",
+        "gender": "MALE",
+        "date_of_birth": "2016-01-01",
+        "admission_date": "2026-06-01",
+        "aadhaar_number": "111122223333"
+    }
+    resp = await client.post("/api/v1/students", json=payload_active, headers=headers)
+    assert resp.status_code == 201
+
+    # 2. Create another student that we will soft-delete
+    payload_delete = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_b),
+        "admission_number": "ADM-REG-DEL",
+        "roll_number": "ROLL-REG-DEL",
+        "first_name": "Deleted",
+        "last_name": "Student",
+        "gender": "FEMALE",
+        "date_of_birth": "2016-02-02",
+        "admission_date": "2026-06-01",
+        "aadhaar_number": "444455556666"
+    }
+    resp_del = await client.post("/api/v1/students", json=payload_delete, headers=headers)
+    assert resp_del.status_code == 201
+    del_id = resp_del.json()["data"]["id"]
+
+    # Soft delete the student
+    resp_del_action = await client.delete(f"/api/v1/students/{del_id}?school_id={school_id}", headers=headers)
+    assert resp_del_action.status_code == 200
+
+    # Tests against ACTIVE student (should return 409 Conflict)
+    # - active admission duplicate
+    payload_dup_adm = payload_active.copy()
+    payload_dup_adm["admission_number"] = "ADM-REG-ACT"  # Duplicate active
+    payload_dup_adm["roll_number"] = "ROLL-NEW-1"
+    payload_dup_adm["aadhaar_number"] = None
+    resp = await client.post("/api/v1/students", json=payload_dup_adm, headers=headers)
+    assert resp.status_code == 409
+    assert "admission number" in resp.json()["message"].lower()
+
+    # - active roll duplicate (same section)
+    payload_dup_roll = payload_active.copy()
+    payload_dup_roll["admission_number"] = "ADM-NEW-1"
+    payload_dup_roll["roll_number"] = "ROLL-REG-ACT"  # Duplicate active
+    payload_dup_roll["aadhaar_number"] = None
+    resp = await client.post("/api/v1/students", json=payload_dup_roll, headers=headers)
+    assert resp.status_code == 409
+    assert "roll number" in resp.json()["message"].lower()
+
+    # - active Aadhaar duplicate
+    payload_dup_aadhaar = payload_active.copy()
+    payload_dup_aadhaar["admission_number"] = "ADM-NEW-2"
+    payload_dup_aadhaar["roll_number"] = "ROLL-NEW-2"
+    payload_dup_aadhaar["aadhaar_number"] = "111122223333"  # Duplicate active
+    resp = await client.post("/api/v1/students", json=payload_dup_aadhaar, headers=headers)
+    assert resp.status_code == 409
+    assert "aadhaar number" in resp.json()["message"].lower()
+
+    # Tests against SOFT-DELETED student (should return 409 Conflict)
+    # - soft-deleted admission duplicate
+    payload_dup_adm_del = payload_active.copy()
+    payload_dup_adm_del["admission_number"] = "ADM-REG-DEL"  # Duplicate deleted
+    payload_dup_adm_del["roll_number"] = "ROLL-NEW-3"
+    payload_dup_adm_del["aadhaar_number"] = None
+    resp = await client.post("/api/v1/students", json=payload_dup_adm_del, headers=headers)
+    assert resp.status_code == 409
+    assert "admission number" in resp.json()["message"].lower()
+
+    # - soft-deleted roll duplicate (same section)
+    payload_dup_roll_del = payload_active.copy()
+    payload_dup_roll_del["admission_number"] = "ADM-NEW-3"
+    payload_dup_roll_del["roll_number"] = "ROLL-REG-DEL"  # Duplicate deleted
+    payload_dup_roll_del["aadhaar_number"] = None
+    resp = await client.post("/api/v1/students", json=payload_dup_roll_del, headers=headers)
+    assert resp.status_code == 409
+    assert "roll number" in resp.json()["message"].lower()
+
+    # - soft-deleted Aadhaar duplicate
+    payload_dup_aadhaar_del = payload_active.copy()
+    payload_dup_aadhaar_del["admission_number"] = "ADM-NEW-4"
+    payload_dup_aadhaar_del["roll_number"] = "ROLL-NEW-4"
+    payload_dup_aadhaar_del["aadhaar_number"] = "444455556666"  # Duplicate deleted
+    resp = await client.post("/api/v1/students", json=payload_dup_aadhaar_del, headers=headers)
+    assert resp.status_code == 409
+    assert "aadhaar number" in resp.json()["message"].lower()
+
+    # - successful unique student creation
+    payload_unique = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_b),
+        "admission_number": "ADM-UNIQUE-OK",
+        "roll_number": "ROLL-UNIQUE-OK",
+        "first_name": "Unique",
+        "last_name": "Student",
+        "gender": "OTHER",
+        "date_of_birth": "2016-03-03",
+        "admission_date": "2026-06-01",
+        "aadhaar_number": "777788889999"
+    }
+    resp = await client.post("/api/v1/students", json=payload_unique, headers=headers)
+    assert resp.status_code == 201

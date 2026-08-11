@@ -643,3 +643,95 @@ final feeAssignmentCreationProvider = StateNotifierProvider<FeeAssignmentCreatio
   final apiClient = ref.watch(apiClientProvider);
   return FeeAssignmentCreationNotifier(apiClient);
 });
+
+class OutstandingReportState {
+  final List<OutstandingFeeReportItem> items;
+  final bool isLoading;
+  final String? error;
+
+  const OutstandingReportState({
+    required this.items,
+    required this.isLoading,
+    this.error,
+  });
+
+  OutstandingReportState copyWith({
+    List<OutstandingFeeReportItem>? items,
+    bool? isLoading,
+    String? error,
+  }) {
+    return OutstandingReportState(
+      items: items ?? this.items,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class OutstandingReportNotifier extends StateNotifier<OutstandingReportState> {
+  final BaseApiClient _apiClient;
+  final String _schoolId;
+  final String? _classId;
+  final bool _onlyDefaulters;
+
+  OutstandingReportNotifier(this._apiClient, this._schoolId, this._classId, this._onlyDefaulters)
+      : super(const OutstandingReportState(items: [], isLoading: false)) {
+    fetchReport();
+  }
+
+  Future<void> fetchReport() async {
+    if (_schoolId.isEmpty) return;
+    state = state.copyWith(isLoading: true, error: null);
+    final result = await _apiClient.get(
+      '/fees/reports/outstanding',
+      queryParameters: {
+        'school_id': _schoolId,
+        if (_classId != null && _classId!.isNotEmpty) 'class_id': _classId,
+        'only_defaulters': _onlyDefaulters.toString(),
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>;
+        return list.map((e) => OutstandingFeeReportItem.fromJson(e as Map<String, dynamic>)).toList();
+      },
+    );
+
+    result.when(
+      onSuccess: (data) {
+        state = OutstandingReportState(items: data, isLoading: false);
+      },
+      onFailure: (failure) {
+        state = OutstandingReportState(items: [], isLoading: false, error: failure.message);
+      },
+    );
+  }
+}
+
+class OutstandingReportParams {
+  final String schoolId;
+  final String? classId;
+  final bool onlyDefaulters;
+
+  OutstandingReportParams({
+    required this.schoolId,
+    this.classId,
+    required this.onlyDefaulters,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OutstandingReportParams &&
+          runtimeType == other.runtimeType &&
+          schoolId == other.schoolId &&
+          classId == other.classId &&
+          onlyDefaulters == other.onlyDefaulters;
+
+  @override
+  int get hashCode => schoolId.hashCode ^ classId.hashCode ^ onlyDefaulters.hashCode;
+}
+
+final outstandingReportProvider = StateNotifierProvider.family<OutstandingReportNotifier, OutstandingReportState, OutstandingReportParams>((ref, params) {
+  final apiClient = ref.watch(apiClientProvider);
+  return OutstandingReportNotifier(apiClient, params.schoolId, params.classId, params.onlyDefaulters);
+});

@@ -201,6 +201,7 @@ class FeePaymentResponse(BaseModel):
     payment_method: PaymentMethod
     status: PaymentStatus
     transaction_reference: Optional[str]
+    receipt_number: Optional[str] = None
     remarks: Optional[str]
     cancel_reason: Optional[str]
     cancelled_by: Optional[uuid.UUID]
@@ -265,3 +266,55 @@ class DefaultRiskResponse(BaseModel):
 class CollectionAnalyticsResponse(BaseModel):
     predicted_collection_next_30_days: DecimalFloat
     historical_trend: Dict[str, DecimalFloat]
+
+
+# --- PAYMENT IMPORT SCHEMAS ---
+class PaymentImportRow(BaseModel):
+    admission_number: str
+    fee_type_code: str
+    amount: DecimalFloat = Field(..., gt=0)
+    payment_date: date
+    payment_method: PaymentMethod
+    reference_number: Optional[str] = None
+
+class PaymentImportRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    payments: List[PaymentImportRow]
+
+class PaymentImportRowResult(BaseModel):
+    row_index: int
+    admission_number: str
+    fee_type_code: str
+    success: bool
+    error: Optional[str] = None
+    payment_id: Optional[uuid.UUID] = None
+
+class PaymentImportResponse(BaseModel):
+    total_processed: int
+    success_count: int
+    failed_count: int
+    results: List[PaymentImportRowResult]
+
+
+# --- OUTSTANDING FEE REPORT SCHEMAS ---
+class OutstandingFeeReportItem(BaseModel):
+    student_id: uuid.UUID
+    student_name: str
+    admission_number: str
+    class_id: uuid.UUID
+    class_name: str
+    section_id: uuid.UUID
+    section_name: str
+    fee_structure_id: uuid.UUID
+    fee_type_id: uuid.UUID
+    fee_type_name: str
+    assigned_amount: DecimalFloat
+    discount_amount: DecimalFloat
+    fine_amount: DecimalFloat
+    paid_amount: DecimalFloat
+    outstanding_amount: DecimalFloat
+    due_date: date
+    status: FeeAssignmentStatus
+
+    model_config = ConfigDict(from_attributes=True)

@@ -22,6 +22,7 @@ from app.models.student import Student
 from app.models.class_entity import Class
 from app.models.school import School
 from app.models.academic_year import AcademicYear
+from app.models.section import Section
 from app.repositories.fee import FeeRepository
 from app.services.notification import NotificationService
 from app.schemas.fee import (
@@ -805,3 +806,192 @@ class FeeService:
             "predicted_collection_next_30_days": predicted,
             "historical_trend": historical
         }
+
+    async def import_payments(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        payments: List[Any],
+        current_user_id: Optional[uuid.UUID] = None
+    ) -> dict:
+        from app.schemas.fee import FeePaymentAllocationCreate
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        for idx, row in enumerate(payments):
+            adm = row.admission_number
+            code = row.fee_type_code
+            amount = row.amount
+            pay_date = row.payment_date
+            pay_method = row.payment_method
+            ref_num = row.reference_number
+
+            try:
+                # 1. Verify student exists within tenant and school
+                stmt_st = select(Student).where(
+                    Student.admission_number == adm,
+                    Student.school_id == school_id,
+                    Student.tenant_id == tenant_id,
+                    Student.deleted_at.is_(None)
+                )
+                res_st = await self.fee_repo.db.execute(stmt_st)
+                student = res_st.scalar_one_or_none()
+                if not student:
+                    raise ValueError(f"Student with admission number '{adm}' not found in this school.")
+
+                # 2. Verify fee type exists
+                stmt_ft = select(FeeType).where(
+                    FeeType.code == code,
+                    FeeType.tenant_id == tenant_id,
+                    FeeType.deleted_at.is_(None)
+                )
+                res_ft = await self.fee_repo.db.execute(stmt_ft)
+                fee_type = res_ft.scalar_one_or_none()
+                if not fee_type:
+                    raise ValueError(f"Fee Type with code '{code}' not found.")
+
+                # 3. Find assignment
+                stmt_assign = select(StudentFeeAssignment).join(
+                    FeeStructure, FeeStructure.id == StudentFeeAssignment.fee_structure_id
+                ).where(
+                    StudentFeeAssignment.student_id == student.id,
+                    StudentFeeAssignment.tenant_id == tenant_id,
+                    FeeStructure.fee_type_id == fee_type.id,
+                    FeeStructure.academic_year_id == academic_year_id,
+                    StudentFeeAssignment.deleted_at.is_(None)
+                )
+                res_assign = await self.fee_repo.db.execute(stmt_assign)
+                assignment = res_assign.scalar_one_or_none()
+                if not assignment:
+                    raise ValueError(f"Fee structure for '{code}' is not assigned to this student.")
+
+                # 4. Construct FeePaymentCreate
+                obj_in = FeePaymentCreate(
+                    student_id=student.id,
+                    academic_year_id=academic_year_id,
+                    payment_method=pay_method,
+                    transaction_reference=ref_num,
+                    remarks=f"Imported payment for {code}",
+                    allocations=[
+                        FeePaymentAllocationCreate(
+                            assignment_id=assignment.id,
+                            amount_allocated=amount
+                        )
+                    ]
+                )
+
+                # 5. Call collect_payment
+                payment = await self.collect_payment(tenant_id, obj_in, current_user_id)
+
+                results.append({
+                    "row_index": idx,
+                    "admission_number": adm,
+                    "fee_type_code": code,
+                    "success": True,
+                    "payment_id": payment.id
+                })
+                success_count += 1
+            except Exception as e:
+                # Rollback current transaction if failed
+                await self.fee_repo.db.rollback()
+                
+                # Extract error message
+                err_msg = str(e)
+                if hasattr(e, "detail"):
+                    err_msg = e.detail
+                elif hasattr(e, "message"):
+                    err_msg = e.message
+
+                results.append({
+                    "row_index": idx,
+                    "admission_number": adm,
+                    "fee_type_code": code,
+                    "success": False,
+                    "error": err_msg
+                })
+                failed_count += 1
+
+        return {
+            "total_processed": len(payments),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results
+        }
+
+    async def get_outstanding_report(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        class_id: Optional[uuid.UUID] = None,
+        only_defaulters: bool = False
+    ) -> List[dict]:
+        today = date.today()
+        stmt = select(
+            StudentFeeAssignment,
+            Student,
+            Class,
+            Section,
+            FeeStructure,
+            FeeType
+        ).join(
+            Student, Student.id == StudentFeeAssignment.student_id
+        ).join(
+            FeeStructure, FeeStructure.id == StudentFeeAssignment.fee_structure_id
+        ).join(
+            Class, Class.id == FeeStructure.class_id
+        ).join(
+            Section, Section.id == Student.section_id
+        ).join(
+            FeeType, FeeType.id == FeeStructure.fee_type_id
+        ).where(
+            StudentFeeAssignment.tenant_id == tenant_id,
+            FeeStructure.school_id == school_id,
+            StudentFeeAssignment.deleted_at.is_(None)
+        )
+
+        # Filter by class
+        if class_id:
+            stmt = stmt.where(FeeStructure.class_id == class_id)
+
+        # Filter by defaulters (due_date passed and status is UNPAID or PARTIALLY_PAID)
+        if only_defaulters:
+            stmt = stmt.where(
+                FeeStructure.due_date < today,
+                StudentFeeAssignment.status.in_([FeeAssignmentStatus.UNPAID, FeeAssignmentStatus.PARTIALLY_PAID])
+            )
+
+        # Filter out fully paid assignments (outstanding > 0)
+        stmt = stmt.where(
+            (StudentFeeAssignment.assigned_amount + StudentFeeAssignment.fine_amount - StudentFeeAssignment.discount_amount - StudentFeeAssignment.paid_amount) > 0
+        )
+
+        res = await self.fee_repo.db.execute(stmt)
+        items = []
+        for row in res.all():
+            assign, student, cls, sec, struct, ftype = row
+            student_name = f"{student.first_name} {student.last_name}"
+            outstanding = Decimal(str(assign.assigned_amount)) + Decimal(str(assign.fine_amount)) - Decimal(str(assign.discount_amount)) - Decimal(str(assign.paid_amount))
+
+            items.append({
+                "student_id": student.id,
+                "student_name": student_name,
+                "admission_number": student.admission_number,
+                "class_id": cls.id,
+                "class_name": cls.name,
+                "section_id": sec.id,
+                "section_name": sec.name,
+                "fee_structure_id": struct.id,
+                "fee_type_id": ftype.id,
+                "fee_type_name": ftype.name,
+                "assigned_amount": assign.assigned_amount,
+                "discount_amount": assign.discount_amount,
+                "fine_amount": assign.fine_amount,
+                "paid_amount": assign.paid_amount,
+                "outstanding_amount": outstanding,
+                "due_date": struct.due_date,
+                "status": assign.status
+            })
+        return items

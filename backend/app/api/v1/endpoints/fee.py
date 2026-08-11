@@ -3,7 +3,7 @@ import os
 import logging
 from typing import List, Optional
 from datetime import date
-from fastapi import APIRouter, Depends, status, HTTPException, Header
+from fastapi import APIRouter, Depends, status, HTTPException, Header, Query
 from fastapi.responses import FileResponse
 
 from app.api.dependencies.auth import require_permission, get_current_user
@@ -17,7 +17,8 @@ from app.schemas.fee import (
     StudentFeeAssignmentCreate, StudentFeeAssignmentResponse,
     FeePaymentCreate, FeePaymentResponse, PaymentCancelRequest,
     FeeReceiptResponse, StudentLedgerResponse, DashboardMetricsResponse,
-    DefaultRiskResponse, CollectionAnalyticsResponse
+    PaymentImportRequest, PaymentImportResponse,
+    OutstandingFeeReportItem, DefaultRiskResponse, CollectionAnalyticsResponse
 )
 from app.schemas.response import APIResponse
 from app.models.user import User
@@ -505,4 +506,54 @@ async def get_collection_analytics(
         success=True,
         message="AI 30-day collection analytics predicted successfully.",
         data=CollectionAnalyticsResponse.model_validate(analytics)
+    )
+
+@router.post(
+    "/payments/import",
+    response_model=APIResponse[PaymentImportResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Import Student Payments from CSV Data"
+)
+async def import_payments(
+    obj_in: PaymentImportRequest,
+    current_user: User = Depends(require_permission("fee.pay")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[PaymentImportResponse]:
+    result = await service.import_payments(
+        tenant_id=tenant_id,
+        school_id=obj_in.school_id,
+        academic_year_id=obj_in.academic_year_id,
+        payments=obj_in.payments,
+        current_user_id=current_user.id
+    )
+    return APIResponse(
+        success=True,
+        message="Payments import processed.",
+        data=PaymentImportResponse.model_validate(result)
+    )
+
+@router.get(
+    "/reports/outstanding",
+    response_model=APIResponse[List[OutstandingFeeReportItem]],
+    summary="Get Outstanding Dues and Defaulters Report"
+)
+async def get_outstanding_report(
+    school_id: uuid.UUID = Query(..., description="Target School UUID"),
+    class_id: Optional[uuid.UUID] = Query(None, description="Filter by Class UUID"),
+    only_defaulters: Optional[bool] = Query(False, description="Filter only late/defaulter records"),
+    current_user: User = Depends(require_permission("fee.report")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[List[OutstandingFeeReportItem]]:
+    report = await service.get_outstanding_report(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        class_id=class_id,
+        only_defaulters=only_defaulters
+    )
+    return APIResponse(
+        success=True,
+        message="Outstanding reports retrieved successfully.",
+        data=[OutstandingFeeReportItem.model_validate(item) for item in report]
     )

@@ -147,6 +147,10 @@ class _DashboardTab extends ConsumerWidget {
       );
     }
 
+    if (schoolId.isNotEmpty) {
+      ref.watch(classesProvider(schoolId));
+    }
+
     final m = dashboardState.metrics;
     if (m == null) {
       return const Center(child: Text('No metrics data loaded.'));
@@ -165,7 +169,7 @@ class _DashboardTab extends ConsumerWidget {
             const SizedBox(height: 12),
             _buildStatCard(theme, 'Monthly Collection', currencyFormatter.format(m.monthCollection), Icons.calendar_month, Colors.green),
             const SizedBox(height: 12),
-            _buildStatCard(theme, 'Outstanding Dues', currencyFormatter.format(m.pendingDues), Icons.warning_amber_rounded, Colors.orange),
+            _buildStatCard(theme, 'Outstanding Dues', currencyFormatter.format(m.pendingDues), Icons.warning_amber_rounded, Colors.orange, onTap: () => context.push(AppRoutes.feesOutstanding)),
           ] else ...[
             Row(
               children: [
@@ -173,7 +177,7 @@ class _DashboardTab extends ConsumerWidget {
                 const SizedBox(width: 12),
                 Expanded(child: _buildStatCard(theme, 'Monthly Collection', currencyFormatter.format(m.monthCollection), Icons.calendar_month, Colors.green)),
                 const SizedBox(width: 12),
-                Expanded(child: _buildStatCard(theme, 'Outstanding Dues', currencyFormatter.format(m.pendingDues), Icons.warning_amber_rounded, Colors.orange)),
+                Expanded(child: _buildStatCard(theme, 'Outstanding Dues', currencyFormatter.format(m.pendingDues), Icons.warning_amber_rounded, Colors.orange, onTap: () => context.push(AppRoutes.feesOutstanding))),
               ],
             ),
           ],
@@ -299,32 +303,42 @@ class _DashboardTab extends ConsumerWidget {
                     side: BorderSide(color: theme.colorScheme.outlineVariant),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Late Defaulters', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              '${m.defaultersCount}',
-                              style: theme.textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.error,
+                  child: InkWell(
+                    onTap: () => context.push('${AppRoutes.feesOutstanding}?only_defaulters=true'),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Late Defaulters', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                              Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '${m.defaultersCount}',
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: theme.colorScheme.error,
+                                ),
                               ),
-                            ),
-                            Icon(Icons.people_outline, color: theme.colorScheme.error, size: 28),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Students with past due unpaid invoices.',
-                          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
-                        ),
-                      ],
+                              Icon(Icons.people_outline, color: theme.colorScheme.error, size: 28),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Students with past due unpaid invoices.',
+                            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -441,18 +455,40 @@ class _DashboardTab extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: ListTile(
+                    onTap: () {
+                      final classesState = ref.read(classesProvider(schoolId));
+                      String? matchedClassId;
+                      for (final c in classesState.classes) {
+                        if (c.name == cls.className) {
+                          matchedClassId = c.id;
+                          break;
+                        }
+                      }
+                      if (matchedClassId != null) {
+                        context.push('${AppRoutes.feesOutstanding}?class_id=$matchedClassId');
+                      } else {
+                        context.push(AppRoutes.feesOutstanding);
+                      }
+                    },
                     leading: CircleAvatar(
                       backgroundColor: theme.colorScheme.errorContainer,
                       child: Icon(Icons.school, color: theme.colorScheme.error, size: 20),
                     ),
                     title: Text(cls.className, style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: const Text('Class/Grade Dues'),
-                    trailing: Text(
-                      currencyFormatter.format(cls.outstandingAmount),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.error,
-                      ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          currencyFormatter.format(cls.outstandingAmount),
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.error,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
+                      ],
                     ),
                   ),
                 );
@@ -463,33 +499,39 @@ class _DashboardTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatCard(ThemeData theme, String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(ThemeData theme, String label, String value, IconData icon, Color color, {VoidCallback? onTap}) {
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
         side: BorderSide(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withOpacity(0.1),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-                ],
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: color.withOpacity(0.1),
+                child: Icon(icon, color: color),
               ),
-            ),
-          ],
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey)),
+                    const SizedBox(height: 4),
+                    Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+              if (onTap != null)
+                Icon(Icons.chevron_right, color: theme.colorScheme.onSurfaceVariant),
+            ],
+          ),
         ),
       ),
     );

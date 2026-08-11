@@ -24,6 +24,8 @@ import '../../features/bulk_import/presentation/pages/school_onboarding_screen.d
 import '../../features/fees/presentation/pages/fees_dashboard_screen.dart';
 import '../../features/fees/presentation/pages/student_fee_assignment_page.dart';
 import '../../features/fees/presentation/pages/student_ledgers_page.dart';
+import '../../features/fees/presentation/pages/payment_import_page.dart';
+import '../../features/fees/presentation/pages/outstanding_dues_page.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
@@ -170,7 +172,25 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: AppRoutes.feesLedger,
-            builder: (context, state) => const StudentLedgersPage(),
+            builder: (context, state) {
+              final student = state.extra as StudentDto?;
+              return StudentLedgersPage(initialStudent: student);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.feesImport,
+            builder: (context, state) => const PaymentImportPage(),
+          ),
+          GoRoute(
+            path: AppRoutes.feesOutstanding,
+            builder: (context, state) {
+              final classId = state.uri.queryParameters['class_id'];
+              final onlyDefaulters = state.uri.queryParameters['only_defaulters'] == 'true';
+              return OutstandingDuesPage(
+                classId: classId,
+                onlyDefaulters: onlyDefaulters,
+              );
+            },
           ),
         ],
       ),

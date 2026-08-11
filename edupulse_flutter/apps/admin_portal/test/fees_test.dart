@@ -7,6 +7,7 @@ import 'package:admin_portal/features/school_setup/presentation/providers/school
 import 'package:admin_portal/features/fees/data/models/fee_models.dart';
 import 'package:admin_portal/features/fees/presentation/providers/fees_provider.dart';
 import 'package:admin_portal/features/fees/presentation/pages/fees_dashboard_screen.dart';
+import 'package:admin_portal/features/fees/presentation/pages/outstanding_dues_page.dart';
 
 class FakeFeesRepository implements AuthRepository {
   @override
@@ -157,6 +158,31 @@ class FakeFeesApiClient extends BaseApiClient {
           'predicted_collection_next_30_days': 52500.0,
           'historical_trend': {'Day 5': 10000.0, 'Day 15': 30000.0, 'Day 30': 52500.0}
         }
+      }));
+    }
+    if (path == '/fees/reports/outstanding') {
+      return ApiResult.success(mapper({
+        'data': [
+          {
+            'student_id': 'student_1',
+            'student_name': 'John Doe',
+            'admission_number': 'ADM001',
+            'class_id': 'class_8_id',
+            'class_name': 'Class 8',
+            'section_id': 'section_A_id',
+            'section_name': 'A',
+            'fee_structure_id': 'struct_1',
+            'fee_type_id': 'type_1',
+            'fee_type_name': 'Tuition Fee',
+            'assigned_amount': 5000.0,
+            'discount_amount': 1000.0,
+            'fine_amount': 0.0,
+            'paid_amount': 2000.0,
+            'outstanding_amount': 2000.0,
+            'due_date': '2026-09-10',
+            'status': 'PARTIALLY_PAID'
+          }
+        ]
       }));
     }
     if (path == '/schools/school_1/academic-years') {
@@ -563,6 +589,56 @@ void main() {
       expect(find.text('₹10,000'), findsNWidgets(2)); // Today's collection + AI forecast Day 5
       expect(find.text('₹2,50,000'), findsOneWidget); // Monthly collection (en_IN locale formatting)
       expect(find.text('₹75,000'), findsOneWidget); // Outstanding dues
+    });
+
+    testWidgets('20. OutstandingDuesPage loads and renders table data', (WidgetTester tester) async {
+      final fakeApiClient = FakeFeesApiClient();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(fakeApiClient),
+            selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+          ],
+          child: const MaterialApp(
+            home: OutstandingDuesPage(),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify page titles and stats card
+      expect(find.text('Outstanding Dues'), findsWidgets);
+      expect(find.text('John Doe'), findsOneWidget);
+      expect(find.text('ADM001'), findsOneWidget);
+      expect(find.text('Class 8 - A'), findsOneWidget);
+      expect(find.text('Tuition Fee'), findsOneWidget);
+      expect(find.text('₹2,000'), findsNWidgets(2)); // Outstanding and Paid
+      expect(find.text('₹5,000'), findsOneWidget); // Assigned
+      expect(find.text('₹1,000'), findsOneWidget); // Concession
+    });
+
+    testWidgets('21. OutstandingDuesPage late defaulters title check', (WidgetTester tester) async {
+      final fakeApiClient = FakeFeesApiClient();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(fakeApiClient),
+            selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+          ],
+          child: const MaterialApp(
+            home: OutstandingDuesPage(onlyDefaulters: true),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify page titles and stats card
+      expect(find.text('Late Defaulters'), findsWidgets);
+      expect(find.text('John Doe'), findsOneWidget);
     });
   });
 }

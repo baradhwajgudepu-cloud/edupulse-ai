@@ -481,3 +481,65 @@ class StudentLedger {
     );
   }
 }
+
+class OutstandingFeeReportItem {
+  final String studentId;
+  final String studentName;
+  final String admissionNumber;
+  final String classId;
+  final String className;
+  final String sectionId;
+  final String sectionName;
+  final String feeStructureId;
+  final String feeTypeId;
+  final String feeTypeName;
+  final double assignedAmount;
+  final double discountAmount;
+  final double fineAmount;
+  final double paidAmount;
+  final double outstandingAmount;
+  final DateTime dueDate;
+  final String status;
+
+  OutstandingFeeReportItem({
+    required this.studentId,
+    required this.studentName,
+    required this.admissionNumber,
+    required this.classId,
+    required this.className,
+    required this.sectionId,
+    required this.sectionName,
+    required this.feeStructureId,
+    required this.feeTypeId,
+    required this.feeTypeName,
+    required this.assignedAmount,
+    required this.discountAmount,
+    required this.fineAmount,
+    required this.paidAmount,
+    required this.outstandingAmount,
+    required this.dueDate,
+    required this.status,
+  });
+
+  factory OutstandingFeeReportItem.fromJson(Map<String, dynamic> json) {
+    return OutstandingFeeReportItem(
+      studentId: json['student_id'] as String,
+      studentName: json['student_name'] as String,
+      admissionNumber: json['admission_number'] as String,
+      classId: json['class_id'] as String,
+      className: json['class_name'] as String,
+      sectionId: json['section_id'] as String,
+      sectionName: json['section_name'] as String,
+      feeStructureId: json['fee_structure_id'] as String,
+      feeTypeId: json['fee_type_id'] as String,
+      feeTypeName: json['fee_type_name'] as String,
+      assignedAmount: (json['assigned_amount'] as num?)?.toDouble() ?? 0.0,
+      discountAmount: (json['discount_amount'] as num?)?.toDouble() ?? 0.0,
+      fineAmount: (json['fine_amount'] as num?)?.toDouble() ?? 0.0,
+      paidAmount: (json['paid_amount'] as num?)?.toDouble() ?? 0.0,
+      outstandingAmount: (json['outstanding_amount'] as num?)?.toDouble() ?? 0.0,
+      dueDate: DateTime.parse(json['due_date'] as String),
+      status: json['status'] as String,
+    );
+  }
+}

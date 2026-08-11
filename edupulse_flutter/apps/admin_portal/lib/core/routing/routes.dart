@@ -22,5 +22,7 @@ class AppRoutes {
   static const String fees = '/fees';
   static const String feesAssign = '/fees/assign';
   static const String feesLedger = '/fees/ledger';
+  static const String feesImport = '/fees/import';
+  static const String feesOutstanding = '/fees/outstanding';
 }
 

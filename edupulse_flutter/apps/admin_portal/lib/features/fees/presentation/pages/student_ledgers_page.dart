@@ -9,7 +9,8 @@ import '../../data/models/fee_models.dart';
 import '../providers/fees_provider.dart';
 
 class StudentLedgersPage extends ConsumerStatefulWidget {
-  const StudentLedgersPage({super.key});
+  final StudentDto? initialStudent;
+  const StudentLedgersPage({super.key, this.initialStudent});
 
   @override
   ConsumerState<StudentLedgersPage> createState() => _StudentLedgersPageState();
@@ -18,6 +19,12 @@ class StudentLedgersPage extends ConsumerStatefulWidget {
 class _StudentLedgersPageState extends ConsumerState<StudentLedgersPage> {
   final _searchController = TextEditingController();
   StudentDto? _selectedStudent;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedStudent = widget.initialStudent;
+  }
 
   @override
   void dispose() {

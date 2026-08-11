@@ -663,3 +663,205 @@ async def test_fee_structure_uniqueness_and_atomicity(client: AsyncClient, setup
     )
     res = await db_session.execute(stmt)
     assert res.scalar_one_or_none() is None
+
+
+@pytest.mark.anyio
+async def test_payment_import_success_and_failures(client: AsyncClient, setup_fee_test_data: dict, db_session: AsyncSession):
+    headers = setup_fee_test_data["admin_headers"]
+    tenant = setup_fee_test_data["tenant"]
+    ay = setup_fee_test_data["academic_year"]
+    cl = setup_fee_test_data["class"]
+    student = setup_fee_test_data["student"]
+
+    # 1. Cache DB properties early to prevent MissingGreenlet after commits
+    student_id = student.id
+    admission_number = student.admission_number
+    ay_id = ay.id
+    cl_id = cl.id
+    school_id = cl.school_id
+
+    # 1. Create a fee type, structure, and assignment
+    fee_type = FeeType(tenant_id=tenant.id, name="Activity Fee", code="ACT")
+    db_session.add(fee_type)
+    await db_session.commit()
+
+    struct = FeeStructure(
+        tenant_id=tenant.id, school_id=school_id, fee_type_id=fee_type.id,
+        academic_year_id=ay_id, class_id=cl_id, amount=Decimal("3000.00"), due_date=date.today()
+    )
+    db_session.add(struct)
+    await db_session.commit()
+
+    assign = StudentFeeAssignment(
+        tenant_id=tenant.id, student_id=student_id, fee_structure_id=struct.id,
+        academic_year_id=ay_id, assigned_amount=Decimal("3000.00")
+    )
+    db_session.add(assign)
+    await db_session.commit()
+
+    # 2. Test successful import row
+    payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "payments": [
+            {
+                "admission_number": admission_number,
+                "fee_type_code": "ACT",
+                "amount": 2000.0,
+                "payment_date": date.today().isoformat(),
+                "payment_method": "CASH",
+                "reference_number": "REF-123"
+            },
+            {
+                "admission_number": "INVALID-ADM", # Invalid student
+                "fee_type_code": "ACT",
+                "amount": 500.0,
+                "payment_date": date.today().isoformat(),
+                "payment_method": "CASH"
+            },
+            {
+                "admission_number": admission_number,
+                "fee_type_code": "INVALID-CODE", # Invalid assignment
+                "amount": 500.0,
+                "payment_date": date.today().isoformat(),
+                "payment_method": "CASH"
+            },
+            {
+                "admission_number": admission_number,
+                "fee_type_code": "ACT",
+                "amount": 2000.0, # Duplicate/Overpayment (2000 already paid, outstanding is 1000, trying to pay 2000)
+                "payment_date": date.today().isoformat(),
+                "payment_method": "CASH"
+            }
+        ]
+    }
+
+    response = await client.post("/api/v1/fees/payments/import", json=payload, headers=headers)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    
+    assert data["total_processed"] == 4
+    assert data["success_count"] == 1
+    assert data["failed_count"] == 3
+    
+    results = data["results"]
+    # Row 0: Success
+    assert results[0]["success"] is True
+    assert results[0]["payment_id"] is not None
+    
+    # Row 1: Invalid student
+    assert results[1]["success"] is False
+    assert "not found" in results[1]["error"]
+    
+    # Row 2: Invalid assignment
+    assert results[2]["success"] is False
+    assert "not found" in results[2]["error"]
+    
+    # Row 3: Overpayment
+    assert results[3]["success"] is False
+    assert "exceeds outstanding balance" in results[3]["error"]
+
+    # 3. Verify ledger is updated correctly
+    response = await client.get(f"/api/v1/fees/ledgers/{student_id}", headers=headers)
+    assert response.status_code == 200
+    ledger = response.json()["data"]
+    assert ledger["closing_balance"] == 1000.0 # 3000 original - 2000 paid
+
+    # 4. Test school isolation (payment from another school)
+    other_school_id = uuid.uuid4()
+    payload_school_iso = {
+        "school_id": str(other_school_id),
+        "academic_year_id": str(ay_id),
+        "payments": [
+            {
+                "admission_number": admission_number,
+                "fee_type_code": "ACT",
+                "amount": 500.0,
+                "payment_date": date.today().isoformat(),
+                "payment_method": "CASH"
+            }
+        ]
+    }
+    response = await client.post("/api/v1/fees/payments/import", json=payload_school_iso, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["data"]["failed_count"] == 1
+    assert "not found" in response.json()["data"]["results"][0]["error"]
+
+
+@pytest.mark.anyio
+async def test_get_outstanding_report(client: AsyncClient, setup_fee_test_data: dict, db_session: AsyncSession):
+    headers = setup_fee_test_data["admin_headers"]
+    tenant = setup_fee_test_data["tenant"]
+    ay = setup_fee_test_data["academic_year"]
+    cl = setup_fee_test_data["class"]
+    student = setup_fee_test_data["student"]
+
+    # Cache properties early
+    student_id = student.id
+    school_id = cl.school_id
+    class_id = cl.id
+
+    # 1. Create a fee type, structure, and assignment (due date in the past, so it's a defaulter)
+    fee_type = FeeType(tenant_id=tenant.id, name="Activity Fee", code="ACT")
+    db_session.add(fee_type)
+    await db_session.commit()
+
+    struct = FeeStructure(
+        tenant_id=tenant.id, school_id=school_id, fee_type_id=fee_type.id,
+        academic_year_id=ay.id, class_id=class_id, amount=Decimal("3000.00"), due_date=date(2026, 1, 1)
+    )
+    db_session.add(struct)
+    await db_session.commit()
+
+    assign = StudentFeeAssignment(
+        tenant_id=tenant.id, student_id=student_id, fee_structure_id=struct.id,
+        academic_year_id=ay.id, assigned_amount=Decimal("3000.00"), status=FeeAssignmentStatus.UNPAID
+    )
+    db_session.add(assign)
+    await db_session.commit()
+
+    # 2. Test fetching outstanding dues report (No filter)
+    response = await client.get(f"/api/v1/fees/reports/outstanding?school_id={school_id}", headers=headers)
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) >= 1
+    
+    # Verify report item content
+    item = [x for x in data if x["student_id"] == str(student_id)][0]
+    assert item["student_name"] == f"{student.first_name} {student.last_name}"
+    assert item["class_id"] == str(class_id)
+    assert item["outstanding_amount"] == 3000.0
+    assert item["status"] == "UNPAID"
+
+    # 3. Test Class filter
+    response_class = await client.get(f"/api/v1/fees/reports/outstanding?school_id={school_id}&class_id={class_id}", headers=headers)
+    assert response_class.status_code == 200
+    assert len(response_class.json()["data"]) >= 1
+
+    # Empty Class filter
+    random_class_id = uuid.uuid4()
+    response_class_empty = await client.get(f"/api/v1/fees/reports/outstanding?school_id={school_id}&class_id={random_class_id}", headers=headers)
+    assert response_class_empty.status_code == 200
+    assert len(response_class_empty.json()["data"]) == 0
+
+    # 4. Test Defaulter filter (due date < today)
+    response_def = await client.get(f"/api/v1/fees/reports/outstanding?school_id={school_id}&only_defaulters=true", headers=headers)
+    assert response_def.status_code == 200
+    assert len(response_def.json()["data"]) >= 1
+
+    # 5. Exclude fully paid assignments
+    assign.status = FeeAssignmentStatus.PAID
+    assign.paid_amount = Decimal("3000.00")
+    db_session.add(assign)
+    await db_session.commit()
+
+    response_paid = await client.get(f"/api/v1/fees/reports/outstanding?school_id={school_id}", headers=headers)
+    assert response_paid.status_code == 200
+    # Our student should be excluded now since outstanding is 0
+    assert not any(x["student_id"] == str(student_id) for x in response_paid.json()["data"])
+
+    # 6. School isolation
+    other_school_id = uuid.uuid4()
+    response_school_iso = await client.get(f"/api/v1/fees/reports/outstanding?school_id={other_school_id}", headers=headers)
+    assert response_school_iso.status_code == 200
+    assert len(response_school_iso.json()["data"]) == 0

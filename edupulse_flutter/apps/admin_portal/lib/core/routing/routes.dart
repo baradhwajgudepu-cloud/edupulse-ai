@@ -1,0 +1,24 @@
+class AppRoutes {
+  static const String login = '/login';
+  static const String dashboard = '/dashboard';
+  static const String users = '/users';
+  static const String userDetail = '/users/:id';
+  
+  static const String schools = '/schools';
+  static const String schoolDetail = '/schools/:id';
+  static const String academicYears = '/schools/:schoolId/academic-years';
+  static const String academicYearDetail = '/schools/:schoolId/academic-years/:id';
+  static const String classes = '/classes';
+  static const String classDetail = '/classes/:id';
+  static const String sections = '/sections';
+  static const String sectionDetail = '/sections/:id';
+  static const String subjects = '/subjects';
+  static const String subjectDetail = '/subjects/:id';
+  
+  static const String students = '/students';
+  static const String studentDetail = '/students/:id';
+  static const String bulkImport = '/bulk-import';
+  static const String schoolOnboarding = '/school-onboarding';
+  static const String fees = '/fees';
+}
+

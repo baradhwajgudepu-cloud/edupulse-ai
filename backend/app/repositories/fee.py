@@ -320,7 +320,8 @@ class FeeRepository:
             FeePayment.tenant_id == tenant_id,
             FeePayment.deleted_at.is_(None)
         ).options(
-            selectinload(FeePayment.allocations).selectinload(FeePaymentAllocation.assignment)
+            selectinload(FeePayment.allocations).selectinload(FeePaymentAllocation.assignment),
+            selectinload(FeePayment.receipt)
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -432,7 +433,8 @@ class FeeRepository:
             FeePayment.tenant_id == tenant_id,
             FeePayment.deleted_at.is_(None)
         ).options(
-            selectinload(FeePayment.allocations)
+            selectinload(FeePayment.allocations),
+            selectinload(FeePayment.receipt)
         ).order_by(FeePayment.payment_date.desc())
         res_p = await self.db.execute(stmt_p)
         payments = list(res_p.scalars().all())

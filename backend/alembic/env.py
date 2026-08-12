@@ -38,6 +38,7 @@ from app.models.fee import (
     FeeType, Scholarship, FeeStructure, FineRule,
     StudentFeeAssignment, FeePayment, FeePaymentAllocation, FeeReceipt
 )  # noqa: F401
+from app.models.import_job import ImportJob, ImportJobRow, ImportType, ImportJobStatus  # noqa: F401
 from app.core.settings import settings
 
 # This is the Alembic Config object, which provides access to the .ini file values.

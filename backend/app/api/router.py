@@ -76,3 +76,8 @@ api_router.include_router(identity.router, prefix="/identity", tags=["identity"]
 # Include fee management endpoints
 from app.api.v1.endpoints import fee
 api_router.include_router(fee.router, prefix="/fees", tags=["fees"])
+
+# Include import-jobs endpoints
+from app.api.v1.endpoints import import_jobs
+api_router.include_router(import_jobs.router, prefix="/import-jobs", tags=["import-jobs"])
+

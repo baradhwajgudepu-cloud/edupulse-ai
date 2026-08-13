@@ -5,6 +5,7 @@ api_router = APIRouter()
 
 # Include system-level endpoints (e.g. system/health)
 api_router.include_router(health.router, prefix="/system", tags=["system"])
+api_router.include_router(health.router, prefix="", tags=["system"])
 
 # Include authentication & RBAC endpoints (no prefix, endpoints themselves have prefix)
 api_router.include_router(auth.router, prefix="", tags=["auth"])

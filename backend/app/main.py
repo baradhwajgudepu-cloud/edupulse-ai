@@ -10,6 +10,7 @@ from app.core.logging import setup_logging, logger
 from app.api.router import api_router
 from app.api.exceptions.handlers import setup_exception_handlers
 from app.api.middlewares.logging import RequestLoggingMiddleware
+import app.models
 
 
 @asynccontextmanager
@@ -29,9 +30,9 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Backend services foundation for the EduPulse AI application.",
-    openapi_url=f"{settings.API_PREFIX}/openapi.json",
-    docs_url=f"{settings.API_PREFIX}/docs",
-    redoc_url=f"{settings.API_PREFIX}/redoc",
+    openapi_url="/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
 
@@ -81,3 +82,4 @@ app.add_middleware(
 setup_exception_handlers(app)
 
 app.include_router(api_router, prefix=settings.API_PREFIX)
+# Dev CORS update reload trigger

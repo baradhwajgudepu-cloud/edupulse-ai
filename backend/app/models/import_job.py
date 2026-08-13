@@ -69,6 +69,19 @@ class ImportJob(Base, BaseModelMixin, TenantMixin):
     rows: Mapped[List["ImportJobRow"]] = relationship(
         "ImportJobRow", back_populates="import_job", cascade="all, delete-orphan"
     )
+    student_rows: Mapped[List["StudentImportRow"]] = relationship(
+        "StudentImportRow", back_populates="import_job", cascade="all, delete-orphan"
+    )
+    academic_setup_rows: Mapped[List["AcademicSetupImportRow"]] = relationship(
+        "AcademicSetupImportRow", back_populates="import_job", cascade="all, delete-orphan"
+    )
+    guardian_rows: Mapped[List["GuardianImportRow"]] = relationship(
+        "GuardianImportRow", back_populates="import_job", cascade="all, delete-orphan"
+    )
+    student_guardian_rows: Mapped[List["StudentGuardianImportRow"]] = relationship(
+        "StudentGuardianImportRow", back_populates="import_job", cascade="all, delete-orphan"
+    )
+
 
     __table_args__ = (
         Index("ix_import_jobs_checksum_active", "tenant_id", "school_id", "import_type", "file_checksum",

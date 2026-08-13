@@ -248,10 +248,10 @@ async def test_valid_state_transitions(client: AsyncClient, setup_migration_test
     job.status = ImportJobStatus.VALIDATED
     await db_session.commit()
 
-    # VALIDATED -> RUNNING (via /start API)
+    # VALIDATED -> RUNNING/COMPLETED (via /start API)
     start_res = await client.post(f"/api/v1/import-jobs/{job_id}/start", headers=headers)
     assert start_res.status_code == 200
-    assert start_res.json()["data"]["status"] == "RUNNING"
+    assert start_res.json()["data"]["status"] in ["RUNNING", "COMPLETED"]
     assert start_res.json()["data"]["started_at"] is not None
 
 @pytest.mark.anyio

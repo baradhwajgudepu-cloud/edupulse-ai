@@ -200,6 +200,15 @@ class _AdminShellState extends ConsumerState<AdminShell> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.sync_alt_outlined),
+            title: const Text('Data Migrations'),
+            selected: activePath.startsWith('/migrations'),
+            onTap: () {
+              if (isDrawer) Navigator.pop(context);
+              context.go(AppRoutes.migrations);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.payments_outlined),
             title: const Text('Fees'),
             selected: activePath.startsWith('/fees'),

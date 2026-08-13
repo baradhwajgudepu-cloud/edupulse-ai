@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status, HTTPException
+from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File
 
 from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.auth import require_permission
@@ -178,4 +178,26 @@ async def get_import_job_rows(
         success=True,
         message="Row results fetched successfully.",
         data=responses
+    )
+
+@router.post(
+    "/{job_id}/validate",
+    response_model=APIResponse[ImportJobResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Validate student migration Import Job",
+    description="Validates the CSV file headers, formats, scopes, section capacities, duplicates, and staging data."
+)
+async def validate_import_job(
+    job_id: uuid.UUID,
+    file: UploadFile = File(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("migration.create")),
+    service: ImportJobService = Depends(get_import_job_service)
+) -> APIResponse[ImportJobResponse]:
+    content = await file.read()
+    db_obj = await service.validate_job(tenant_id, job_id, content)
+    return APIResponse[ImportJobResponse](
+        success=True,
+        message="Import job validated successfully.",
+        data=ImportJobResponse.model_validate(db_obj)
     )

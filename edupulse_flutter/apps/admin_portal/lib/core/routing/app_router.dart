@@ -24,8 +24,13 @@ import '../../features/bulk_import/presentation/pages/school_onboarding_screen.d
 import '../../features/fees/presentation/pages/fees_dashboard_screen.dart';
 import '../../features/fees/presentation/pages/student_fee_assignment_page.dart';
 import '../../features/fees/presentation/pages/student_ledgers_page.dart';
-import '../../features/fees/presentation/pages/payment_import_page.dart';
 import '../../features/fees/presentation/pages/outstanding_dues_page.dart';
+import '../../features/students/data/models/student_models.dart';
+import '../../features/migrations/presentation/pages/migration_center_screen.dart';
+import '../../features/migrations/presentation/pages/student_migration_wizard_screen.dart';
+import '../../features/migrations/presentation/pages/academic_setup_migration_wizard_screen.dart';
+import '../../features/migrations/presentation/pages/guardian_mapping_migration_wizard_screen.dart';
+
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
@@ -178,10 +183,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             },
           ),
           GoRoute(
-            path: AppRoutes.feesImport,
-            builder: (context, state) => const PaymentImportPage(),
-          ),
-          GoRoute(
             path: AppRoutes.feesOutstanding,
             builder: (context, state) {
               final classId = state.uri.queryParameters['class_id'];
@@ -192,6 +193,44 @@ final routerProvider = Provider<GoRouter>((ref) {
               );
             },
           ),
+          GoRoute(
+            path: AppRoutes.migrations,
+            builder: (context, state) => const MigrationCenterScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.migrationNew,
+            builder: (context, state) => const StudentMigrationWizardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.migrationDetail,
+            builder: (context, state) {
+              final jobId = state.pathParameters['jobId']!;
+              return StudentMigrationWizardScreen(jobId: jobId);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.academicSetupMigrationNew,
+            builder: (context, state) => const AcademicSetupMigrationWizardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.academicSetupMigrationDetail,
+            builder: (context, state) {
+              final jobId = state.pathParameters['jobId']!;
+              return AcademicSetupMigrationWizardScreen(jobId: jobId);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.guardianMappingMigrationNew,
+            builder: (context, state) => const GuardianMappingMigrationWizardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.guardianMappingMigrationDetail,
+            builder: (context, state) {
+              final jobId = state.pathParameters['jobId']!;
+              return GuardianMappingMigrationWizardScreen(jobId: jobId);
+            },
+          ),
+
         ],
       ),
     ],

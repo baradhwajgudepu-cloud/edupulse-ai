@@ -22,7 +22,15 @@ class AppRoutes {
   static const String fees = '/fees';
   static const String feesAssign = '/fees/assign';
   static const String feesLedger = '/fees/ledger';
-  static const String feesImport = '/fees/import';
   static const String feesOutstanding = '/fees/outstanding';
+
+  static const String migrations = '/migrations';
+  static const String migrationNew = '/migrations/students/new';
+  static const String migrationDetail = '/migrations/students/:jobId';
+  static const String academicSetupMigrationNew = '/migrations/academic-setup/new';
+  static const String academicSetupMigrationDetail = '/migrations/academic-setup/:jobId';
+  static const String guardianMappingMigrationNew = '/migrations/guardian-mapping/new';
+  static const String guardianMappingMigrationDetail = '/migrations/guardian-mapping/:jobId';
 }
+
 

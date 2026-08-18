@@ -1,0 +1,27 @@
+class AppRoutes {
+  static const String splash = '/';
+  static const String login = '/login';
+  static const String forgotPassword = '/forgot-password';
+  static const String home = '/home';
+  static const String unauthorized = '/unauthorized';
+  static const String myClasses = '/my-classes';
+  static const String classDetail = '/my-classes/detail';
+  static const String studentRoster = '/my-classes/roster';
+  static const String studentDetail = '/my-classes/student';
+  static const String attendance = '/attendance';
+  static const String homework = '/homework';
+  static const String homeworkCreate = '/homework/create';
+  static const String homeworkDetail = '/homework/detail';
+  static const String homeworkEdit = '/homework/edit';
+  static const String homeworkCopy = '/homework/copy';
+  static const String marks = '/marks';
+  static const String marksEntry = '/marks/entry';
+  static const String marksReview = '/marks/review';
+  static const String results = '/results';
+  static const String studentResult = '/results/student';
+  static const String notifications = '/notifications';
+  static const String staffAttendance = '/staff-attendance';
+  static const String teacherLeaveList = '/teacher-leaves';
+  static const String teacherLeaveCreate = '/teacher-leaves/create';
+  static const String teacherLeaveDetail = '/teacher-leaves/:id';
+}

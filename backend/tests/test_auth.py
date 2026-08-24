@@ -562,3 +562,61 @@ async def test_tenant_header_restoration_and_fallback(client: AsyncClient, db_se
     assert "mismatch" in resp3.json()["message"].lower()
 
 
+@pytest.mark.anyio
+async def test_change_password_regression(client: AsyncClient, db_session) -> None:
+    """
+    Regression test for change_password endpoint:
+    - Verifies current password validation.
+    - Verifies new password storage.
+    - Verifies must_change_password flag becomes False.
+    - Verifies incorrect current password returns error.
+    """
+    repo_t = TenantRepository(db_session)
+    tenant = await repo_t.create(TenantCreate(name="Change Pass Tenant", code="change-pass-t", subdomain="change-pass", email="cp@cp.com"))
+    repo_s = SchoolRepository(db_session)
+    
+    user_repo = UserRepository(db_session)
+    role_repo = RoleRepository(db_session)
+    perm_repo = PermissionRepository(db_session)
+    refresh_repo = RefreshTokenRepository(db_session)
+    service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, repo_s)
+
+    # Create user with must_change_password = True
+    user = await service.create_user(
+        tenant.id,
+        UserCreate(email="change_pass@test.com", password="OldPassword123!", first_name="C", last_name="P")
+    )
+    user.must_change_password = True
+    await user_repo.db.commit()
+
+    # Create tokens for headers
+    tokens = await service.create_tokens(user)
+    headers = {"Authorization": f"Bearer {tokens.access_token}", "X-Tenant-ID": str(tenant.id)}
+
+    # 1. Try to change password with incorrect current password -> expect 400
+    change_payload_bad = {
+        "current_password": "WrongPassword123!",
+        "new_password": "NewPassword123!"
+    }
+    resp_bad = await client.post("/api/v1/auth/change-password", json=change_payload_bad, headers=headers)
+    assert resp_bad.status_code == 400
+    assert "incorrect current password" in resp_bad.json()["message"].lower()
+
+    # 2. Change password with correct current password -> expect 200
+    change_payload_good = {
+        "current_password": "OldPassword123!",
+        "new_password": "NewPassword123!"
+    }
+    resp_good = await client.post("/api/v1/auth/change-password", json=change_payload_good, headers=headers)
+    assert resp_good.status_code == 200
+
+    # 3. Verify must_change_password is now False
+    await db_session.refresh(user)
+    assert user.must_change_password is False
+
+    # 4. Verify login with the new password works
+    auth_user = await service.authenticate(tenant.id, LoginRequest(email="change_pass@test.com", password="NewPassword123!"))
+    assert auth_user is not None
+
+
+

@@ -271,6 +271,7 @@ class AuthService:
             )
 
         user.hashed_password = hash_password(change_in.new_password)
+        user.must_change_password = False
         await self.user_repo.db.commit()
 
     async def request_password_reset(self, tenant_id: uuid.UUID, email: str) -> None:

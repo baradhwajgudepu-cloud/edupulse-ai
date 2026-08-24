@@ -88,6 +88,8 @@ class TeacherUpdate(BaseModel):
     settings: Optional[Dict[str, Any]] = None
     ai_metrics: Optional[Dict[str, Any]] = None
 
+from app.schemas.auth import ProvisioningCredentialResponse
+
 class TeacherResponse(TeacherBase):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -98,5 +100,6 @@ class TeacherResponse(TeacherBase):
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
+    credentials: Optional[ProvisioningCredentialResponse] = None
 
     model_config = ConfigDict(from_attributes=True)

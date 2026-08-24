@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.notification import (
     Notification, NotificationPreference, NotificationStatus,
-    NotificationType, NotificationPriority, NotificationTargetRole
+    NotificationType, NotificationPriority, NotificationTargetRole, UserDeviceToken
 )
 from app.schemas.notification import NotificationCreate, NotificationPreferenceUpdate
 
@@ -25,10 +25,6 @@ class NotificationRepository:
             f"notification_type={obj_in.notification_type}, priority={obj_in.priority}, target_role={obj_in.target_role}, "
             f"target_user_id={obj_in.target_user_id}, created_by={created_by}"
         )
-        logger.info(
-            f"Enum types validation: type(notification_type)={type(obj_in.notification_type)}, "
-            f"type(priority)={type(obj_in.priority)}, type(target_role)={type(obj_in.target_role)}"
-        )
         db_obj = Notification(
             tenant_id=tenant_id,
             school_id=school_id,
@@ -40,16 +36,21 @@ class NotificationRepository:
             target_user_id=obj_in.target_user_id,
             related_module=obj_in.related_module,
             related_record_id=obj_in.related_record_id,
+            student_id=obj_in.student_id,
+            event_key=obj_in.event_key,
             settings=obj_in.settings or {},
             ai_metrics=obj_in.ai_metrics or {},
+            push_status="NOT_CONFIGURED",
+            email_status="NOT_CONFIGURED",
+            sms_status="NOT_CONFIGURED",
             status=NotificationStatus.UNREAD,
             created_by=created_by,
-            updated_by=created_by
-        )
-        logger.info(
-            f"SQLAlchemy model populated: db_obj.tenant_id={db_obj.tenant_id}, db_obj.school_id={db_obj.school_id}, "
-            f"db_obj.notification_type={db_obj.notification_type}, db_obj.priority={db_obj.priority}, "
-            f"db_obj.target_role={db_obj.target_role}, db_obj.target_user_id={db_obj.target_user_id}"
+            updated_by=created_by,
+            scheduled_at=obj_in.scheduled_at,
+            published_at=obj_in.published_at,
+            sender_id=obj_in.sender_id,
+            event_type=obj_in.event_type,
+            idempotency_key=obj_in.idempotency_key
         )
         self.db.add(db_obj)
         return db_obj
@@ -93,6 +94,10 @@ class NotificationRepository:
             Notification.tenant_id == tenant_id,
             Notification.deleted_at.is_(None),
             Notification.is_active.is_(True),
+            or_(
+                Notification.scheduled_at.is_(None),
+                Notification.published_at.is_not(None)
+            ),
             or_(
                 Notification.target_user_id == user_id,
                 and_(
@@ -143,6 +148,10 @@ class NotificationRepository:
             Notification.deleted_at.is_(None),
             Notification.is_active.is_(True),
             Notification.status == NotificationStatus.UNREAD,
+            or_(
+                Notification.scheduled_at.is_(None),
+                Notification.published_at.is_not(None)
+            ),
             or_(
                 Notification.target_user_id == user_id,
                 and_(
@@ -248,7 +257,9 @@ class NotificationRepository:
             enable_fee=True,
             enable_push=True,
             enable_email=True,
-            enable_sms=True
+            enable_sms=True,
+            enable_whatsapp=True,
+            enable_in_app=True
         )
         self.db.add(pref)
         return pref
@@ -273,3 +284,64 @@ class NotificationRepository:
 
         self.db.add(pref)
         return pref
+
+    async def register_device_token(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        device_token: str,
+        platform: str,
+        app_type: str
+    ) -> UserDeviceToken:
+        stmt = select(UserDeviceToken).where(
+            UserDeviceToken.tenant_id == tenant_id,
+            UserDeviceToken.user_id == user_id,
+            UserDeviceToken.device_token == device_token,
+            UserDeviceToken.deleted_at.is_(None)
+        )
+        res = await self.db.execute(stmt)
+        token_obj = res.scalar_one_or_none()
+        
+        now = datetime.now(timezone.utc)
+        if token_obj:
+            token_obj.platform = platform
+            token_obj.app_type = app_type
+            token_obj.last_seen_at = now
+            token_obj.is_active = True
+            token_obj.updated_at = now
+        else:
+            token_obj = UserDeviceToken(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                device_token=device_token,
+                platform=platform,
+                app_type=app_type,
+                last_seen_at=now,
+                is_active=True,
+                created_by=user_id,
+                updated_by=user_id
+            )
+        self.db.add(token_obj)
+        return token_obj
+
+    async def deactivate_device_token(
+        self,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        device_token: str
+    ) -> Optional[UserDeviceToken]:
+        stmt = select(UserDeviceToken).where(
+            UserDeviceToken.tenant_id == tenant_id,
+            UserDeviceToken.user_id == user_id,
+            UserDeviceToken.device_token == device_token,
+            UserDeviceToken.deleted_at.is_(None)
+        )
+        res = await self.db.execute(stmt)
+        token_obj = res.scalar_one_or_none()
+        
+        if token_obj:
+            token_obj.is_active = False
+            token_obj.updated_at = datetime.now(timezone.utc)
+            token_obj.updated_by = user_id
+            self.db.add(token_obj)
+        return token_obj

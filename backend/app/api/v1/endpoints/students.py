@@ -53,6 +53,42 @@ async def list_students(
     current_user: User = Depends(require_permission("student.read")),
     service: StudentService = Depends(get_student_service)
 ) -> APIResponse[List[StudentResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        if not class_id or not section_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Teachers must specify class_id and section_id."
+            )
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+
+        teacher_repo = TeacherRepository(service.student_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == class_id,
+            TeacherSubjectAssignment.section_id == section_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.student_repo.db.execute(stmt_tsa)
+        tsa = res_tsa.scalar_one_or_none()
+        if not tsa:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You are not assigned to this class and section."
+            )
+
     students = await service.student_repo.get_multi(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -91,6 +127,38 @@ async def get_student(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+
+        teacher_repo = TeacherRepository(service.student_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == db_obj.class_id,
+            TeacherSubjectAssignment.section_id == db_obj.section_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.student_repo.db.execute(stmt_tsa)
+        tsa = res_tsa.scalar_one_or_none()
+        if not tsa:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You are not assigned to this student's class and section."
+            )
+
     return APIResponse[StudentResponse](
         success=True,
         message="Student details fetched successfully.",

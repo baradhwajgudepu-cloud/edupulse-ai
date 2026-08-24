@@ -140,9 +140,11 @@ def _generate_pdf_receipt(
     doc.build(story)
 
 class FeeService:
-    def __init__(self, fee_repo: FeeRepository, notification_service: NotificationService) -> None:
+    def __init__(self, fee_repo: FeeRepository, notification_service: NotificationService, storage_service = None) -> None:
         self.fee_repo = fee_repo
         self.notification_service = notification_service
+        from app.services.storage import get_storage_service
+        self.storage_service = storage_service or get_storage_service()
 
     # --- FEE TYPE CRUD ---
     async def get_fee_type(self, id: uuid.UUID, tenant_id: uuid.UUID) -> FeeType:
@@ -555,17 +557,25 @@ class FeeService:
             pdf_allocations.append((fee_type_name, allocated_amount))
 
         # Generate ReportLab PDF Receipt
-        receipts_dir = os.path.join("static", "receipts")
-        os.makedirs(receipts_dir, exist_ok=True)
-        pdf_filename = f"{receipt_number}.pdf"
-        pdf_path = os.path.join(receipts_dir, pdf_filename)
+        import tempfile
         
         # Format dates
         payment_date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        is_mock = self.storage_service.client is None
+        if is_mock:
+            receipts_dir = os.path.join("static", "receipts")
+            os.makedirs(receipts_dir, exist_ok=True)
+            pdf_path = os.path.join(receipts_dir, f"{receipt_number}.pdf")
+            temp_path = pdf_path
+        else:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+                temp_path = temp_file.name
+            pdf_path = f"receipts/{receipt_number}.pdf"
+
         try:
             _generate_pdf_receipt(
-                pdf_path=pdf_path,
+                pdf_path=temp_path,
                 receipt_number=receipt_number,
                 school_name=school_name,
                 student_name=student_name,
@@ -576,8 +586,24 @@ class FeeService:
                 allocations=pdf_allocations,
                 total_amount_paid=total_payment_amount
             )
+            
+            with open(temp_path, "rb") as f:
+                pdf_bytes = f.read()
+                
+            await self.storage_service.upload(pdf_bytes, pdf_path, "application/pdf")
+            
+            if not is_mock:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Failed to generate PDF receipt file: {str(e)}")
+            if not is_mock:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
             raise HTTPException(status_code=500, detail="Failed to generate PDF receipt.")
 
         # Create Receipt record
@@ -724,6 +750,7 @@ class FeeService:
 
         # Outstanding per class
         stmt_class = select(
+            Class.id,
             Class.name,
             func.sum(StudentFeeAssignment.assigned_amount + StudentFeeAssignment.fine_amount - StudentFeeAssignment.discount_amount - StudentFeeAssignment.paid_amount)
         ).join(
@@ -734,9 +761,9 @@ class FeeService:
             StudentFeeAssignment.tenant_id == tenant_id,
             FeeStructure.school_id == school_id,
             StudentFeeAssignment.deleted_at.is_(None)
-        ).group_by(Class.name)
+        ).group_by(Class.id, Class.name)
         res_class = await self.fee_repo.db.execute(stmt_class)
-        top_outstanding = [{"class_name": row[0], "outstanding_amount": Decimal(str(row[1])) if row[1] is not None else Decimal("0.00")} for row in res_class.all()]
+        top_outstanding = [{"class_id": row[0], "class_name": row[1], "outstanding_amount": Decimal(str(row[2])) if row[2] is not None else Decimal("0.00")} for row in res_class.all()]
 
         return {
             "today_collection": today_col,

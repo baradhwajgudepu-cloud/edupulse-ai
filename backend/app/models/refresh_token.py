@@ -23,6 +23,12 @@ class RefreshToken(Base, BaseModelMixin):
     )
     user: Mapped["User"] = relationship("User")
 
+    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
+    )
+
     version: Mapped[int] = mapped_column(default=1, nullable=False)
 
     __table_args__ = (

@@ -6,7 +6,7 @@ from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.class_entity import get_class_service
 from app.api.dependencies.auth import require_permission
 from app.services.class_entity import ClassService
-from app.schemas.class_entity import ClassCreate, ClassUpdate, ClassResponse
+from app.schemas.class_entity import ClassCreate, ClassUpdate, ClassResponse, ClassPromote, ClassPromoteResponse
 from app.models.class_entity import ClassStatus
 from app.models.user import User
 from app.schemas.response import APIResponse
@@ -159,21 +159,24 @@ async def archive_class(
 
 @router.post(
     "/{id}/promote",
-    response_model=APIResponse[ClassResponse],
+    response_model=APIResponse[ClassPromoteResponse],
     status_code=status.HTTP_200_OK,
     summary="Promote class routine",
     description="Runs promotion sequence and maps class promotion paths."
 )
 async def promote_class(
     id: uuid.UUID,
+    obj_in: ClassPromote = ClassPromote(),
+    preview: bool = Query(False, description="Run in preview mode (dry run)"),
     school_id: uuid.UUID = Query(..., description="Target school ID"),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("class.promote")),
     service: ClassService = Depends(get_class_service)
-) -> APIResponse[ClassResponse]:
-    db_obj = await service.promote_class(tenant_id, school_id, id, updated_by=current_user.id)
-    return APIResponse[ClassResponse](
+) -> APIResponse[ClassPromoteResponse]:
+    result = await service.promote_class(tenant_id, school_id, id, obj_in, preview=preview, updated_by=current_user.id)
+    msg = "Class promotion preview generated." if preview else "Class promotion sequence completed."
+    return APIResponse[ClassPromoteResponse](
         success=True,
-        message="Class promotion sequence initialized.",
-        data=ClassResponse.model_validate(db_obj)
+        message=msg,
+        data=result
     )

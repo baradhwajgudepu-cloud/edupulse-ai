@@ -86,6 +86,29 @@ class ExaminationService:
                 detail="Active school entity not found."
             )
 
+        if not obj_in.academic_year_id:
+            from app.models.academic_year import AcademicYear, AcademicYearStatus
+            ay_stmt = select(AcademicYear).where(
+                AcademicYear.school_id == school_id,
+                AcademicYear.status == AcademicYearStatus.ACTIVE,
+                AcademicYear.deleted_at.is_(None)
+            )
+            ay_res = await self.exam_repo.db.execute(ay_stmt)
+            ay = ay_res.scalars().first()
+            if not ay:
+                ay_stmt_fallback = select(AcademicYear).where(
+                    AcademicYear.school_id == school_id,
+                    AcademicYear.deleted_at.is_(None)
+                )
+                ay_res_fallback = await self.exam_repo.db.execute(ay_stmt_fallback)
+                ay = ay_res_fallback.scalars().first()
+                if not ay:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="No academic year found for this school."
+                    )
+            obj_in.academic_year_id = ay.id
+
         ay = await self.academic_year_repo.get_by_id(obj_in.academic_year_id, school_id, tenant_id)
         if not ay or ay.status.value != "ACTIVE":
             raise HTTPException(
@@ -200,7 +223,7 @@ class ExaminationService:
         self,
         tenant_id: uuid.UUID,
         school_id: uuid.UUID,
-        academic_year_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
         class_ids: List[uuid.UUID],
         start_date: date,
         end_date: date
@@ -209,12 +232,17 @@ class ExaminationService:
         UX Auto-loader: Queries TSAs for target classes, generates sequentially suggested paper schedules.
         """
         # Fetch active assignments for chosen classes
+        from sqlalchemy.orm import selectinload
         stmt = select(TeacherSubjectAssignment).where(
             TeacherSubjectAssignment.class_id.in_(class_ids),
             TeacherSubjectAssignment.school_id == school_id,
             TeacherSubjectAssignment.tenant_id == tenant_id,
             TeacherSubjectAssignment.is_active == True,
             TeacherSubjectAssignment.deleted_at.is_(None)
+        ).options(
+            selectinload(TeacherSubjectAssignment.subject),
+            selectinload(TeacherSubjectAssignment.class_obj),
+            selectinload(TeacherSubjectAssignment.section)
         )
         res = await self.exam_repo.db.execute(stmt)
         assignments = list(res.scalars().all())
@@ -234,8 +262,11 @@ class ExaminationService:
 
             suggestions.append({
                 "class_id": str(tsa.class_id),
+                "class_name": tsa.class_obj.name if tsa.class_obj else "Class",
                 "section_id": str(tsa.section_id),
+                "section_name": tsa.section.name if tsa.section else "Section",
                 "subject_id": str(tsa.subject_id),
+                "subject_name": tsa.subject.subject_name if tsa.subject else "Subject",
                 "teacher_subject_assignment_id": str(tsa.id),
                 "exam_date": paper_date.isoformat(),
                 "start_time": start_time.strftime("%H:%M:%S"),
@@ -250,6 +281,25 @@ class ExaminationService:
     async def create_examination_wizard(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, obj_in: ExaminationWizardCreate, current_user: User
     ) -> Examination:
+        # Resolve target scoping metadata into settings dict
+        settings = dict(obj_in.settings or {})
+        settings["target_scope"] = obj_in.target_scope
+        
+        if obj_in.target_scope == "ALL_CLASSES":
+            from app.models.class_entity import Class, ClassStatus
+            classes_stmt = select(Class).where(
+                Class.school_id == school_id,
+                Class.status == ClassStatus.ACTIVE,
+                Class.deleted_at.is_(None)
+            )
+            classes_res = await self.exam_repo.db.execute(classes_stmt)
+            resolved_class_ids = [c.id for c in classes_res.scalars().all()]
+            settings["class_ids"] = [str(cid) for cid in resolved_class_ids]
+        elif obj_in.target_scope == "SPECIFIC_CLASSES":
+            settings["class_ids"] = [str(cid) for cid in (obj_in.class_ids or [])]
+        elif obj_in.target_scope == "SPECIFIC_SECTIONS":
+            settings["section_ids"] = [str(sid) for sid in (obj_in.section_ids or [])]
+
         # 1. Create standard master examination
         master_create = ExaminationCreate(
             school_id=school_id,
@@ -259,7 +309,7 @@ class ExaminationService:
             start_date=obj_in.start_date,
             end_date=obj_in.end_date,
             description=obj_in.description,
-            settings=obj_in.settings
+            settings=settings
         )
         
         exam_master = await self.create_examination(tenant_id, school_id, master_create, current_user)

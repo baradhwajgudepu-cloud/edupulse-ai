@@ -1,7 +1,7 @@
 from enum import Enum as PyEnum
 import uuid
 from typing import Optional
-from sqlalchemy import String, ForeignKey, Boolean, JSON, DateTime, Enum as SQLEnum, UniqueConstraint, Index
+from sqlalchemy import String, ForeignKey, Boolean, JSON, DateTime, Enum as SQLEnum, UniqueConstraint, Index, Float, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.db.mixins import BaseModelMixin, TenantMixin
@@ -66,6 +66,10 @@ class School(Base, BaseModelMixin, TenantMixin):
     
     settings: Mapped[Optional[dict]] = mapped_column(JSON, default=dict, server_default="{}", nullable=True)
     
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    geofence_radius_meters: Mapped[int] = mapped_column(Integer, default=100, server_default="100", nullable=False)
+
     # Indian Educational Registry Fields
     udise_code: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True, nullable=True)
     

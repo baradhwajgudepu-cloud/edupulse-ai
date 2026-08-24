@@ -2,7 +2,7 @@ import uuid
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
@@ -12,7 +12,9 @@ from app.models.role import Role, user_roles
 from app.models.teacher import Teacher
 from app.models.guardian import Guardian
 from app.models.school import School
-from app.core.security import hash_password
+from app.models.parent_login_sequence import ParentLoginSequence
+from app.core.security import hash_password, generate_secure_temp_password
+from app.core.settings import settings
 from app.schemas.identity import IdentityProvisionStatusResponse
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,66 @@ class IdentityProvisioningService:
         res = await self.db.execute(stmt)
         return res.scalar_one()
 
+    async def _get_role(self, tenant_id: uuid.UUID, role_code: str, role_name: str) -> Role:
+        """
+        Helper method to fetch or create a role within a tenant.
+        """
+        stmt_r = select(Role).where(
+            Role.tenant_id == tenant_id,
+            or_(func.upper(Role.code) == role_code.upper(), func.upper(Role.name) == role_name.upper()),
+            Role.deleted_at.is_(None)
+        )
+        res_r = await self.db.execute(stmt_r)
+        role = res_r.scalar_one_or_none()
+        if not role:
+            role = Role(
+                tenant_id=tenant_id,
+                name=role_name,
+                code=role_code,
+                is_system=True,
+                version=1
+            )
+            self.db.add(role)
+            await self.db.flush()
+        return role
+
+    async def _generate_parent_login_id(self, tenant_id: uuid.UUID, school_id: uuid.UUID, school_code: str) -> str:
+        """
+        Generates a unique sequential Parent Login ID using a tenant-school-scoped sequence counter with row locking.
+        """
+        prefix = school_code.upper().strip()
+        
+        stmt_seq = select(ParentLoginSequence).where(
+            ParentLoginSequence.tenant_id == tenant_id,
+            ParentLoginSequence.school_id == school_id
+        ).with_for_update()
+        
+        res_seq = await self.db.execute(stmt_seq)
+        seq_obj = res_seq.scalar_one_or_none()
+        
+        if not seq_obj:
+            try:
+                async with self.db.begin_nested():
+                    seq_obj = ParentLoginSequence(
+                        tenant_id=tenant_id,
+                        school_id=school_id,
+                        prefix=prefix,
+                        next_sequence=1
+                    )
+                    self.db.add(seq_obj)
+                    await self.db.flush()
+            except Exception:
+                # Re-query if concurrent insert happened
+                res_seq = await self.db.execute(stmt_seq)
+                seq_obj = res_seq.scalar_one()
+
+        current_seq = seq_obj.next_sequence
+        seq_obj.next_sequence += 1
+        self.db.add(seq_obj)
+        await self.db.flush()
+        
+        return f"{prefix}P{current_seq:06d}"
+
     async def provision_teacher(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, teacher_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None
     ) -> User:
@@ -48,6 +110,22 @@ class IdentityProvisioningService:
         if not teacher:
             raise HTTPException(status_code=404, detail="Teacher profile not found.")
 
+        # Email checking
+        if not teacher.official_email or not teacher.official_email.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Official email is required for identity provisioning."
+            )
+
+        # Retrieve school and role
+        stmt_sc = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
+        res_sc = await self.db.execute(stmt_sc)
+        school = res_sc.scalar_one_or_none()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+
+        role = await self._get_role(tenant_id, "TEACHER", "Teacher")
+
         # Check if already provisioned
         if teacher.user_id:
             stmt_u = select(User).where(User.id == teacher.user_id, User.tenant_id == tenant_id).options(
@@ -56,6 +134,17 @@ class IdentityProvisioningService:
             res_u = await self.db.execute(stmt_u)
             existing_user = res_u.scalar_one_or_none()
             if existing_user:
+                # Self-heal missing role or school
+                needs_update = False
+                if role not in existing_user.roles:
+                    existing_user.roles.append(role)
+                    needs_update = True
+                if school not in existing_user.schools:
+                    existing_user.schools.append(school)
+                    needs_update = True
+                if needs_update:
+                    self.db.add(existing_user)
+                    await self.db.flush()
                 return existing_user
 
         # Email uniqueness check
@@ -80,36 +169,29 @@ class IdentityProvisioningService:
                     detail=f"Email '{teacher.official_email}' is already associated with another user/teacher identity."
                 )
             
+            # Self-heal role/school mappings
+            needs_update = False
+            if role not in dup_user.roles:
+                dup_user.roles.append(role)
+                needs_update = True
+            if school not in dup_user.schools:
+                dup_user.schools.append(school)
+                needs_update = True
+            if needs_update:
+                self.db.add(dup_user)
+                await self.db.flush()
+
             teacher.user_id = dup_user.id
             self.db.add(teacher)
             await self.db.commit()
             return await self._get_loaded_user(dup_user.id)
 
-        # Retrieve school and role before creating user to avoid lazy load MissingGreenlet
-        stmt_sc = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
-        res_sc = await self.db.execute(stmt_sc)
-        school = res_sc.scalar_one_or_none()
+        # Generate password
+        if settings.DEBUG:
+            temp_pwd = "EduPulse@123"
+        else:
+            temp_pwd = generate_secure_temp_password()
 
-        stmt_r = select(Role).where(
-            Role.tenant_id == tenant_id,
-            or_(func.upper(Role.code) == "TEACHER", func.upper(Role.name) == "TEACHER"),
-            Role.deleted_at.is_(None)
-        )
-        res_r = await self.db.execute(stmt_r)
-        role = res_r.scalar_one_or_none()
-        if not role:
-            role = Role(
-                tenant_id=tenant_id,
-                name="Teacher",
-                code="TEACHER",
-                is_system=True,
-                version=1
-            )
-            self.db.add(role)
-            await self.db.flush()
-
-        # Create transient new user
-        temp_pwd = "EduPulse@123"
         hashed = hash_password(temp_pwd)
         new_user = User(
             email=teacher.official_email,
@@ -124,10 +206,8 @@ class IdentityProvisioningService:
             created_by=current_user_id
         )
 
-        if school:
-            new_user.schools.append(school)
-        if role:
-            new_user.roles.append(role)
+        new_user.schools.append(school)
+        new_user.roles.append(role)
 
         self.db.add(new_user)
         await self.db.flush()
@@ -137,13 +217,18 @@ class IdentityProvisioningService:
         self.db.add(teacher)
         
         await self.db.commit()
-        return await self._get_loaded_user(new_user.id)
+
+        # Set transient password attribute for UAT responses
+        user_loaded = await self._get_loaded_user(new_user.id)
+        user_loaded.temp_password = temp_pwd
+        return user_loaded
 
     async def provision_guardian(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, guardian_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None
     ) -> User:
         """
         Creates an authenticated User account for a Guardian profile if not already provisioned.
+        Generates and assigns a sequence-based Parent Login ID.
         """
         # Load guardian
         stmt_g = select(Guardian).where(Guardian.id == guardian_id, Guardian.tenant_id == tenant_id)
@@ -151,6 +236,21 @@ class IdentityProvisioningService:
         guardian = res_g.scalar_one_or_none()
         if not guardian:
             raise HTTPException(status_code=404, detail="Guardian profile not found.")
+
+        # Load school
+        stmt_sc = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
+        res_sc = await self.db.execute(stmt_sc)
+        school = res_sc.scalar_one_or_none()
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found.")
+
+        if not school.code or not school.code.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"School code is missing for school '{school.name}'. Cannot generate Parent Login ID."
+            )
+
+        role = await self._get_role(tenant_id, "PARENT", "Parent")
 
         # Check if already provisioned
         if guardian.user_id:
@@ -160,6 +260,26 @@ class IdentityProvisioningService:
             res_u = await self.db.execute(stmt_u)
             existing_user = res_u.scalar_one_or_none()
             if existing_user:
+                # Validate tenant isolation
+                if existing_user.tenant_id != tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Guardian user belongs to a different tenant context."
+                    )
+                # Self-heal missing fields
+                needs_update = False
+                if not existing_user.login_id:
+                    existing_user.login_id = await self._generate_parent_login_id(tenant_id, school_id, school.code)
+                    needs_update = True
+                if role not in existing_user.roles:
+                    existing_user.roles.append(role)
+                    needs_update = True
+                if school not in existing_user.schools:
+                    existing_user.schools.append(school)
+                    needs_update = True
+                if needs_update:
+                    self.db.add(existing_user)
+                    await self.db.flush()
                 return existing_user
 
         # Resolve email
@@ -192,39 +312,39 @@ class IdentityProvisioningService:
                     detail=f"Email/Mobile is already associated with another parent identity."
                 )
             
+            # Self-heal role/school mappings and login ID
+            needs_update = False
+            if not dup_user.login_id:
+                dup_user.login_id = await self._generate_parent_login_id(tenant_id, school_id, school.code)
+                needs_update = True
+            if role not in dup_user.roles:
+                dup_user.roles.append(role)
+                needs_update = True
+            if school not in dup_user.schools:
+                dup_user.schools.append(school)
+                needs_update = True
+            if needs_update:
+                self.db.add(dup_user)
+                await self.db.flush()
+
             guardian.user_id = dup_user.id
             self.db.add(guardian)
             await self.db.commit()
             return await self._get_loaded_user(dup_user.id)
 
-        # Retrieve school and role before creating user to avoid lazy load MissingGreenlet
-        stmt_sc = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
-        res_sc = await self.db.execute(stmt_sc)
-        school = res_sc.scalar_one_or_none()
+        # Generate Login ID
+        login_id = await self._generate_parent_login_id(tenant_id, school_id, school.code)
 
-        stmt_r = select(Role).where(
-            Role.tenant_id == tenant_id,
-            or_(func.upper(Role.code) == "PARENT", func.upper(Role.name) == "PARENT"),
-            Role.deleted_at.is_(None)
-        )
-        res_r = await self.db.execute(stmt_r)
-        role = res_r.scalar_one_or_none()
-        if not role:
-            role = Role(
-                tenant_id=tenant_id,
-                name="Parent",
-                code="PARENT",
-                is_system=True,
-                version=1
-            )
-            self.db.add(role)
-            await self.db.flush()
+        # Generate password
+        if settings.DEBUG:
+            temp_pwd = "EduPulse@123"
+        else:
+            temp_pwd = generate_secure_temp_password()
 
-        # Create transient new user
-        temp_pwd = "EduPulse@123"
         hashed = hash_password(temp_pwd)
         new_user = User(
             email=email,
+            login_id=login_id,
             hashed_password=hashed,
             first_name=guardian.first_name,
             last_name=guardian.last_name,
@@ -236,10 +356,8 @@ class IdentityProvisioningService:
             created_by=current_user_id
         )
 
-        if school:
-            new_user.schools.append(school)
-        if role:
-            new_user.roles.append(role)
+        new_user.schools.append(school)
+        new_user.roles.append(role)
 
         self.db.add(new_user)
         await self.db.flush()
@@ -249,7 +367,11 @@ class IdentityProvisioningService:
         self.db.add(guardian)
         
         await self.db.commit()
-        return await self._get_loaded_user(new_user.id)
+
+        # Set transient password attribute for UAT responses
+        user_loaded = await self._get_loaded_user(new_user.id)
+        user_loaded.temp_password = temp_pwd
+        return user_loaded
 
     async def provision_principal(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, principal_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None
@@ -274,25 +396,13 @@ class IdentityProvisioningService:
         res_sc = await self.db.execute(stmt_sc)
         school = res_sc.scalar_one_or_none()
 
-        stmt_r = select(Role).where(
-            Role.tenant_id == tenant_id,
-            or_(func.upper(Role.code) == "PRINCIPAL", func.upper(Role.name) == "PRINCIPAL"),
-            Role.deleted_at.is_(None)
-        )
-        res_r = await self.db.execute(stmt_r)
-        role = res_r.scalar_one_or_none()
-        if not role:
-            role = Role(
-                tenant_id=tenant_id,
-                name="Principal",
-                code="PRINCIPAL",
-                is_system=True,
-                version=1
-            )
-            self.db.add(role)
-            await self.db.flush()
+        role = await self._get_role(tenant_id, "PRINCIPAL", "Principal")
 
-        temp_pwd = "EduPulse@123"
+        if settings.DEBUG:
+            temp_pwd = "EduPulse@123"
+        else:
+            temp_pwd = generate_secure_temp_password()
+
         hashed = hash_password(temp_pwd)
         new_user = User(
             email=email,
@@ -309,14 +419,16 @@ class IdentityProvisioningService:
 
         if school:
             new_user.schools.append(school)
-        if role:
-            new_user.roles.append(role)
+        new_user.roles.append(role)
 
         self.db.add(new_user)
         await self.db.flush()
 
         await self.db.commit()
-        return await self._get_loaded_user(new_user.id)
+
+        user_loaded = await self._get_loaded_user(new_user.id)
+        user_loaded.temp_password = temp_pwd
+        return user_loaded
 
     async def provision_staff(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, staff_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None
@@ -341,25 +453,13 @@ class IdentityProvisioningService:
         res_sc = await self.db.execute(stmt_sc)
         school = res_sc.scalar_one_or_none()
 
-        stmt_r = select(Role).where(
-            Role.tenant_id == tenant_id,
-            or_(func.upper(Role.code) == "STAFF", func.upper(Role.name) == "STAFF"),
-            Role.deleted_at.is_(None)
-        )
-        res_r = await self.db.execute(stmt_r)
-        role = res_r.scalar_one_or_none()
-        if not role:
-            role = Role(
-                tenant_id=tenant_id,
-                name="Staff",
-                code="STAFF",
-                is_system=True,
-                version=1
-            )
-            self.db.add(role)
-            await self.db.flush()
+        role = await self._get_role(tenant_id, "STAFF", "Staff")
 
-        temp_pwd = "EduPulse@123"
+        if settings.DEBUG:
+            temp_pwd = "EduPulse@123"
+        else:
+            temp_pwd = generate_secure_temp_password()
+
         hashed = hash_password(temp_pwd)
         new_user = User(
             email=email,
@@ -376,14 +476,16 @@ class IdentityProvisioningService:
 
         if school:
             new_user.schools.append(school)
-        if role:
-            new_user.roles.append(role)
+        new_user.roles.append(role)
 
         self.db.add(new_user)
         await self.db.flush()
 
         await self.db.commit()
-        return await self._get_loaded_user(new_user.id)
+
+        user_loaded = await self._get_loaded_user(new_user.id)
+        user_loaded.temp_password = temp_pwd
+        return user_loaded
 
     async def activate_user(self, tenant_id: uuid.UUID, user_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None) -> User:
         stmt = select(User).where(User.id == user_id, User.tenant_id == tenant_id, User.deleted_at.is_(None))
@@ -414,7 +516,11 @@ class IdentityProvisioningService:
         if not user:
             raise HTTPException(status_code=404, detail="User not found.")
         
-        temp_pwd = "EduPulse@123"
+        if settings.DEBUG:
+            temp_pwd = "EduPulse@123"
+        else:
+            temp_pwd = generate_secure_temp_password()
+
         user.hashed_password = hash_password(temp_pwd)
         user.must_change_password = True
         user.failed_login_attempts = 0

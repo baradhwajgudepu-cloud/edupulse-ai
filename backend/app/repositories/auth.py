@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User, UserStatus
@@ -33,6 +33,20 @@ class UserRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_id_platform(self, user_id: uuid.UUID) -> Optional[User]:
+        """
+        Retrieves a single user by ID globally without tenant restriction, loading roles/permissions.
+        """
+        stmt = select(User).where(
+            User.id == user_id,
+            User.deleted_at.is_(None)
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_email(self, email: str, tenant_id: uuid.UUID) -> Optional[User]:
         """
         Retrieves a single user by email within the tenant boundary, loading permissions.
@@ -40,6 +54,35 @@ class UserRepository:
         stmt = select(User).where(
             User.email == email,
             User.tenant_id == tenant_id,
+            User.deleted_at.is_(None)
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_email_or_login_id(self, identifier: str, tenant_id: uuid.UUID) -> Optional[User]:
+        """
+        Retrieves a single user by email or login_id within the tenant boundary, loading permissions.
+        """
+        stmt = select(User).where(
+            or_(func.lower(User.email) == identifier.lower(), func.lower(User.login_id) == identifier.lower()),
+            User.tenant_id == tenant_id,
+            User.deleted_at.is_(None)
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_email_platform(self, email: str) -> Optional[User]:
+        """
+        Retrieves a single user by email globally without tenant restriction, loading permissions.
+        """
+        stmt = select(User).where(
+            User.email == email,
             User.deleted_at.is_(None)
         ).options(
             selectinload(User.roles).selectinload(Role.permissions),
@@ -206,12 +249,13 @@ class RefreshTokenRepository:
         return result.scalar_one_or_none()
 
     async def create(
-        self, user_id: uuid.UUID, token_hash: str, expires_at: datetime, created_by_ip: Optional[str] = None
+        self, user_id: uuid.UUID, token_hash: str, expires_at: datetime, tenant_id: Optional[uuid.UUID] = None, created_by_ip: Optional[str] = None
     ) -> RefreshToken:
         db_obj = RefreshToken(
             user_id=user_id,
             token_hash=token_hash,
             expires_at=expires_at,
+            tenant_id=tenant_id,
             created_by_ip=created_by_ip
         )
         self.db.add(db_obj)

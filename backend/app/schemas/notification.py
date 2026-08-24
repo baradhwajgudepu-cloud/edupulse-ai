@@ -1,8 +1,11 @@
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field, ConfigDict
-from app.models.notification import NotificationType, NotificationPriority, NotificationStatus, NotificationTargetRole
+from app.models.notification import (
+    NotificationType, NotificationPriority, NotificationStatus,
+    NotificationTargetRole, NotificationDeliveryChannel, NotificationDeliveryStatus
+)
 
 class NotificationCreate(BaseModel):
     """
@@ -17,8 +20,17 @@ class NotificationCreate(BaseModel):
     target_user_id: Optional[uuid.UUID] = None
     related_module: Optional[str] = Field(None, max_length=100)
     related_record_id: Optional[uuid.UUID] = None
+    student_id: Optional[uuid.UUID] = None
+    event_key: Optional[str] = Field(None, max_length=500)
     settings: Optional[Dict[str, Any]] = None
     ai_metrics: Optional[Dict[str, Any]] = None
+    
+    # Extended fields
+    scheduled_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    sender_id: Optional[uuid.UUID] = None
+    event_type: Optional[str] = Field(None, max_length=100)
+    idempotency_key: Optional[str] = Field(None, max_length=500)
 
 
 class NotificationUpdate(BaseModel):
@@ -44,6 +56,11 @@ class NotificationResponse(BaseModel):
     target_user_id: Optional[uuid.UUID]
     related_module: Optional[str]
     related_record_id: Optional[uuid.UUID]
+    student_id: Optional[uuid.UUID]
+    event_key: Optional[str]
+    push_status: str
+    email_status: str
+    sms_status: str
     status: NotificationStatus
     is_push_sent: bool
     is_email_sent: bool
@@ -54,6 +71,37 @@ class NotificationResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+
+    # Extended fields
+    scheduled_at: Optional[datetime]
+    published_at: Optional[datetime]
+    sender_id: Optional[uuid.UUID]
+    event_type: Optional[str]
+    idempotency_key: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeviceTokenCreate(BaseModel):
+    device_token: str = Field(..., max_length=500)
+    platform: str = Field(..., max_length=50)  # "android", "ios", "web"
+    app_type: str = Field(..., max_length=50)  # "admin", "principal", "teacher", "parent"
+
+
+class DeviceTokenDeactivate(BaseModel):
+    device_token: str = Field(..., max_length=500)
+
+
+class DeviceTokenResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    user_id: uuid.UUID
+    device_token: str
+    platform: str
+    app_type: str
+    last_seen_at: datetime
+    is_active: bool
+    version: int
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -75,6 +123,8 @@ class NotificationPreferenceResponse(BaseModel):
     enable_push: bool
     enable_email: bool
     enable_sms: bool
+    enable_whatsapp: bool
+    enable_in_app: bool
     version: int
     created_at: datetime
     updated_at: datetime
@@ -96,6 +146,8 @@ class NotificationPreferenceUpdate(BaseModel):
     enable_push: Optional[bool] = None
     enable_email: Optional[bool] = None
     enable_sms: Optional[bool] = None
+    enable_whatsapp: Optional[bool] = None
+    enable_in_app: Optional[bool] = None
 
 
 class UnreadCountResponse(BaseModel):
@@ -103,3 +155,27 @@ class UnreadCountResponse(BaseModel):
     Schema representing total unread notifications count.
     """
     unread_count: int
+
+
+class NotificationDeliveryResponse(BaseModel):
+    """
+    Schema representing delivery record details.
+    """
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    notification_id: uuid.UUID
+    recipient_id: uuid.UUID
+    channel: NotificationDeliveryChannel
+    provider: str
+    provider_message_id: Optional[str]
+    status: NotificationDeliveryStatus
+    error_code: Optional[str]
+    error_message: Optional[str]
+    sent_at: Optional[datetime]
+    delivered_at: Optional[datetime]
+    read_at: Optional[datetime]
+    failed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

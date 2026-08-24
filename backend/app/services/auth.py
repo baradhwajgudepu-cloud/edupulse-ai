@@ -44,7 +44,7 @@ class AuthService:
         """
         Authenticates user. Throttles brute-force attempts and updates login audit fields.
         """
-        user = await self.user_repo.get_by_email(login_in.email, tenant_id)
+        user = await self.user_repo.get_by_email_or_login_id(login_in.email, tenant_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -99,14 +99,83 @@ class AuthService:
         await self.user_repo.db.commit()
         return user
 
+    async def authenticate_platform(self, login_in: LoginRequest) -> User:
+        """
+        Authenticates platform administrator.
+        """
+        user = await self.user_repo.get_by_email_platform(login_in.email)
+        if not user:
+            # Timing leak protection
+            verify_password(login_in.password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$P13Z840YqZ7jI7w1gS3W7Q")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password."
+            )
+
+        # 1. Lockout verification
+        now = datetime.now(timezone.utc)
+        if user.status == UserStatus.LOCKED:
+            locked_until = user.locked_until
+            if locked_until:
+                if locked_until.tzinfo is None:
+                    locked_until = locked_until.replace(tzinfo=timezone.utc)
+                if locked_until > now:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=f"This account is locked due to multiple login failures. Try again after {locked_until}."
+                    )
+            else:
+                user.status = UserStatus.ACTIVE
+                user.failed_login_attempts = 0
+                user.locked_until = None
+
+        if user.status != UserStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Account status is currently '{user.status}'."
+            )
+
+        # 2. Password verification
+        if not verify_password(login_in.password, user.hashed_password):
+            user.failed_login_attempts += 1
+            if user.failed_login_attempts >= 5:
+                user.status = UserStatus.LOCKED
+                user.locked_until = now + timedelta(minutes=15)
+                await self.user_repo.db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Too many failed login attempts. Your account has been locked for 15 minutes."
+                )
+            await self.user_repo.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password."
+            )
+
+        # 3. Verify user has platform admin role (SUPER_ADMIN or is_superuser)
+        is_platform_admin = user.is_superuser or any(role.code == "SUPER_ADMIN" for role in user.roles)
+        if not is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Insufficient platform permissions."
+            )
+
+        # 4. Successful authentication details
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.last_login = now
+        await self.user_repo.db.commit()
+        return user
+
     async def create_tokens(
-        self, user: User, client_ip: Optional[str] = None
+        self, user: User, client_ip: Optional[str] = None, is_platform: bool = False
     ) -> TokenResponse:
         """
         Generates access token and refresh token pair, hashing and saving the refresh token.
         """
         # Minimal Access Token claims
-        access_token = create_access_token(subject=user.id, tenant_id=user.tenant_id)
+        tenant_id = None if is_platform else user.tenant_id
+        access_token = create_access_token(subject=user.id, tenant_id=tenant_id)
         
         # Cryptographically strong Refresh Token
         raw_refresh = secrets.token_hex(32)
@@ -117,6 +186,7 @@ class AuthService:
             user_id=user.id,
             token_hash=token_hash,
             expires_at=expires_at,
+            tenant_id=tenant_id,
             created_by_ip=client_ip
         )
         return TokenResponse(access_token=access_token, refresh_token=raw_refresh)
@@ -169,7 +239,8 @@ class AuthService:
 
         # 4. Invalidate old token and issue new rotated pair
         await self.refresh_repo.revoke(db_token)
-        return await self.create_tokens(user, client_ip=client_ip)
+        is_platform = (db_token.tenant_id is None)
+        return await self.create_tokens(user, client_ip=client_ip, is_platform=is_platform)
 
     async def logout(self, raw_refresh_token: str) -> None:
         """

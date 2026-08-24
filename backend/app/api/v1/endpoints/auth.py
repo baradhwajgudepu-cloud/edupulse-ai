@@ -45,6 +45,27 @@ async def login(
     )
 
 @router.post(
+    "/auth/platform-login",
+    response_model=APIResponse[TokenResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Platform Administrator Login",
+    description="Authenticates platform administrator credentials without tenant headers."
+)
+async def platform_login(
+    request: Request,
+    login_in: LoginRequest,
+    service: AuthService = Depends(get_auth_service)
+) -> APIResponse[TokenResponse]:
+    client_ip = request.client.host if request.client else None
+    user = await service.authenticate_platform(login_in)
+    token_data = await service.create_tokens(user, client_ip=client_ip, is_platform=True)
+    return APIResponse[TokenResponse](
+        success=True,
+        message="Platform login successful.",
+        data=token_data
+    )
+
+@router.post(
     "/auth/refresh",
     response_model=APIResponse[TokenResponse],
     status_code=status.HTTP_200_OK,
@@ -92,10 +113,13 @@ async def logout(
 async def get_me(
     current_user: User = Depends(get_current_user)
 ) -> APIResponse[UserResponse]:
+    user_response = UserResponse.model_validate(current_user)
+    if getattr(current_user, "is_platform_session", False):
+        user_response.tenant_id = None
     return APIResponse[UserResponse](
         success=True,
         message="Current user profile retrieved.",
-        data=UserResponse.model_validate(current_user)
+        data=user_response
     )
 
 @router.post(

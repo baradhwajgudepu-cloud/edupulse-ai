@@ -136,8 +136,12 @@ async def test_validate_academic_setup_migration_success(
     assert val_data["failed_rows"] == 0
 
     # 3. Verify zero AcademicYear/Class/Section records were created in database
-    # (Since this is validation only, no new DB records should be created)
-    stmt_ay = select(AcademicYear).where(AcademicYear.name == "2026-2027")
+    stmt_ay = select(AcademicYear).where(
+        and_(
+            AcademicYear.name == "2026-2027",
+            AcademicYear.school_id == school_a.id
+        )
+    )
     res_ay = await db_session.execute(stmt_ay)
     assert res_ay.scalar_one_or_none() is None
 

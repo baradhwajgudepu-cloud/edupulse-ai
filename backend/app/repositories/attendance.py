@@ -71,6 +71,7 @@ class AttendanceRepository:
         section_id: Optional[uuid.UUID] = None,
         attendance_date: Optional[date] = None,
         status: Optional[AttendanceSessionStatus] = None,
+        teacher_id: Optional[uuid.UUID] = None,
         skip: int = 0,
         limit: int = 100
     ) -> List[AttendanceSession]:
@@ -89,6 +90,8 @@ class AttendanceRepository:
             filters.append(AttendanceSession.attendance_date == attendance_date)
         if status:
             filters.append(AttendanceSession.status == status)
+        if teacher_id:
+            filters.append(AttendanceSession.teacher_id == teacher_id)
 
         stmt = (
             select(AttendanceSession)

@@ -3,13 +3,15 @@ import os
 import logging
 from typing import List, Optional
 from datetime import date
+import io
 from fastapi import APIRouter, Depends, status, HTTPException, Header, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.api.dependencies.auth import require_permission, get_current_user
-from app.api.dependencies.common import get_tenant_id
+from app.api.dependencies.common import get_tenant_id, get_school_id
 from app.api.dependencies.fee import get_fee_service
 from app.services.fee import FeeService
+from app.services.storage import get_storage_service, StorageService
 from app.schemas.fee import (
     FeeTypeCreate, FeeTypeUpdate, FeeTypeResponse,
     ScholarshipCreate, ScholarshipUpdate, ScholarshipResponse,
@@ -25,23 +27,65 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-async def get_school_id(
-    x_school_id: Optional[str] = Header(None, alias="X-School-ID", description="Active School UUID")
-) -> uuid.UUID:
-    if not x_school_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-School-ID header is missing."
-        )
-    try:
-        return uuid.UUID(x_school_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid X-School-ID header format. Must be a valid UUID."
-        )
-
 router = APIRouter()
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
+
+async def verify_student_access(
+    current_user: User,
+    student_id: uuid.UUID,
+    student_section_id: uuid.UUID,
+    db: AsyncSession
+) -> None:
+    from app.models.guardian import StudentGuardian, Guardian
+    from app.models.teacher import Teacher
+    from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+
+    user_roles = {r.code for r in current_user.roles}
+    user_names = {r.name for r in current_user.roles}
+    
+    if current_user.is_superuser or any(code in ["SUPER_ADMIN", "ADMIN", "PRINCIPAL", "STAFF"] for code in user_roles):
+        return
+        
+    if "PARENT" in user_roles or "Parent" in user_names:
+        stmt = select(StudentGuardian).join(Guardian).where(
+            StudentGuardian.student_id == student_id,
+            Guardian.user_id == current_user.id
+        )
+        res = await db.execute(stmt)
+        if not res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only access your own child's fee data."
+            )
+            
+    elif "TEACHER" in user_roles or "Teacher" in user_names:
+        stmt_teach = select(Teacher).where(Teacher.user_id == current_user.id)
+        res_teach = await db.execute(stmt_teach)
+        teacher = res_teach.scalar_one_or_none()
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Teacher profile not found."
+            )
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.section_id == student_section_id,
+            TeacherSubjectAssignment.deleted_at.is_(None)
+        )
+        res_tsa = await db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You are not assigned to this student's section."
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Insufficient role permissions."
+        )
 
 # --- FEE TYPE ENDPOINTS ---
 @router.post(
@@ -421,14 +465,40 @@ async def get_receipt(
 )
 async def download_receipt(
     receipt_number: str,
-    current_user: User = Depends(require_permission("fee.report")),
+    current_user: User = Depends(require_permission("fee.read")),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
-    service: FeeService = Depends(get_fee_service)
-):
+    service: FeeService = Depends(get_fee_service),
+    storage_service: StorageService = Depends(get_storage_service),
+    db: AsyncSession = Depends(get_db)
+) -> StreamingResponse:
     receipt = await service.fee_repo.get_receipt_by_number(receipt_number, tenant_id)
-    if not receipt or not receipt.pdf_path or not os.path.exists(receipt.pdf_path):
-        raise HTTPException(status_code=404, detail="PDF Receipt file not found on disk.")
-    return FileResponse(receipt.pdf_path, media_type="application/pdf", filename=f"{receipt_number}.pdf")
+    if not receipt or not receipt.pdf_path:
+        raise HTTPException(status_code=404, detail="PDF Receipt file record not found.")
+    
+    from app.models.fee import FeePayment
+    from sqlalchemy.orm import selectinload
+    stmt_payment = select(FeePayment).where(FeePayment.id == receipt.payment_id).options(selectinload(FeePayment.student))
+    res_payment = await db.execute(stmt_payment)
+    payment = res_payment.scalar_one_or_none()
+    if not payment or not payment.student:
+        raise HTTPException(status_code=404, detail="Payment student record not found.")
+
+    await verify_student_access(current_user, payment.student_id, payment.student.section_id, db)
+    
+    try:
+        pdf_bytes = await storage_service.download(receipt.pdf_path)
+    except FileNotFoundError:
+        if os.path.exists(receipt.pdf_path):
+            with open(receipt.pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+        else:
+            raise HTTPException(status_code=404, detail="PDF Receipt file not found in storage.")
+        
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{receipt_number}.pdf"'}
+    )
 
 
 # --- STUDENT LEDGER ---
@@ -441,8 +511,17 @@ async def get_student_ledger(
     student_id: uuid.UUID,
     current_user: User = Depends(require_permission("fee.read")),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
-    service: FeeService = Depends(get_fee_service)
+    service: FeeService = Depends(get_fee_service),
+    db: AsyncSession = Depends(get_db)
 ) -> APIResponse[StudentLedgerResponse]:
+    from app.models.student import Student
+    stmt_st = select(Student).where(Student.id == student_id, Student.tenant_id == tenant_id, Student.deleted_at.is_(None))
+    res_st = await db.execute(stmt_st)
+    student = res_st.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    await verify_student_access(current_user, student_id, student.section_id, db)
     ledger = await service.get_student_ledger(student_id, tenant_id)
     return APIResponse(
         success=True,

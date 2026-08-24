@@ -123,6 +123,18 @@ class TeacherSubjectAssignmentService:
             tenant_id=tenant_id
         )
         if overlaps:
+            for o in overlaps:
+                if (o.teacher_id == obj_in.teacher_id and
+                    o.subject_id == obj_in.subject_id and
+                    o.class_id == obj_in.class_id and
+                    o.section_id == obj_in.section_id and
+                    o.academic_year_id == obj_in.academic_year_id and
+                    o.effective_from == obj_in.effective_from and
+                    o.effective_to == obj_in.effective_to):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Teacher subject assignment already exists."
+                    )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Assignment date range overlaps with another active assignment for this teacher."
@@ -199,6 +211,18 @@ class TeacherSubjectAssignmentService:
             # Filter out current mapping
             overlaps = [o for o in overlaps if o.id != db_obj.id]
             if overlaps:
+                for o in overlaps:
+                    if (o.teacher_id == db_obj.teacher_id and
+                        o.subject_id == db_obj.subject_id and
+                        o.class_id == db_obj.class_id and
+                        o.section_id == db_obj.section_id and
+                        o.academic_year_id == db_obj.academic_year_id and
+                        o.effective_from == effective_from and
+                        o.effective_to == effective_to):
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Teacher subject assignment already exists."
+                        )
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Assignment date range overlaps with another active assignment for this teacher."

@@ -93,13 +93,13 @@ pip install -r requirements.txt
 ### 2. Run the Application
 Start the development server:
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-The server will start at `http://127.0.0.1:8000`.
+The server will start at `http://0.0.0.0:8000` (accessible locally and on your Wi-Fi network via `http://192.168.31.132:8000`).
 
 ### 3. Check System Health
 Access the custom health check endpoint at:
-`http://127.0.0.1:8000/api/v1/system/health`
+`http://127.0.0.1:8000/api/v1/system/health` (or `http://192.168.31.132:8000/api/v1/system/health`)
 
 It verifies:
 - API online status and version info.

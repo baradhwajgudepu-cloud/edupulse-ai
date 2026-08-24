@@ -551,4 +551,213 @@ async def test_pdf_download_and_verification(client: AsyncClient, setup_report_t
     resp_dl = await client.get(f"/api/v1/report-cards/download/{student_id}?school_id={school_id}", headers=headers)
     assert resp_dl.status_code == 200
     assert resp_dl.headers["content-type"] == "application/pdf"
-    assert b"Mock Printable Report Card PDF Content" in resp_dl.content
+    assert b"%PDF" in resp_dl.content
+
+@pytest.mark.anyio
+async def test_report_card_security_restrictions(client: AsyncClient, setup_report_test_data, db_session: AsyncSession) -> None:
+    from app.schemas.auth import UserCreate
+    
+    data = setup_report_test_data
+    school_id = data["school_a"].id
+    student_id = data["stud1"].id
+    tenant_id = data["tenant_a"].id
+    
+    # Seed marks
+    mark = Marks(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=data["ay_a"].id,
+        examination_id=data["exam"].id,
+        exam_schedule_id=data["sched"].id,
+        student_id=student_id,
+        teacher_subject_assignment_id=data["tsa_a"].id,
+        teacher_id=data["teacher_a"].id,
+        subject_id=data["subject_a"].id,
+        class_id=data["class_a"].id,
+        section_id=data["sec_a1"].id,
+        maximum_marks=100,
+        marks_obtained=90.0,
+        result_status=ExamResult.PRESENT,
+        status=MarksStatus.PUBLISHED,
+        created_by=data["user_admin"].id,
+        updated_by=data["user_admin"].id
+    )
+    db_session.add(mark)
+    await db_session.commit()
+    
+    payload = {
+        "student_id": str(student_id),
+        "school_id": str(school_id),
+        "teacher_remarks": "Excellent job"
+    }
+    await client.post("/api/v1/report-cards/generate", json=payload, headers=data["auth_headers"])
+    
+    # Check permissions
+    stmt_p = select(Permission).where(Permission.code.in_(["report_card.download", "report_card.read"]))
+    res_p = await db_session.execute(stmt_p)
+    rc_perms = list(res_p.scalars().all())
+    
+    parent_role = Role(name="Parent", code="PARENT", is_system=False, tenant_id=tenant_id)
+    parent_role.permissions = rc_perms
+    db_session.add(parent_role)
+    await db_session.commit()
+    
+    repo_user = UserRepository(db_session)
+    repo_role = RoleRepository(db_session)
+    repo_perm = PermissionRepository(db_session)
+    repo_refresh = RefreshTokenRepository(db_session)
+    repo_school = SchoolRepository(db_session)
+    
+    auth_s = AuthService(repo_user, repo_role, repo_perm, repo_refresh, repo_school)
+
+    # Parent 1: Vikram Rao (linked)
+    user_p1 = await auth_s.create_user(tenant_id, UserCreate(email="vikram@demo.com", password="SecurePassword123!", first_name="Vikram", last_name="Rao"))
+    user_p1.roles = [parent_role]
+    db_session.add(user_p1)
+    await db_session.commit()
+    
+    guard1 = Guardian(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        guardian_type=GuardianType.FATHER,
+        first_name="Vikram",
+        last_name="Rao",
+        gender=StudentGender.MALE,
+        date_of_birth=date(1980, 1, 1),
+        mobile="+919876543210",
+        email="vikram@demo.com",
+        address={},
+        communication_preferences={},
+        is_active=True,
+        user_id=user_p1.id
+    )
+    db_session.add(guard1)
+    await db_session.flush()
+    
+    sg1 = StudentGuardian(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        student_id=student_id,
+        guardian_id=guard1.id,
+        relationship=StudentGuardianRelationship.FATHER,
+        is_primary=True,
+        can_pickup_student=True,
+        receives_notifications=True
+    )
+    db_session.add(sg1)
+    await db_session.commit()
+    
+    # Parent 2: Unlinked
+    user_p2 = await auth_s.create_user(tenant_id, UserCreate(email="unlinked@demo.com", password="SecurePassword123!", first_name="Unlinked", last_name="Parent"))
+    user_p2.roles = [parent_role]
+    db_session.add(user_p2)
+    await db_session.commit()
+    
+    guard2 = Guardian(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        guardian_type=GuardianType.MOTHER,
+        first_name="Unlinked",
+        last_name="Parent",
+        gender=StudentGender.FEMALE,
+        date_of_birth=date(1982, 1, 1),
+        mobile="+919876543211",
+        email="unlinked@demo.com",
+        address={},
+        communication_preferences={},
+        is_active=True,
+        user_id=user_p2.id
+    )
+    db_session.add(guard2)
+    await db_session.commit()
+    
+    from app.api.dependencies.auth import get_current_user
+    from app.main import app
+
+    active_user = None
+
+    async def mock_get_current_user_override():
+        return active_user
+
+    app.dependency_overrides[get_current_user] = mock_get_current_user_override
+
+    try:
+        token_p1 = await auth_s.create_tokens(user_p1)
+        headers_p1 = {"Authorization": f"Bearer {token_p1.access_token}", "X-Tenant-ID": str(tenant_id)}
+        
+        token_p2 = await auth_s.create_tokens(user_p2)
+        headers_p2 = {"Authorization": f"Bearer {token_p2.access_token}", "X-Tenant-ID": str(tenant_id)}
+        
+        # Linked parent can download
+        active_user = user_p1
+        resp_p1 = await client.get(f"/api/v1/report-cards/download/{student_id}?school_id={school_id}", headers=headers_p1)
+        assert resp_p1.status_code == 200
+        assert resp_p1.headers["content-type"] == "application/pdf"
+        
+        # Unlinked parent gets 403
+        active_user = user_p2
+        resp_p2 = await client.get(f"/api/v1/report-cards/download/{student_id}?school_id={school_id}", headers=headers_p2)
+        assert resp_p2.status_code == 403
+        assert "Access denied" in resp_p2.json()["message"]
+        
+        # Create Teacher role
+        teacher_role = Role(name="Teacher", code="TEACHER", is_system=False, tenant_id=tenant_id)
+        teacher_role.permissions = rc_perms
+        db_session.add(teacher_role)
+        await db_session.commit()
+        
+        # Teacher 1: Assigned (John Doe)
+        user_t1 = await auth_s.create_user(tenant_id, UserCreate(email="john.doe@edu.com", password="SecurePassword123!", first_name="John", last_name="Doe", school_ids=[school_id]))
+        user_t1.roles = [teacher_role]
+        db_session.add(user_t1)
+        await db_session.commit()
+        
+        data["teacher_a"].user_id = user_t1.id
+        db_session.add(data["teacher_a"])
+        await db_session.commit()
+        
+        # Teacher 2: Unassigned
+        user_t2 = await auth_s.create_user(tenant_id, UserCreate(email="unassigned.t@edu.com", password="SecurePassword123!", first_name="Unassigned", last_name="Teacher", school_ids=[school_id]))
+        user_t2.roles = [teacher_role]
+        db_session.add(user_t2)
+        await db_session.commit()
+        
+        teacher2 = Teacher(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            employee_code="EMP-T2",
+            staff_code="STF-T2",
+            first_name="Unassigned",
+            last_name="Teacher",
+            gender=StudentGender.FEMALE,
+            date_of_birth=date(1990, 1, 1),
+            mobile="+919876543212",
+            official_email="unassigned.t@edu.com",
+            joining_date=date(2025, 1, 1),
+            employment_type=EmploymentType.FULL_TIME,
+            user_id=user_t2.id,
+            is_active=True
+        )
+        db_session.add(teacher2)
+        await db_session.commit()
+        
+        token_t1 = await auth_s.create_tokens(user_t1)
+        headers_t1 = {"Authorization": f"Bearer {token_t1.access_token}", "X-Tenant-ID": str(tenant_id)}
+        
+        token_t2 = await auth_s.create_tokens(user_t2)
+        headers_t2 = {"Authorization": f"Bearer {token_t2.access_token}", "X-Tenant-ID": str(tenant_id)}
+        
+        # Assigned teacher can download
+        active_user = user_t1
+        resp_t1 = await client.get(f"/api/v1/report-cards/download/{student_id}?school_id={school_id}", headers=headers_t1)
+        assert resp_t1.status_code == 200
+        
+        # Unassigned teacher gets 403
+        active_user = user_t2
+        resp_t2 = await client.get(f"/api/v1/report-cards/download/{student_id}?school_id={school_id}", headers=headers_t2)
+        assert resp_t2.status_code == 403
+        assert "Access denied" in resp_t2.json()["message"]
+        
+    finally:
+        if get_current_user in app.dependency_overrides:
+            del app.dependency_overrides[get_current_user]

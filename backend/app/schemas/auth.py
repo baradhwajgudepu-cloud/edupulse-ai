@@ -29,7 +29,7 @@ def validate_password_strength(password: str) -> str:
 # --- AUTHENTICATION SCHEMAS ---
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 class TokenResponse(BaseModel):
@@ -124,9 +124,11 @@ class SchoolStub(BaseModel):
 
 class UserResponse(UserBase):
     id: uuid.UUID
-    tenant_id: uuid.UUID
+    tenant_id: Optional[uuid.UUID] = None
+    login_id: Optional[str] = None
     status: UserStatus
     is_superuser: bool
+    must_change_password: bool = False
     schools: List[SchoolStub] = Field(default_factory=list)
     roles: List[RoleResponse] = Field(default_factory=list)
     version: int
@@ -150,3 +152,11 @@ class BootstrapRequest(BaseModel):
 class BootstrapResponse(BaseModel):
     message: str = "System initialized successfully."
     admin_email: str
+
+class ProvisioningCredentialResponse(BaseModel):
+    user_id: uuid.UUID
+    login_id: Optional[str] = None
+    email: str
+    temporary_password: Optional[str] = None
+    role: str
+

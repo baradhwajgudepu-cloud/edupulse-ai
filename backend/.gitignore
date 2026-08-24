@@ -1,0 +1,15 @@
+.env.local
+.env.*.local
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+static/report_cards/
+static/receipts/
+static/imports/
+storage/
+*.pdf
+*.log

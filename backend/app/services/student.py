@@ -205,6 +205,84 @@ class StudentService:
 
         update_data = obj_in.model_dump(exclude_unset=True)
 
+        # Re-allocation validations
+        if obj_in.academic_year_id or obj_in.class_id or obj_in.section_id:
+            target_ay_id = obj_in.academic_year_id or db_obj.academic_year_id
+            target_class_id = obj_in.class_id or db_obj.class_id
+            target_section_id = obj_in.section_id or db_obj.section_id
+            
+            ay = await self.ay_repo.get_by_id(target_ay_id, school_id, tenant_id)
+            if not ay:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Academic year not found or school mismatch."
+                )
+            if ay.status == AcademicYearStatus.ARCHIVED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot assign student inside an archived academic year."
+                )
+
+            class_obj = await self.class_repo.get_by_id(target_class_id, school_id, tenant_id)
+            if not class_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Class not found or school mismatch."
+                )
+            if class_obj.academic_year_id != target_ay_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Target class does not belong to the specified academic year."
+                )
+            from app.models.class_entity import ClassStatus
+            if class_obj.status != ClassStatus.ACTIVE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Target class is not active."
+                )
+
+            section_obj = await self.section_repo.get_by_id(target_section_id, school_id, tenant_id)
+            if not section_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Section not found or school mismatch."
+                )
+            if section_obj.class_id != target_class_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Target section does not belong to the specified class."
+                )
+            from app.models.section import SectionStatus
+            if section_obj.status != SectionStatus.ACTIVE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Target section is not active."
+                )
+
+            if (target_ay_id == db_obj.academic_year_id and
+                target_class_id == db_obj.class_id and
+                target_section_id == db_obj.section_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Student is already assigned to this class and section."
+                )
+
+            if target_section_id != db_obj.section_id:
+                stmt = select(func.count(Student.id)).where(
+                    Student.section_id == target_section_id,
+                    Student.deleted_at.is_(None)
+                )
+                res = await self.student_repo.db.execute(stmt)
+                active_count = res.scalar() or 0
+                if active_count >= section_obj.capacity:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Target section capacity exceeded: {active_count}/{section_obj.capacity} students."
+                    )
+
+            if target_class_id != db_obj.class_id or target_section_id != db_obj.section_id:
+                update_data["transferred_at"] = datetime.now(timezone.utc)
+
         # 5. Lifecycle audit stamps matching status changes
         if "status" in update_data:
             new_status = update_data["status"]

@@ -253,6 +253,10 @@ class FeePayment(Base, BaseModelMixin, TenantMixin):
     allocations = relationship("FeePaymentAllocation", back_populates="payment", cascade="all, delete-orphan")
     receipt = relationship("FeeReceipt", back_populates="payment", uselist=False, cascade="all, delete-orphan")
 
+    @property
+    def receipt_number(self) -> Optional[str]:
+        return self.receipt.receipt_number if self.receipt else None
+
     __mapper_args__ = {
         "version_id_col": version
     }

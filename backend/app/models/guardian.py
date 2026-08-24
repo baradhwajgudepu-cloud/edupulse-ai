@@ -105,6 +105,10 @@ class Guardian(Base, BaseModelMixin):
     user = orm_relationship("User")
     students = orm_relationship("StudentGuardian", back_populates="guardian", cascade="all, delete-orphan")
 
+    @property
+    def login_id(self) -> Optional[str]:
+        return self.user.login_id if self.user else None
+
     __mapper_args__ = {
         "version_id_col": version
     }

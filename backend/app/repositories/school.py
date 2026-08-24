@@ -118,7 +118,17 @@ class SchoolRepository:
         """
         update_data = obj_in.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            setattr(db_obj, field, value)
+            if field == "settings" and value is not None:
+                existing_settings = db_obj.settings or {}
+                new_settings = dict(existing_settings)
+                for k, v in value.items():
+                    if isinstance(v, dict) and isinstance(new_settings.get(k), dict):
+                        new_settings[k] = {**new_settings[k], **v}
+                    else:
+                        new_settings[k] = v
+                db_obj.settings = new_settings
+            else:
+                setattr(db_obj, field, value)
         db_obj.updated_by = updated_by
         self.db.add(db_obj)
         await self.db.commit()

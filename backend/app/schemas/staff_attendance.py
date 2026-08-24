@@ -69,6 +69,7 @@ class StaffDailyAttendanceSummary(BaseModel):
     late_count: int
     half_day_count: int
     on_leave_count: int
+    not_marked_count: int = 0
     attendance_rate: float
     records: List[StaffDailyAttendanceReportItem]
 

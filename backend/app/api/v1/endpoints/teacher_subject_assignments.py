@@ -55,6 +55,21 @@ async def list_assignments(
     current_user: User = Depends(require_permission("teacher_subject_assignment.read")),
     service: TeacherSubjectAssignmentService = Depends(get_assignment_service)
 ) -> APIResponse[List[TeacherSubjectAssignmentResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.assignment_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        teacher_id = teacher.id
+
     assignments = await service.assignment_repo.get_multi(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -95,6 +110,21 @@ async def get_assignment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Teacher subject assignment not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.assignment_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or db_obj.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You are not authorized to view this assignment."
+            )
+
     return APIResponse[TeacherSubjectAssignmentResponse](
         success=True,
         message="Teacher subject assignment details fetched successfully.",

@@ -67,11 +67,11 @@ async def setup_principal_attendance_data(db_session: AsyncSession):
     db_session.add(role_teacher)
 
     role_principal = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
-    role_principal.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.write"]]
+    role_principal.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.update"]]
     db_session.add(role_principal)
 
     role_admin = Role(name="Admin", code="ADMIN", is_system=True, tenant_id=tenant_a.id)
-    role_admin.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.write"]]
+    role_admin.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.update"]]
     db_session.add(role_admin)
 
     await db_session.commit()

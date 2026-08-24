@@ -147,8 +147,21 @@ class Student(Base, BaseModelMixin):
         ),
     )
 
+    @property
+    def class_name(self) -> Optional[str]:
+        return self.class_obj.name if self.class_obj else None
+
+    @property
+    def section_name(self) -> Optional[str]:
+        return self.section.name if self.section else None
+
 # Import StudentGuardian here to ensure SQLAlchemy mapper configuration resolves relationships at startup
 from app.models.guardian import StudentGuardian  # noqa: F401
 from app.models.attendance import Attendance  # noqa: F401
 from app.models.marks import Marks  # noqa: F401
 from app.models.report_card import ReportCardPublication  # noqa: F401
+from app.models.tenant import Tenant  # noqa: F401
+from app.models.school import School  # noqa: F401
+from app.models.academic_year import AcademicYear  # noqa: F401
+from app.models.class_entity import Class  # noqa: F401
+from app.models.section import Section  # noqa: F401

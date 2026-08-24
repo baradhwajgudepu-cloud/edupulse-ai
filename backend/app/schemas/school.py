@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator, computed_field
 from app.models.school import SchoolBoard, SchoolType, SchoolStatus
 
 class SchoolBase(BaseModel):
@@ -52,7 +52,7 @@ class SchoolBase(BaseModel):
     status: SchoolStatus = Field(SchoolStatus.ACTIVE, description="Operational status of the school campus")
     
     # Settings JSONB schema representation
-    settings: Dict[str, bool] = Field(
+    settings: Dict[str, Any] = Field(
         default_factory=dict,
         description="""
         Custom settings flags for school modules. Examples:
@@ -72,6 +72,26 @@ class SchoolBase(BaseModel):
         pattern=r"^[0-9]{11}$",
         description="11-digit Unified District Information System for Education code"
     )
+
+    latitude: Optional[float] = Field(None, ge=-90.0, le=90.0, description="School latitude coordinates")
+    longitude: Optional[float] = Field(None, ge=-180.0, le=180.0, description="School longitude coordinates")
+    geofence_radius_meters: int = Field(100, gt=0, le=10000, description="School geofence radius in meters (max 10,000m)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_geofence_radius(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "geofence_radius" in data and "geofence_radius_meters" not in data:
+                data["geofence_radius_meters"] = data["geofence_radius"]
+        return data
+
+    @model_validator(mode="after")
+    def validate_geofence(self) -> "SchoolBase":
+        lat = self.latitude
+        lon = self.longitude
+        if (lat is None and lon is not None) or (lat is not None and lon is None):
+            raise ValueError("Latitude and Longitude must both be provided, or both be null.")
+        return self
 
 class SchoolCreate(SchoolBase):
     """
@@ -104,8 +124,37 @@ class SchoolUpdate(BaseModel):
     logo_url: Optional[str] = Field(None, max_length=1024)
     is_active: Optional[bool] = None
     status: Optional[SchoolStatus] = None
-    settings: Optional[Dict[str, bool]] = None
+    settings: Optional[Dict[str, Any]] = None
     udise_code: Optional[str] = Field(None, pattern=r"^[0-9]{11}$")
+
+    latitude: Optional[float] = Field(None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
+    geofence_radius_meters: Optional[int] = Field(None, gt=0, le=10000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_geofence_radius(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "geofence_radius" in data and "geofence_radius_meters" not in data:
+                data["geofence_radius_meters"] = data["geofence_radius"]
+        return data
+
+    @model_validator(mode="after")
+    def validate_geofence(self) -> "SchoolUpdate":
+        fields = self.model_fields_set
+        has_lat = "latitude" in fields
+        has_lon = "longitude" in fields
+        
+        # If either is explicitly provided, BOTH must be provided
+        if has_lat != has_lon:
+            raise ValueError("Latitude and Longitude must both be updated together, or both be omitted.")
+        
+        if has_lat and has_lon:
+            lat = self.latitude
+            lon = self.longitude
+            if (lat is None and lon is not None) or (lat is not None and lon is None):
+                raise ValueError("Latitude and Longitude must both be values, or both be null.")
+        return self
 
 class SchoolResponse(SchoolBase):
     """
@@ -119,6 +168,11 @@ class SchoolResponse(SchoolBase):
     deleted_at: Optional[datetime] = None
     created_by: Optional[uuid.UUID] = None
     updated_by: Optional[uuid.UUID] = None
+
+    @computed_field
+    @property
+    def geofence_radius(self) -> int:
+        return self.geofence_radius_meters
 
     model_config = ConfigDict(
         from_attributes=True,

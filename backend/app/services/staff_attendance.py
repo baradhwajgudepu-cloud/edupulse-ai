@@ -63,8 +63,36 @@ class StaffAttendanceService:
                 detail="Teacher profile not found for authenticated user."
             )
 
+        # Check if there is an approved leave request covering today
+        stmt_leave = select(TeacherLeave).where(
+            TeacherLeave.teacher_id == teacher.id,
+            TeacherLeave.tenant_id == tenant_id,
+            TeacherLeave.status == TeacherLeaveStatus.APPROVED,
+            TeacherLeave.start_date <= date.today(),
+            TeacherLeave.end_date >= date.today(),
+            TeacherLeave.deleted_at.is_(None)
+        )
+        leave_res = await self.staff_attendance_repo.db.execute(stmt_leave)
+        active_leave = leave_res.scalar_one_or_none()
+        
         record = await self.staff_attendance_repo.get_by_date(teacher.id, date.today(), tenant_id)
         if not record:
+            if active_leave:
+                return {
+                    "status": "ON_LEAVE",
+                    "id": None,
+                    "tenant_id": tenant_id,
+                    "teacher_id": teacher.id,
+                    "school_id": teacher.school_id,
+                    "attendance_date": date.today(),
+                    "check_in_time": None,
+                    "check_in_distance_meters": 0.0,
+                    "check_out_time": None,
+                    "check_out_distance_meters": None,
+                    "duration_seconds": None,
+                    "is_mocked_location": False,
+                    "remarks": f"On Leave: {active_leave.reason}"
+                }
             return {
                 "status": "NOT_CHECKED_IN",
                 "id": None,
@@ -169,6 +197,7 @@ class StaffAttendanceService:
         )
 
         await self.staff_attendance_repo.create(db_obj)
+        await self.staff_attendance_repo.db.commit()
         
         return {
             "id": db_obj.id,
@@ -253,6 +282,7 @@ class StaffAttendanceService:
             record.remarks = f"{record.remarks} | Out: {payload.remarks}" if record.remarks else payload.remarks
 
         await self.staff_attendance_repo.update(record)
+        await self.staff_attendance_repo.db.commit()
 
         duration_seconds = self._calculate_duration(record.check_in_time, record.check_out_time)
 
@@ -317,6 +347,7 @@ class StaffAttendanceService:
         late_count = 0
         half_day_count = 0
         on_leave_count = 0
+        not_marked_count = 0
 
         for t in teachers:
             check_in_latitude = None
@@ -379,8 +410,8 @@ class StaffAttendanceService:
                     status_str = "PRESENT"
                     present_count += 1
             else:
-                status_str = "ABSENT"
-                absent_count += 1
+                status_str = "NOT_MARKED"
+                not_marked_count += 1
                 check_in_time = None
                 check_out_time = None
                 remarks = None
@@ -418,6 +449,7 @@ class StaffAttendanceService:
             "late_count": late_count,
             "half_day_count": half_day_count,
             "on_leave_count": on_leave_count,
+            "not_marked_count": not_marked_count,
             "attendance_rate": attendance_rate,
             "records": records
         }

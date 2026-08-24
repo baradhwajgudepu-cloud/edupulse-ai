@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, time, datetime
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.examination import ExamStatus, ExamType
 
@@ -84,7 +84,7 @@ class ExamScheduleResponse(BaseModel):
 # ==================================================
 class ExaminationCreate(BaseModel):
     school_id: uuid.UUID
-    academic_year_id: uuid.UUID
+    academic_year_id: Optional[uuid.UUID] = None
     exam_name: str = Field(..., max_length=200, min_length=1)
     exam_type: ExamType
     start_date: date
@@ -112,16 +112,31 @@ class ExaminationUpdate(BaseModel):
 
 class ExaminationWizardCreate(BaseModel):
     school_id: uuid.UUID
-    academic_year_id: uuid.UUID
+    academic_year_id: Optional[uuid.UUID] = None
     exam_name: str = Field(..., max_length=200, min_length=1)
     exam_type: ExamType
     start_date: date
     end_date: date
     description: Optional[str] = None
+    target_scope: str = Field(default="ALL_CLASSES") # ALL_CLASSES, SPECIFIC_CLASSES, SPECIFIC_SECTIONS
+    class_ids: Optional[List[uuid.UUID]] = None
+    section_ids: Optional[List[uuid.UUID]] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "copied_from_template": False
     })
     schedules: List[ExamScheduleCreate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_targeting_and_dates(self) -> "ExaminationWizardCreate":
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be after start_date")
+        if self.target_scope == "SPECIFIC_CLASSES":
+            if not self.class_ids or len(self.class_ids) == 0:
+                raise ValueError("class_ids must not be empty when target_scope is SPECIFIC_CLASSES")
+        elif self.target_scope == "SPECIFIC_SECTIONS":
+            if not self.section_ids or len(self.section_ids) == 0:
+                raise ValueError("section_ids must not be empty when target_scope is SPECIFIC_SECTIONS")
+        return self
 
 class ExaminationCopyRequest(BaseModel):
     source_exam_id: uuid.UUID

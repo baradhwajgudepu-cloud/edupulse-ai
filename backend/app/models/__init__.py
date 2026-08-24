@@ -19,10 +19,21 @@ from app.models.homework import Homework  # noqa: F401
 from app.models.examination import ExamTemplate, Examination, ExamSchedule  # noqa: F401
 from app.models.marks import Marks  # noqa: F401
 from app.models.report_card import ReportCardPublication  # noqa: F401
-from app.models.notification import Notification, NotificationPreference  # noqa: F401
+from app.models.notification import Notification, NotificationPreference, NotificationDelivery  # noqa: F401
 from app.models.fee import (
     FeeType, Scholarship, FeeStructure, FineRule,
     StudentFeeAssignment, FeePayment, FeePaymentAllocation, FeeReceipt
 )  # noqa: F401
 from app.models.import_job import ImportJob, ImportJobRow, ImportType, ImportJobStatus  # noqa: F401
+from app.models.student_import import StudentImportRow  # noqa: F401
+from app.models.academic_setup_import import AcademicSetupImportRow  # noqa: F401
+from app.models.guardian_import import GuardianImportRow  # noqa: F401
+from app.models.student_guardian_import import StudentGuardianImportRow  # noqa: F401
+from app.models.syllabus import Syllabus  # noqa: F401
+from app.models.staff_attendance import StaffAttendance  # noqa: F401
+from app.models.teacher_leave import TeacherLeave  # noqa: F401
+from app.models.school_event import SchoolEvent  # noqa: F401
+from app.models.announcement import Announcement  # noqa: F401
+from app.models.parent_login_sequence import ParentLoginSequence  # noqa: F401
+
 

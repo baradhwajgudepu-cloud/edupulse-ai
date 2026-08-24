@@ -27,6 +27,49 @@ async def verify_school_access(user_id: uuid.UUID, school_id: uuid.UUID, db: Asy
     """
     Helper to check if a user is authorized to access a given school context in the school_users mapping.
     """
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.models.school import School
+
+    # 1. Fetch user to check superuser and tenant
+    user_stmt = select(User).where(User.id == user_id)
+    user_res = await db.execute(user_stmt)
+    user = user_res.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found."
+        )
+
+    # 2. Fetch selected school
+    school_stmt = select(School).where(School.id == school_id)
+    school_res = await db.execute(school_stmt)
+    school = school_res.scalar_one_or_none()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found."
+        )
+
+    # 3. Verify selected school belongs to user's tenant
+    if not user.is_superuser and school.tenant_id != user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. School belongs to a different tenant."
+        )
+
+    # 4. Selected school must be active
+    if not school.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School is inactive."
+        )
+
+    # 5. If superuser, allow access
+    if user.is_superuser:
+        return
+
+    # 5. For standard users, check mapping
     stmt = text("SELECT 1 FROM school_users WHERE user_id = :uid AND school_id = :sid")
     res = await db.execute(stmt, {"uid": str(user_id), "sid": str(school_id)})
     if not res.fetchone():
@@ -34,6 +77,7 @@ async def verify_school_access(user_id: uuid.UUID, school_id: uuid.UUID, db: Asy
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. You do not have permissions for this school."
         )
+
 
 @router.post(
     "",

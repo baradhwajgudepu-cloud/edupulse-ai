@@ -51,3 +51,28 @@ class ClassResponse(ClassBase):
     deleted_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClassPromote(BaseModel):
+    target_academic_year_id: Optional[uuid.UUID] = None
+    section_mappings: Dict[str, str] = Field(default_factory=dict, description="Maps source section ID to target section ID")
+
+
+class PromotedStudentInfo(BaseModel):
+    student_id: uuid.UUID
+    name: str
+    previous_section_id: uuid.UUID
+    new_section_id: Optional[uuid.UUID] = None
+    status: str  # PROMOTED, CONDITIONALLY_PROMOTED, DETAINED, PROMOTION_UNDER_REVIEW, GRADUATED, BLOCKED
+
+
+class ClassPromoteResponse(BaseModel):
+    total_students: int
+    eligible: int
+    conditional: int
+    detained: int
+    graduated: int
+    blocked: int
+    promoted_students: list[PromotedStudentInfo]
+    failures: list[str] = Field(default_factory=list)
+    settings: Dict[str, Any] = Field(default_factory=dict)

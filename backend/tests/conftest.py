@@ -123,6 +123,28 @@ async def test_engine():
             {"id": uuid.uuid4(), "name": "Delete Identity", "code": "identity.delete", "description": "Allows deleting user identities"},
             {"id": uuid.uuid4(), "name": "Provision Identity", "code": "identity.provision", "description": "Allows provisioning user identities"},
             {"id": uuid.uuid4(), "name": "Reset Password Identity", "code": "identity.reset_password", "description": "Allows resetting passwords"},
+            {"id": uuid.uuid4(), "name": "Read Reports", "code": "reports.read", "description": "Allows viewing reports"},
+            {"id": uuid.uuid4(), "name": "Read Academic Reports", "code": "reports.academic.read", "description": "Allows viewing academic reports"},
+            {"id": uuid.uuid4(), "name": "Read Attendance Reports", "code": "reports.attendance.read", "description": "Allows viewing attendance reports"},
+            {"id": uuid.uuid4(), "name": "Read Fees Reports", "code": "reports.fees.read", "description": "Allows viewing fees reports"},
+            {"id": uuid.uuid4(), "name": "Read AI Reports", "code": "reports.ai.read", "description": "Allows viewing AI reports"},
+            {"id": uuid.uuid4(), "name": "Export Reports", "code": "reports.export", "description": "Allows exporting reports"},
+            {"id": uuid.uuid4(), "name": "Read Settings", "code": "settings.read", "description": "Allows viewing settings"},
+            {"id": uuid.uuid4(), "name": "Update Settings", "code": "settings.update", "description": "Allows updating settings"},
+            {"id": uuid.uuid4(), "name": "Update School Settings", "code": "settings.school.update", "description": "Allows updating school settings"},
+            {"id": uuid.uuid4(), "name": "Update Academic Settings", "code": "settings.academic.update", "description": "Allows updating academic settings"},
+            {"id": uuid.uuid4(), "name": "Update Grading Settings", "code": "settings.grading.update", "description": "Allows updating grading settings"},
+            {"id": uuid.uuid4(), "name": "Update Exam Settings", "code": "settings.exam.update", "description": "Allows updating exam settings"},
+            {"id": uuid.uuid4(), "name": "Update Report Card Settings", "code": "settings.report_card.update", "description": "Allows updating report card settings"},
+            {"id": uuid.uuid4(), "name": "Read Staff Attendance", "code": "staff_attendance.read", "description": "Allows viewing staff attendance logs"},
+            {"id": uuid.uuid4(), "name": "Create Staff Check-In", "code": "staff_attendance.create", "description": "Allows checking in"},
+            {"id": uuid.uuid4(), "name": "Update Staff Check-Out", "code": "staff_attendance.update", "description": "Allows checking out"},
+            {"id": uuid.uuid4(), "name": "Admin Staff Attendance", "code": "staff_attendance.admin", "description": "Allows administrative staff attendance operations"},
+            {"id": uuid.uuid4(), "name": "Read Teacher Leaves", "code": "teacher_leave.read", "description": "Allows viewing teacher leaves"},
+            {"id": uuid.uuid4(), "name": "Create Teacher Leave", "code": "teacher_leave.create", "description": "Allows submitting teacher leave"},
+            {"id": uuid.uuid4(), "name": "Cancel Teacher Leave", "code": "teacher_leave.cancel", "description": "Allows cancelling pending teacher leave"},
+            {"id": uuid.uuid4(), "name": "Review Teacher Leave", "code": "teacher_leave.review", "description": "Allows reviewing teacher leaves"},
+            {"id": uuid.uuid4(), "name": "Admin Teacher Leave", "code": "teacher_leave.admin", "description": "Allows administrative teacher leave operations"},
         ]
         from sqlalchemy import select
         res = await conn.execute(select(Permission))
@@ -164,7 +186,7 @@ async def client(db_session, request) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     
     # Bypass auth and RBAC checks for non-auth test files by mock-seeding a superuser
-    if "test_auth" not in request.node.nodeid:
+    if "test_auth" not in request.node.nodeid and "test_communication" not in request.node.nodeid:
         from app.api.dependencies.auth import get_current_user
         from app.models.user import User, UserStatus
         from fastapi import Request

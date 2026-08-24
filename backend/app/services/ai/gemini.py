@@ -8,6 +8,26 @@ from app.services.ai.interface import AIProvider
 
 logger = logging.getLogger(__name__)
 
+def _clean_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(schema, dict):
+        return schema
+    
+    cleaned = {}
+    allowed_keys = ["type", "description", "properties", "required", "items", "enum"]
+    
+    for k, v in schema.items():
+        if k == "properties" and isinstance(v, dict):
+            cleaned[k] = {prop_name: _clean_schema(prop_val) for prop_name, prop_val in v.items()}
+        elif k in allowed_keys:
+            if isinstance(v, dict):
+                cleaned[k] = _clean_schema(v)
+            elif isinstance(v, list):
+                cleaned[k] = [_clean_schema(item) if isinstance(item, dict) else item for item in v]
+            else:
+                cleaned[k] = v
+                
+    return cleaned
+
 class GeminiProvider(AIProvider):
     def __init__(
         self,
@@ -133,7 +153,8 @@ class GeminiProvider(AIProvider):
             ],
             "generationConfig": {
                 "temperature": temperature,
-                "responseMimeType": "application/json"
+                "responseMimeType": "application/json",
+                "responseSchema": _clean_schema(response_schema)
             }
         }
         

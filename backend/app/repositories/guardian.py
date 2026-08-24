@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.guardian import Guardian, GuardianStatus, StudentGuardian, StudentGuardianRelationship
+from app.models.user import User
 from app.schemas.guardian import GuardianCreate, GuardianUpdate, StudentGuardianCreate, StudentGuardianUpdate
 
 class GuardianRepository:
@@ -27,7 +28,10 @@ class GuardianRepository:
             Guardian.school_id == school_id,
             Guardian.tenant_id == tenant_id,
             Guardian.deleted_at.is_(None)
-        ).options(selectinload(Guardian.students))
+        ).options(
+            selectinload(Guardian.students),
+            selectinload(Guardian.user)
+        )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -98,7 +102,7 @@ class GuardianRepository:
     ) -> List[Guardian]:
         """
         Retrieves paginated list of guardians scoped by tenant and school.
-        Supports fuzzy searching on names, mobile, email, Aadhaar, and PAN.
+        Supports fuzzy searching on names, mobile, email, Aadhaar, PAN, and Parent Login ID.
         """
         filters = [
             Guardian.school_id == school_id,
@@ -109,24 +113,29 @@ class GuardianRepository:
         if status:
             filters.append(Guardian.status == status)
 
+        stmt = select(Guardian)
         if search:
+            stmt = stmt.outerjoin(User, Guardian.user_id == User.id)
             search_clause = or_(
                 Guardian.first_name.ilike(f"%{search}%"),
                 Guardian.last_name.ilike(f"%{search}%"),
                 Guardian.mobile.ilike(f"%{search}%"),
                 Guardian.email.ilike(f"%{search}%"),
                 Guardian.aadhaar_number.ilike(f"%{search}%"),
-                Guardian.pan_number.ilike(f"%{search}%")
+                Guardian.pan_number.ilike(f"%{search}%"),
+                User.login_id.ilike(f"%{search}%")
             )
             filters.append(search_clause)
 
         stmt = (
-            select(Guardian)
-            .where(and_(*filters))
+            stmt.where(and_(*filters))
             .order_by(Guardian.last_name, Guardian.first_name)
             .offset(skip)
             .limit(limit)
-            .options(selectinload(Guardian.students))
+            .options(
+                selectinload(Guardian.students),
+                selectinload(Guardian.user)
+            )
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

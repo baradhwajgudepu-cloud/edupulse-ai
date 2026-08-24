@@ -33,6 +33,21 @@ async def create_homework(
     current_user: User = Depends(require_permission("homework.create")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[HomeworkResponse]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        obj_in.teacher_id = teacher.id
+
     db_obj = await service.create_homework(tenant_id, obj_in.school_id, obj_in, current_user)
     return APIResponse[HomeworkResponse](
         success=True,
@@ -55,6 +70,28 @@ async def create_from_timetable(
     current_user: User = Depends(require_permission("homework.create")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[HomeworkResponse]:
+    from app.models.timetable import Timetable
+    from sqlalchemy import select
+    timetable_stmt = select(Timetable).where(Timetable.id == timetable_id)
+    timetable_res = await service.homework_repo.db.execute(timetable_stmt)
+    timetable = timetable_res.scalar_one_or_none()
+    if not timetable:
+        raise HTTPException(status_code=422, detail="Timetable slot not found.")
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or timetable.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot assign homework for another teacher's class slot."
+            )
+
     db_obj = await service.create_homework_from_timetable(tenant_id, school_id, timetable_id, obj_in, current_user)
     return APIResponse[HomeworkResponse](
         success=True,
@@ -76,6 +113,27 @@ async def copy_homework(
     current_user: User = Depends(require_permission("homework.create")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[List[HomeworkResponse]]:
+    source_homework = await service.homework_repo.get_by_id(obj_in.homework_id, school_id, tenant_id)
+    if not source_homework:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source homework assignment not found."
+        )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or source_homework.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot copy another teacher's homework."
+            )
+
     db_objs = await service.copy_homework_to_sections(
         tenant_id=tenant_id,
         school_id=school_id,
@@ -198,6 +256,21 @@ async def get_homework_by_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Homework assignment not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or db_obj.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You do not own this homework assignment."
+            )
+
     return APIResponse[HomeworkResponse](
         success=True,
         message="Homework details fetched successfully.",
@@ -226,6 +299,21 @@ async def list_homeworks(
     current_user: User = Depends(require_permission("homework.read")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[List[HomeworkResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        teacher_id = teacher.id
+
     entries = await service.homework_repo.get_multi(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -260,6 +348,27 @@ async def update_homework(
     current_user: User = Depends(require_permission("homework.update")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[HomeworkResponse]:
+    homework = await service.homework_repo.get_by_id(id, school_id, tenant_id)
+    if not homework:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Homework assignment not found."
+        )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or homework.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot update another teacher's homework."
+            )
+
     db_obj = await service.update_homework(tenant_id, school_id, id, obj_in, current_user)
     return APIResponse[HomeworkResponse](
         success=True,
@@ -281,6 +390,27 @@ async def delete_homework(
     current_user: User = Depends(require_permission("homework.delete")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[HomeworkResponse]:
+    homework = await service.homework_repo.get_by_id(id, school_id, tenant_id)
+    if not homework:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Homework assignment not found."
+        )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.homework_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or homework.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot delete another teacher's homework."
+            )
+
     db_obj = await service.delete_homework(tenant_id, school_id, id, current_user)
     return APIResponse[HomeworkResponse](
         success=True,

@@ -357,3 +357,208 @@ async def test_system_development_bootstrap_disabled(client: AsyncClient, db_ses
     finally:
         # Re-enable for other test runs
         settings.ENABLE_BOOTSTRAP = True
+
+
+@pytest.mark.anyio
+async def test_platform_administrator_auth_flows(client: AsyncClient, db_session) -> None:
+    """
+    Tests all requirements for platform administrator authentication:
+    - Test A: Platform admin login without X-Tenant-ID header -> 200 OK, valid access token.
+    - Test B: Platform login with arbitrary tenant header supplied -> authenticates as platform (tenant_id claim remains None).
+    - Test C: Ordinary tenant user login without X-Tenant-ID -> 400 Bad Request.
+    - Test D: Ordinary tenant user attempting platform login -> 403 Forbidden.
+    - Test E: Invalid credentials on platform login -> 401 Unauthorized (does not leak email existence).
+    - Test F: /auth/me with platform token -> 200 OK, tenant_id = null.
+    - Test G: Refresh platform token -> rotations work and tenant remains null.
+    - Test H: Normal login regression -> POST /auth/login with X-Tenant-ID continues to work.
+    - Test I: Tenant isolation -> calling tenant-scoped API without X-Tenant-ID header raises 400.
+    """
+    repo_t = TenantRepository(db_session)
+    tenant_sys = await repo_t.create(TenantCreate(name="System Tenant Unique", code="system-unique", subdomain="systemunique", email="sysunique@sys.com"))
+    tenant_norm = await repo_t.create(TenantCreate(name="Normal Tenant Unique", code="normal-unique", subdomain="normalunique", email="normunique@norm.com"))
+
+    repo_s = SchoolRepository(db_session)
+    school_sys = await repo_s.create(tenant_sys.id, SchoolCreate(name="Sys School", code="SYS_S", board="CBSE", email="s@sys.com"))
+    school_norm = await repo_s.create(tenant_norm.id, SchoolCreate(name="Norm School", code="NORM_S", board="CBSE", email="s@norm.com"))
+
+    user_repo = UserRepository(db_session)
+    role_repo = RoleRepository(db_session)
+    perm_repo = PermissionRepository(db_session)
+    refresh_repo = RefreshTokenRepository(db_session)
+    service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, repo_s)
+
+    # 1. Create System Admin
+    sys_admin_role = await service.create_role(
+        tenant_sys.id,
+        RoleCreate(name="Super Admin", code="SUPER_ADMIN", description="Platform Admin")
+    )
+    admin_user = await service.create_user(
+        tenant_sys.id,
+        UserCreate(
+            email="admin@platform.com",
+            password="Password123!",
+            first_name="Platform",
+            last_name="Admin",
+            role_ids=[sys_admin_role.id]
+        )
+    )
+    # Mark as superuser
+    admin_user.is_superuser = True
+    await db_session.commit()
+
+    # 2. Create normal tenant user
+    norm_role = await service.create_role(
+        tenant_norm.id,
+        RoleCreate(name="Teacher", code="TEACHER", description="Teacher Role")
+    )
+    normal_user = await service.create_user(
+        tenant_norm.id,
+        UserCreate(
+            email="user@tenant.com",
+            password="Password123!",
+            first_name="Tenant",
+            last_name="User",
+            role_ids=[norm_role.id]
+        )
+    )
+
+    # --- Test A: platform admin login (no X-Tenant-ID) ---
+    login_payload = {"email": "admin@platform.com", "password": "Password123!"}
+    resp = await client.post("/api/v1/auth/platform-login", json=login_payload)
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    token_data = resp.json()["data"]
+    assert "access_token" in token_data
+    assert "refresh_token" in token_data
+
+    # --- Test B: platform admin login with arbitrary tenant header ---
+    headers = {"X-Tenant-ID": str(tenant_norm.id)}
+    resp_h = await client.post("/api/v1/auth/platform-login", json=login_payload, headers=headers)
+    assert resp_h.status_code == 200
+    # Decoded token tenant ID must still be None
+    token_data_h = resp_h.json()["data"]
+    from app.core.security import decode_access_token
+    payload = decode_access_token(token_data_h["access_token"])
+    assert payload.get("tenant_id") is None
+
+    # --- Test C: ordinary tenant user login without X-Tenant-ID (normal login) ---
+    normal_login_payload = {"email": "user@tenant.com", "password": "Password123!"}
+    resp_c = await client.post("/api/v1/auth/login", json=normal_login_payload)
+    assert resp_c.status_code == 400
+    assert "header is missing" in resp_c.json()["message"].lower()
+
+    # --- Test D: ordinary tenant user attempting platform login ---
+    resp_d = await client.post("/api/v1/auth/platform-login", json=normal_login_payload)
+    assert resp_d.status_code == 403
+    assert "insufficient" in resp_d.json()["message"].lower()
+
+    # --- Test E: invalid credentials on platform login ---
+    invalid_login = {"email": "admin@platform.com", "password": "WrongPassword!"}
+    resp_e1 = await client.post("/api/v1/auth/platform-login", json=invalid_login)
+    assert resp_e1.status_code == 401
+    assert "invalid" in resp_e1.json()["message"].lower()
+
+    non_existent_login = {"email": "unknown@platform.com", "password": "Password123!"}
+    resp_e2 = await client.post("/api/v1/auth/platform-login", json=non_existent_login)
+    assert resp_e2.status_code == 401
+    assert "invalid" in resp_e2.json()["message"].lower()
+
+    # --- Test F: /auth/me with platform token ---
+    auth_headers = {"Authorization": f"Bearer {token_data['access_token']}"}
+    resp_f = await client.get("/api/v1/auth/me", headers=auth_headers)
+    assert resp_f.status_code == 200
+    me_data = resp_f.json()["data"]
+    assert me_data["is_superuser"] is True
+    assert me_data["tenant_id"] is None
+
+    # --- Test G: refresh ---
+    refresh_payload = {"refresh_token": token_data["refresh_token"]}
+    resp_g = await client.post("/api/v1/auth/refresh", json=refresh_payload)
+    assert resp_g.status_code == 200
+    new_token_data = resp_g.json()["data"]
+    assert "access_token" in new_token_data
+    # Assert refreshed token also has tenant_id = None
+    new_payload = decode_access_token(new_token_data["access_token"])
+    assert new_payload.get("tenant_id") is None
+
+    # --- Test H: normal login regression ---
+    norm_headers = {"X-Tenant-ID": str(tenant_norm.id)}
+    resp_h = await client.post("/api/v1/auth/login", json=normal_login_payload, headers=norm_headers)
+    assert resp_h.status_code == 200
+    norm_token_data = resp_h.json()["data"]
+    norm_payload = decode_access_token(norm_token_data["access_token"])
+    assert norm_payload.get("tenant_id") == str(tenant_norm.id)
+
+    # --- Test I: tenant isolation ---
+    # Try calling list roles without X-Tenant-ID using platform token -> Expect 400 Bad Request because the endpoint parameter Requires Depends(get_tenant_id)
+    url = f"/api/v1/roles"
+    resp_i = await client.get(url, headers=auth_headers)
+    assert resp_i.status_code == 400
+    assert "header is missing" in resp_i.json()["message"].lower()
+
+
+@pytest.mark.anyio
+async def test_tenant_header_restoration_and_fallback(client: AsyncClient, db_session) -> None:
+    """
+    Verifies cross-tenant isolation and session restoration fallback scenarios:
+    1. Valid JWT + matching X-Tenant-ID -> SUCCESS
+    2. Valid JWT + missing X-Tenant-ID -> SUCCESS using JWT tenant fallback
+    3. Valid JWT + mismatched X-Tenant-ID -> REJECT
+    4. JWT tenant A + header tenant B -> REJECT
+    5. JWT tenant A + no header -> effective tenant A
+    """
+    repo_t = TenantRepository(db_session)
+    tenant_a = await repo_t.create(TenantCreate(name="Tenant A", code="tenant-a", subdomain="t-a", email="a@t.com"))
+    tenant_b = await repo_t.create(TenantCreate(name="Tenant B", code="tenant-b", subdomain="t-b", email="b@t.com"))
+    
+    repo_s = SchoolRepository(db_session)
+    user_repo = UserRepository(db_session)
+    role_repo = RoleRepository(db_session)
+    perm_repo = PermissionRepository(db_session)
+    refresh_repo = RefreshTokenRepository(db_session)
+    service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, repo_s)
+
+    # Create user in Tenant A
+    role_a = await service.create_role(
+        tenant_a.id,
+        RoleCreate(name="Teacher A", code="TEACHER", description="Teacher in A")
+    )
+    user_a = await service.create_user(
+        tenant_a.id,
+        UserCreate(
+            email="teacher@tenant-a.com",
+            password="Password123!",
+            first_name="Teacher",
+            last_name="A",
+            role_ids=[role_a.id]
+        )
+    )
+    tokens_a = await service.create_tokens(user_a)
+
+    # 1. Valid JWT + matching X-Tenant-ID -> SUCCESS
+    headers_matching = {
+        "Authorization": f"Bearer {tokens_a.access_token}",
+        "X-Tenant-ID": str(tenant_a.id)
+    }
+    resp1 = await client.get("/api/v1/auth/me", headers=headers_matching)
+    assert resp1.status_code == 200
+    assert resp1.json()["data"]["tenant_id"] == str(tenant_a.id)
+
+    # 2. Valid JWT + missing X-Tenant-ID -> SUCCESS (fallback to JWT tenant claim)
+    headers_missing = {
+        "Authorization": f"Bearer {tokens_a.access_token}"
+    }
+    resp2 = await client.get("/api/v1/auth/me", headers=headers_missing)
+    assert resp2.status_code == 200
+    assert resp2.json()["data"]["tenant_id"] == str(tenant_a.id)
+
+    # 3. Valid JWT + mismatched X-Tenant-ID -> REJECT (401 claims mismatch)
+    headers_mismatched = {
+        "Authorization": f"Bearer {tokens_a.access_token}",
+        "X-Tenant-ID": str(tenant_b.id)
+    }
+    resp3 = await client.get("/api/v1/auth/me", headers=headers_mismatched)
+    assert resp3.status_code == 401
+    assert "mismatch" in resp3.json()["message"].lower()
+
+

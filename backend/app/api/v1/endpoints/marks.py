@@ -16,6 +16,48 @@ from app.schemas.response import APIResponse
 router = APIRouter()
 
 # ==================================================
+# Helpers for Security Audit
+# ==================================================
+async def check_schedule_assignment(db, current_user: User, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_schedule_id: uuid.UUID) -> None:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.models.examination import ExamSchedule
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+
+        stmt_s = select(ExamSchedule).where(
+            ExamSchedule.id == exam_schedule_id,
+            ExamSchedule.school_id == school_id,
+            ExamSchedule.tenant_id == tenant_id,
+            ExamSchedule.deleted_at.is_(None)
+        )
+        res_s = await db.execute(stmt_s)
+        sched = res_s.scalar_one_or_none()
+        if not sched:
+            raise HTTPException(status_code=404, detail="Exam schedule slot not found.")
+
+        teacher_repo = TeacherRepository(db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == sched.class_id,
+            TeacherSubjectAssignment.section_id == sched.section_id,
+            TeacherSubjectAssignment.subject_id == sched.subject_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Access denied. You are not assigned to this class, section, and subject.")
+
+# ==================================================
 # Bulk Operations
 # ==================================================
 @router.post(
@@ -32,6 +74,29 @@ async def bulk_save_marks(
     current_user: User = Depends(require_permission("marks.create")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[List[MarksResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+        from sqlalchemy import select
+        
+        teacher_repo = TeacherRepository(service.marks_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+            
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.id == obj_in.teacher_subject_assignment_id,
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.marks_repo.db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="The selected assignment does not belong to you.")
+
     db_objs = await service.bulk_save_marks(tenant_id, school_id, obj_in, current_user, autosave)
     return APIResponse[List[MarksResponse]](
         success=True,
@@ -52,6 +117,29 @@ async def bulk_update_marks(
     current_user: User = Depends(require_permission("marks.update")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[List[MarksResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+        from sqlalchemy import select
+        
+        teacher_repo = TeacherRepository(service.marks_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+            
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.id == obj_in.teacher_subject_assignment_id,
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.marks_repo.db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="The selected assignment does not belong to you.")
+
     db_objs = await service.bulk_save_marks(tenant_id, school_id, obj_in, current_user, autosave=False)
     return APIResponse[List[MarksResponse]](
         success=True,
@@ -76,6 +164,7 @@ async def get_wizard_entry(
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[SmartMissingSummary]:
+    await check_schedule_assignment(service.marks_repo.db, current_user, tenant_id, school_id, exam_schedule_id)
     summary = await service.get_wizard_entry(tenant_id, school_id, exam_schedule_id, current_user)
     return APIResponse[SmartMissingSummary](
         success=True,
@@ -96,6 +185,7 @@ async def get_publish_summary(
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[PublishSummaryResponse]:
+    await check_schedule_assignment(service.marks_repo.db, current_user, tenant_id, school_id, exam_schedule_id)
     summary = await service.get_publish_summary(tenant_id, school_id, exam_schedule_id)
     return APIResponse[PublishSummaryResponse](
         success=True,
@@ -116,6 +206,7 @@ async def publish_marks(
     current_user: User = Depends(require_permission("marks.publish")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[List[MarksResponse]]:
+    await check_schedule_assignment(service.marks_repo.db, current_user, tenant_id, school_id, exam_schedule_id)
     db_objs = await service.publish_marks(tenant_id, school_id, exam_schedule_id, current_user)
     return APIResponse[List[MarksResponse]](
         success=True,
@@ -136,6 +227,7 @@ async def get_result_summary(
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[ResultSummaryResponse]:
+    await check_schedule_assignment(service.marks_repo.db, current_user, tenant_id, school_id, exam_schedule_id)
     summary = await service.get_result_summary(tenant_id, school_id, exam_schedule_id)
     return APIResponse[ResultSummaryResponse](
         success=True,
@@ -207,6 +299,33 @@ async def get_mark(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Marks record not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+        
+        teacher_repo = TeacherRepository(service.marks_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+            
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == db_obj.class_id,
+            TeacherSubjectAssignment.section_id == db_obj.section_id,
+            TeacherSubjectAssignment.subject_id == db_obj.subject_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.marks_repo.db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Access denied. You are not assigned to this marks record's class/section/subject.")
+
     return APIResponse[MarksResponse](
         success=True,
         message="Marks record loaded.",
@@ -231,6 +350,34 @@ async def list_marks(
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[List[MarksResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        if not class_id or not section_id or not subject_id:
+            raise HTTPException(status_code=400, detail="Teachers must filter marks by class_id, section_id, and subject_id.")
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+        
+        teacher_repo = TeacherRepository(service.marks_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+            
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == class_id,
+            TeacherSubjectAssignment.section_id == section_id,
+            TeacherSubjectAssignment.subject_id == subject_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.marks_repo.db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Access denied. You are not assigned to this class/section/subject.")
+
     db_objs = await service.marks_repo.get_multi(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -266,6 +413,32 @@ async def delete_mark(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Marks record not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+        from sqlalchemy import select
+        
+        teacher_repo = TeacherRepository(service.marks_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(status_code=403, detail="No active teacher profile found.")
+            
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.teacher_id == teacher.id,
+            TeacherSubjectAssignment.class_id == db_obj.class_id,
+            TeacherSubjectAssignment.section_id == db_obj.section_id,
+            TeacherSubjectAssignment.subject_id == db_obj.subject_id,
+            TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+            TeacherSubjectAssignment.tenant_id == tenant_id
+        )
+        res_tsa = await service.marks_repo.db.execute(stmt_tsa)
+        if not res_tsa.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Access denied. You cannot delete this marks record.")
 
     # Soft delete
     db_obj.is_active = False

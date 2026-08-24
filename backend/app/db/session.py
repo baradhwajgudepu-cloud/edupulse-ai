@@ -2,7 +2,6 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from app.core.settings import settings
 
-print("Using DATABASE_URL:", settings.DATABASE_URL)
 
 # Create async engine with connection pooling settings optimized for production
 engine = create_async_engine(

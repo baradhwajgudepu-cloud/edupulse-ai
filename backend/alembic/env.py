@@ -32,8 +32,13 @@ from app.models.attendance import AttendanceSession, Attendance  # noqa: F401
 from app.models.homework import Homework  # noqa: F401
 from app.models.examination import ExamTemplate, Examination, ExamSchedule  # noqa: F401
 from app.models.marks import Marks  # noqa: F401
+from app.models.syllabus import Syllabus  # noqa: F401
 from app.models.report_card import ReportCardPublication  # noqa: F401
-from app.models.notification import Notification, NotificationPreference  # noqa: F401
+from app.models.notification import Notification, NotificationPreference, UserDeviceToken  # noqa: F401
+from app.models.communication import (  # noqa: F401
+    CommunicationRequest, CommunicationParticipant, CommunicationMessage,
+    CommunicationAttachment, CommunicationAuditLog
+)
 from app.models.fee import (
     FeeType, Scholarship, FeeStructure, FineRule,
     StudentFeeAssignment, FeePayment, FeePaymentAllocation, FeeReceipt
@@ -43,6 +48,10 @@ from app.models.student_import import StudentImportRow  # noqa: F401
 from app.models.academic_setup_import import AcademicSetupImportRow  # noqa: F401
 from app.models.guardian_import import GuardianImportRow  # noqa: F401
 from app.models.student_guardian_import import StudentGuardianImportRow  # noqa: F401
+from app.models.staff_attendance import StaffAttendance  # noqa: F401
+from app.models.school_event import SchoolEvent  # noqa: F401
+from app.models.announcement import Announcement  # noqa: F401
+from app.models.parent_login_sequence import ParentLoginSequence  # noqa: F401
 from app.core.settings import settings
 
 # This is the Alembic Config object, which provides access to the .ini file values.

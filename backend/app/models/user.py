@@ -20,6 +20,7 @@ class User(Base, BaseModelMixin, TenantMixin):
     Includes brute-force prevention and hashed password reset fields.
     """
     email: Mapped[str] = mapped_column(String(255), nullable=False)
+    login_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -64,7 +65,9 @@ class User(Base, BaseModelMixin, TenantMixin):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "email", name="uq_users_tenant_email"),
+        UniqueConstraint("tenant_id", "login_id", name="uq_users_tenant_login_id"),
         Index("ix_users_status", "status"),
+        Index("ix_users_login_id", "login_id"),
     )
 
     __mapper_args__ = {

@@ -366,7 +366,7 @@ class FeeRepository:
     # --- FEE RECEIPTS ---
     async def get_next_receipt_number(self, tenant_id: uuid.UUID) -> str:
         year = datetime.now().year
-        stmt = select(func.count(FeeReceipt.id)).where(FeeReceipt.tenant_id == tenant_id)
+        stmt = select(func.count(FeeReceipt.id))
         res = await self.db.execute(stmt)
         count = res.scalar() or 0
         return f"RCPT-{year}-{count+1:06d}"

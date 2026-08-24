@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Callable
+from typing import List, Callable, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,16 +50,23 @@ async def get_auth_service(
 
 # --- AUTHENTICATION DEPENDENCY ---
 
-from app.api.dependencies.common import get_tenant_id
+from fastapi import Header
+
+async def get_optional_tenant_id_wrapper(
+    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID", description="Active Tenant UUID")
+) -> Optional[uuid.UUID]:
+    from app.api.dependencies.common import get_optional_tenant_id
+    return await get_optional_tenant_id(x_tenant_id)
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    x_tenant_id: Optional[uuid.UUID] = Depends(get_optional_tenant_id_wrapper),
     user_repo: UserRepository = Depends(get_user_repository)
 ) -> User:
     """
     Decodes the access token and returns the current authenticated user object.
-    Checks that the token's tenant claim matches the requested tenant ID.
+    Checks that the token's tenant claim matches the requested tenant ID if applicable.
+    Supports platform-scoped sessions (token has no tenant_id context).
     """
     if not token:
         raise HTTPException(
@@ -72,7 +79,7 @@ async def get_current_user(
     user_id_str = payload.get("sub")
     tenant_id_str = payload.get("tenant_id")
 
-    if not user_id_str or not tenant_id_str:
+    if not user_id_str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token claims."
@@ -80,25 +87,59 @@ async def get_current_user(
 
     try:
         user_id = uuid.UUID(user_id_str)
-        token_tenant_id = uuid.UUID(tenant_id_str)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Malformed authentication token claims."
         )
 
-    if token_tenant_id != tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token tenant claims mismatch requested boundary."
-        )
+    # Distinguish platform session from tenant-scoped session
+    is_platform = (tenant_id_str is None or tenant_id_str == "None")
 
-    user = await user_repo.get_by_id(user_id, tenant_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or has been deleted."
-        )
+    if is_platform:
+        # Platform administration session
+        user = await user_repo.get_by_id_platform(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or has been deleted."
+            )
+            
+        # Verify user has platform admin role (SUPER_ADMIN or is_superuser)
+        is_platform_admin = user.is_superuser or any(role.code == "SUPER_ADMIN" for role in user.roles)
+        if not is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Insufficient platform permissions."
+            )
+        
+        # Attach platform flag (does not persist in db)
+        user.is_platform_session = True
+    else:
+        # Tenant-scoped session
+        try:
+            token_tenant_id = uuid.UUID(tenant_id_str)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed authentication token claims."
+            )
+
+        if not x_tenant_id:
+            # Fallback to the verified JWT tenant_id context
+            x_tenant_id = token_tenant_id
+        elif token_tenant_id != x_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token tenant claims mismatch requested boundary."
+            )
+
+        user = await user_repo.get_by_id(user_id, token_tenant_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or has been deleted."
+            )
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(

@@ -27,7 +27,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(
     subject: Union[str, uuid.UUID],
-    tenant_id: Union[str, uuid.UUID],
+    tenant_id: Optional[Union[str, uuid.UUID]] = None,
     expires_delta: Optional[timedelta] = None
 ) -> str:
     """
@@ -41,7 +41,7 @@ def create_access_token(
     to_encode = {
         "exp": expire,
         "sub": str(subject),
-        "tenant_id": str(tenant_id),
+        "tenant_id": str(tenant_id) if tenant_id is not None else None,
         "type": "access"
     }
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -70,3 +70,34 @@ def decode_access_token(token: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token."
         )
+
+def generate_secure_temp_password(length: int = 12) -> str:
+    """
+    Generates a cryptographically secure random password satisfying the following complexity requirements:
+    - Minimum length of 12 characters (customizable)
+    - At least 1 uppercase letter
+    - At least 1 lowercase letter
+    - At least 1 digit
+    - At least 1 special character
+    """
+    import secrets
+    import string
+    
+    uppercase = string.ascii_uppercase
+    lowercase = string.ascii_lowercase
+    digits = string.digits
+    special = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    
+    password_chars = [
+        secrets.choice(uppercase),
+        secrets.choice(lowercase),
+        secrets.choice(digits),
+        secrets.choice(special)
+    ]
+    
+    all_chars = uppercase + lowercase + digits + special
+    for _ in range(length - 4):
+        password_chars.append(secrets.choice(all_chars))
+        
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)

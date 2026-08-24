@@ -18,8 +18,10 @@ from app.models.student import Student
 from app.models.student_import import StudentImportRow
 
 class ImportJobService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, storage_service = None) -> None:
         self.db = db
+        from app.services.storage import get_storage_service
+        self.storage_service = storage_service or get_storage_service()
 
     async def create_job(self, tenant_id: uuid.UUID, obj_in: ImportJobCreate, current_user_id: uuid.UUID) -> ImportJob:
         # Check active checksum duplicates (VALIDATING, VALIDATED, RUNNING)
@@ -754,7 +756,8 @@ class ImportJobService:
         self,
         tenant_id: uuid.UUID,
         job_id: uuid.UUID,
-        file_content: bytes
+        file_content: bytes,
+        sheet_name: Optional[str] = None
     ) -> ImportJob:
         job = await self.get_job_by_id(tenant_id, job_id)
         if not job:
@@ -779,28 +782,27 @@ class ImportJobService:
         job = await self.update_status(tenant_id, job_id, ImportJobStatus.VALIDATING)
 
         try:
-            # 1. Save source CSV file to disk
-            static_dir = os.path.join("backend", "static", "imports", "students")
-            os.makedirs(static_dir, exist_ok=True)
-            file_path = os.path.join(static_dir, f"{job_id}.csv")
-            with open(file_path, "wb") as f:
-                f.write(file_content)
+            # 1. Save source file to GCS
+            ext = os.path.splitext(job.source_filename)[1].lower() if job.source_filename else ".csv"
+            gcs_path = f"imports/{job.import_type.value}/{job_id}{ext}"
+            await self.storage_service.upload(file_content, gcs_path, "application/octet-stream")
 
-            # Update job metadata with path
+            # Update job metadata with GCS path
             job_metadata = dict(job.job_metadata or {})
-            job_metadata["source_file_path"] = file_path
+            job_metadata["source_file_path"] = gcs_path
+
+            # 2. Parse Spreadsheet/CSV
+            from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
+            sheets, selected_sheet, rows = read_spreadsheet(file_content, job.source_filename, sheet_name=sheet_name)
+
+            job_metadata["sheets"] = sheets
+            job_metadata["selected_sheet"] = selected_sheet
             job.job_metadata = job_metadata
             self.db.add(job)
             await self.db.commit()
 
-            # 2. Parse CSV
-            # Strip UTF-8 BOM by using utf-8-sig
-            text_content = file_content.decode("utf-8-sig")
-            reader = csv.reader(io.StringIO(text_content))
-            rows = [r for r in reader]
-
             # 3. Normalize headers
-            headers = [h.strip().lower() for h in rows[0]] if rows else []
+            headers = [normalize_header(h) for h in rows[0]] if rows else []
 
             # Required fields validation
             required_cols = [
@@ -1362,7 +1364,8 @@ class ImportJobService:
         self,
         tenant_id: uuid.UUID,
         job_id: uuid.UUID,
-        file_content: bytes
+        file_content: bytes,
+        sheet_name: Optional[str] = None
     ) -> ImportJob:
         job = await self.get_job_by_id(tenant_id, job_id)
         if not job:
@@ -1372,13 +1375,13 @@ class ImportJobService:
             )
 
         if job.import_type == ImportType.STUDENTS:
-            return await self.validate_student_job(tenant_id, job_id, file_content)
+            return await self.validate_student_job(tenant_id, job_id, file_content, sheet_name=sheet_name)
         elif job.import_type == ImportType.ACADEMIC_SETUP:
-            return await self.validate_academic_setup_job(tenant_id, job_id, file_content, job=job)
+            return await self.validate_academic_setup_job(tenant_id, job_id, file_content, job=job, sheet_name=sheet_name)
         elif job.import_type == ImportType.GUARDIANS:
-            return await self.validate_guardian_job(tenant_id, job_id, file_content, job=job)
+            return await self.validate_guardian_job(tenant_id, job_id, file_content, job=job, sheet_name=sheet_name)
         elif job.import_type == ImportType.GUARDIAN_MAPPING:
-            return await self.validate_guardian_mapping_job(tenant_id, job_id, file_content, job=job)
+            return await self.validate_guardian_mapping_job(tenant_id, job_id, file_content, job=job, sheet_name=sheet_name)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1390,7 +1393,8 @@ class ImportJobService:
         tenant_id: uuid.UUID,
         job_id: uuid.UUID,
         file_content: bytes,
-        job: Optional[ImportJob] = None
+        job: Optional[ImportJob] = None,
+        sheet_name: Optional[str] = None
     ) -> ImportJob:
         import re
         if not job:
@@ -1411,25 +1415,24 @@ class ImportJobService:
         job = await self.update_status(tenant_id, job_id, ImportJobStatus.VALIDATING)
 
         try:
-            # 1. Save source CSV file to disk
-            static_dir = os.path.join("backend", "static", "imports", "academic_setup")
-            os.makedirs(static_dir, exist_ok=True)
-            file_path = os.path.join(static_dir, f"{job_id}.csv")
-            with open(file_path, "wb") as f:
-                f.write(file_content)
+            # 1. Save source file to GCS
+            ext = os.path.splitext(job.source_filename)[1].lower() if job.source_filename else ".csv"
+            gcs_path = f"imports/{job.import_type.value}/{job_id}{ext}"
+            await self.storage_service.upload(file_content, gcs_path, "application/octet-stream")
 
-            # Update job metadata with path
+            # Update job metadata with GCS path
             job_metadata = dict(job.job_metadata or {})
-            job_metadata["source_file_path"] = file_path
+            job_metadata["source_file_path"] = gcs_path
+
+            # 2. Parse Spreadsheet/CSV
+            from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
+            sheets, selected_sheet, rows = read_spreadsheet(file_content, job.source_filename, sheet_name=sheet_name)
+
+            job_metadata["sheets"] = sheets
+            job_metadata["selected_sheet"] = selected_sheet
             job.job_metadata = job_metadata
             self.db.add(job)
             await self.db.commit()
-
-            # 2. Parse CSV
-            # Strip UTF-8 BOM by using utf-8-sig
-            text_content = file_content.decode("utf-8-sig")
-            reader = csv.reader(io.StringIO(text_content))
-            rows = [r for r in reader]
 
             if not rows or len(rows) <= 1:
                 # No data rows (only header or empty)
@@ -1442,7 +1445,7 @@ class ImportJobService:
                 return job
 
             # 3. Normalize headers
-            headers = [h.strip().lower() for h in rows[0]]
+            headers = [normalize_header(h) for h in rows[0]]
 
             # Required fields validation
             required_cols = [
@@ -1809,7 +1812,8 @@ class ImportJobService:
         tenant_id: uuid.UUID,
         job_id: uuid.UUID,
         file_content: bytes,
-        job: Optional[ImportJob] = None
+        job: Optional[ImportJob] = None,
+        sheet_name: Optional[str] = None
     ) -> ImportJob:
         import re
         import csv
@@ -1836,25 +1840,24 @@ class ImportJobService:
         job = await self.update_status(tenant_id, job_id, ImportJobStatus.VALIDATING)
 
         try:
-            # 1. Save source CSV file to disk
-            static_dir = os.path.join("backend", "static", "imports", "guardians")
-            os.makedirs(static_dir, exist_ok=True)
-            file_path = os.path.join(static_dir, f"{job_id}.csv")
-            with open(file_path, "wb") as f:
-                f.write(file_content)
+            # 1. Save source file to GCS
+            ext = os.path.splitext(job.source_filename)[1].lower() if job.source_filename else ".csv"
+            gcs_path = f"imports/{job.import_type.value}/{job_id}{ext}"
+            await self.storage_service.upload(file_content, gcs_path, "application/octet-stream")
 
-            # Update job metadata with path
+            # Update job metadata with GCS path
             job_metadata = dict(job.job_metadata or {})
-            job_metadata["source_file_path"] = file_path
+            job_metadata["source_file_path"] = gcs_path
+
+            # 2. Parse Spreadsheet/CSV
+            from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
+            sheets, selected_sheet, rows = read_spreadsheet(file_content, job.source_filename, sheet_name=sheet_name)
+
+            job_metadata["sheets"] = sheets
+            job_metadata["selected_sheet"] = selected_sheet
             job.job_metadata = job_metadata
             self.db.add(job)
             await self.db.commit()
-
-            # 2. Parse CSV
-            # Strip UTF-8 BOM by using utf-8-sig
-            text_content = file_content.decode("utf-8-sig")
-            reader = csv.reader(io.StringIO(text_content))
-            rows = [r for r in reader]
 
             if not rows or len(rows) <= 1:
                 # No data rows (only header or empty)
@@ -1867,7 +1870,7 @@ class ImportJobService:
                 return job
 
             # 3. Normalize headers
-            headers = [h.strip().lower() for h in rows[0]]
+            headers = [normalize_header(h) for h in rows[0]]
 
             # Required fields validation
             required_cols = [
@@ -2553,7 +2556,8 @@ class ImportJobService:
         tenant_id: uuid.UUID,
         job_id: uuid.UUID,
         file_content: bytes,
-        job: Optional[ImportJob] = None
+        job: Optional[ImportJob] = None,
+        sheet_name: Optional[str] = None
     ) -> ImportJob:
         import csv
         import io
@@ -2576,7 +2580,16 @@ class ImportJobService:
         await self.db.commit()
 
         try:
-            # 1. Clean existing records for this job to support re-validation
+            # 1. Save source file to GCS
+            ext = os.path.splitext(job.source_filename)[1].lower() if job.source_filename else ".csv"
+            gcs_path = f"imports/{job.import_type.value}/{job_id}{ext}"
+            await self.storage_service.upload(file_content, gcs_path, "application/octet-stream")
+
+            # Update job metadata with GCS path
+            job_metadata = dict(job.job_metadata or {})
+            job_metadata["source_file_path"] = gcs_path
+
+            # Clean existing records for this job to support re-validation
             await self.db.execute(
                 text("DELETE FROM student_guardian_import_rows WHERE import_job_id = :job_id").bindparams(job_id=job_id)
             )
@@ -2585,18 +2598,23 @@ class ImportJobService:
             )
             await self.db.commit()
 
-            # 2. Decode and parse
-            decoded = file_content.decode("utf-8-sig")
-            csv_reader = csv.reader(io.StringIO(decoded))
-            rows = [r for r in csv_reader]
+            # 2. Parse Spreadsheet/CSV
+            from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
+            sheets, selected_sheet, rows = read_spreadsheet(file_content, job.source_filename, sheet_name=sheet_name)
+
+            job_metadata["sheets"] = sheets
+            job_metadata["selected_sheet"] = selected_sheet
+            job.job_metadata = job_metadata
+            self.db.add(job)
+            await self.db.commit()
 
             if not rows:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="CSV file is empty."
+                    detail="Spreadsheet file is empty."
                 )
 
-            headers = [h.strip().lower() for h in rows[0]]
+            headers = [normalize_header(h) for h in rows[0]]
             
             # Mandatory header check
             req_headers = ["student_admission_number", "guardian_id", "relationship"]

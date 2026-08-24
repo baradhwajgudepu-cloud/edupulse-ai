@@ -62,6 +62,8 @@ class GuardianUpdate(BaseModel):
     settings: Optional[Dict[str, Any]] = None
     ai_metrics: Optional[Dict[str, Any]] = None
 
+from app.schemas.auth import ProvisioningCredentialResponse
+
 class GuardianResponse(GuardianBase):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -74,6 +76,8 @@ class GuardianResponse(GuardianBase):
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
+    login_id: Optional[str] = None
+    credentials: Optional[ProvisioningCredentialResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -31,6 +31,25 @@ async def create_session(
     current_user: User = Depends(require_permission("attendance.create")),
     service: AttendanceService = Depends(get_attendance_service)
 ) -> APIResponse[AttendanceSessionResponse]:
+    from app.models.timetable import Timetable
+    from sqlalchemy import select
+    timetable_stmt = select(Timetable).where(Timetable.id == obj_in.timetable_id)
+    timetable_res = await service.attendance_repo.db.execute(timetable_stmt)
+    timetable = timetable_res.scalar_one_or_none()
+    if not timetable:
+        raise HTTPException(status_code=422, detail="Timetable slot not found.")
+        
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or timetable.teacher_id != teacher.id:
+            raise HTTPException(status_code=403, detail="You cannot mark attendance for another teacher's class.")
+
     db_obj = await service.create_session(tenant_id, obj_in, created_by=current_user.id)
     return APIResponse[AttendanceSessionResponse](
         success=True,
@@ -53,6 +72,27 @@ async def mark_attendance(
     current_user: User = Depends(require_permission("attendance.create")),
     service: AttendanceService = Depends(get_attendance_service)
 ) -> APIResponse[AttendanceSessionResponse]:
+    session_obj = await service.attendance_repo.get_session_by_id(session_id, school_id, tenant_id)
+    if not session_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attendance session not found."
+        )
+        
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or session_obj.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot mark attendance for another teacher's session."
+            )
+
     db_obj = await service.bulk_mark_attendance(
         tenant_id=tenant_id,
         school_id=school_id,
@@ -112,6 +152,22 @@ async def list_sessions(
     current_user: User = Depends(require_permission("attendance.read")),
     service: AttendanceService = Depends(get_attendance_service)
 ) -> APIResponse[List[AttendanceSessionResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    teacher_id_filter = None
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        teacher_id_filter = teacher.id
+
     sessions = await service.attendance_repo.get_multi_sessions(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -120,6 +176,7 @@ async def list_sessions(
         section_id=section_id,
         attendance_date=attendance_date,
         status=status_filter,
+        teacher_id=teacher_id_filter,
         skip=skip,
         limit=limit
     )
@@ -150,6 +207,21 @@ async def get_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Attendance session not found."
         )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or db_obj.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You do not own this attendance session."
+            )
+
     return APIResponse[AttendanceSessionResponse](
         success=True,
         message="Attendance session details fetched successfully.",
@@ -308,6 +380,21 @@ async def get_teacher_schedule(
     current_user: User = Depends(require_permission("attendance.read")),
     service: AttendanceService = Depends(get_attendance_service)
 ) -> APIResponse[List[AttendanceResponse]]:
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No active teacher profile found for user."
+            )
+        teacher_id = teacher.id
+
     entries = await service.attendance_repo.get_teacher_attendance(teacher_id, academic_year_id, tenant_id)
     responses = [AttendanceResponse.model_validate(e) for e in entries if e.school_id == school_id]
     return APIResponse[List[AttendanceResponse]](
@@ -354,6 +441,27 @@ async def correct_attendance(
     current_user: User = Depends(require_permission("attendance.update")),
     service: AttendanceService = Depends(get_attendance_service)
 ) -> APIResponse[AttendanceResponse]:
+    session_obj = await service.attendance_repo.get_session_by_id(session_id, school_id, tenant_id)
+    if not session_obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attendance session not found."
+        )
+
+    role_codes = {r.code for r in current_user.roles}
+    is_admin_or_principal = current_user.is_superuser or any(
+        code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in role_codes
+    )
+    if not is_admin_or_principal and "TEACHER" in role_codes:
+        from app.repositories.teacher import TeacherRepository
+        teacher_repo = TeacherRepository(service.attendance_repo.db)
+        teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+        if not teacher or session_obj.teacher_id != teacher.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot correct attendance for another teacher's session."
+            )
+
     db_obj = await service.correct_student_attendance(
         tenant_id=tenant_id,
         school_id=school_id,

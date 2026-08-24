@@ -190,14 +190,56 @@ async def get_import_job_rows(
 async def validate_import_job(
     job_id: uuid.UUID,
     file: UploadFile = File(...),
+    sheet_name: Optional[str] = Query(None),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("migration.create")),
     service: ImportJobService = Depends(get_import_job_service)
 ) -> APIResponse[ImportJobResponse]:
     content = await file.read()
-    db_obj = await service.validate_job(tenant_id, job_id, content)
+    db_obj = await service.validate_job(tenant_id, job_id, content, sheet_name=sheet_name)
     return APIResponse[ImportJobResponse](
         success=True,
         message="Import job validated successfully.",
         data=ImportJobResponse.model_validate(db_obj)
     )
+
+@router.post(
+    "/parse",
+    status_code=status.HTTP_200_OK,
+    summary="Parse spreadsheet upload content",
+    description="Reads a spreadsheet file (CSV, XLS, XLSX, XLSM, XLSB, ODS) and returns sheet names, normalized headers, and first 50 rows for validation previews."
+)
+async def parse_spreadsheet_file(
+    file: UploadFile = File(...),
+    sheet_name: Optional[str] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("migration.create"))
+):
+    from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
+    content = await file.read()
+    try:
+        sheets, selected_sheet, rows = read_spreadsheet(content, file.filename, sheet_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse spreadsheet file: {str(e)}"
+        )
+
+    headers = [normalize_header(h) for h in rows[0]] if rows else []
+    preview_limit = 50
+    preview_rows = rows[:preview_limit]
+
+    return {
+        "success": True,
+        "message": "File parsed successfully.",
+        "data": {
+            "filename": file.filename,
+            "format": file.filename.split(".")[-1].upper() if "." in file.filename else "CSV",
+            "sheets": sheets,
+            "selected_sheet": selected_sheet,
+            "columns": headers,
+            "row_count": len(rows),
+            "preview_rows": preview_rows
+        }
+    }
+

@@ -244,6 +244,7 @@ class StudentLedgerResponse(BaseModel):
 
 # --- DASHBOARD METRICS ---
 class OutstandingClassMetric(BaseModel):
+    class_id: Optional[uuid.UUID] = None
     class_name: str
     outstanding_amount: DecimalFloat
 

@@ -34,6 +34,10 @@ class StudentCreate(StudentBase):
     section_id: uuid.UUID
 
 class StudentUpdate(BaseModel):
+    academic_year_id: Optional[uuid.UUID] = None
+    class_id: Optional[uuid.UUID] = None
+    section_id: Optional[uuid.UUID] = None
+
     first_name: Optional[str] = Field(None, min_length=1, max_length=100)
     middle_name: Optional[str] = Field(None, max_length=100)
     last_name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -70,6 +74,8 @@ class StudentResponse(StudentBase):
     academic_year_id: uuid.UUID
     class_id: uuid.UUID
     section_id: uuid.UUID
+    class_name: Optional[str] = None
+    section_name: Optional[str] = None
     
     admitted_at: Optional[datetime] = None
     promoted_at: Optional[datetime] = None

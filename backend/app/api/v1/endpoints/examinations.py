@@ -18,6 +18,55 @@ from app.schemas.response import APIResponse
 
 router = APIRouter()
 
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.session import get_db
+
+async def verify_school_access(user: User, school_id: uuid.UUID, db: AsyncSession) -> None:
+    from app.models.school import School
+
+    school_stmt = select(School).where(School.id == school_id)
+    school_res = await db.execute(school_stmt)
+    school = school_res.scalar_one_or_none()
+    if not school:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found."
+        )
+
+    if not user.is_superuser and school.tenant_id != user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. School belongs to a different tenant."
+        )
+
+    if not school.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="School is inactive."
+        )
+
+    if user.is_superuser:
+        return
+
+    # Parents are not registered in the school_users table (reserved for staff/teachers)
+    # but are authorized to access school resources scoped to their children.
+    user_role_codes = [role.code for role in user.roles]
+    if "PARENT" in user_role_codes:
+        return
+
+    from app.models.role import school_users
+    stmt = select(1).select_from(school_users).where(
+        school_users.c.user_id == user.id,
+        school_users.c.school_id == school_id
+    )
+    res = await db.execute(stmt)
+    if not res.fetchone():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not have permissions for this school."
+        )
+
 # ==================================================
 # Template Endpoints
 # ==================================================
@@ -35,6 +84,7 @@ async def create_template(
     current_user: User = Depends(require_permission("exam.create")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExamTemplateResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.create_template(tenant_id, school_id, academic_year_id, obj_in, current_user)
     return APIResponse[ExamTemplateResponse](
         success=True,
@@ -56,6 +106,7 @@ async def list_templates(
     current_user: User = Depends(require_permission("exam.read")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[List[ExamTemplateResponse]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_objs = await service.template_repo.get_multi(school_id, tenant_id, skip, limit)
     return APIResponse[List[ExamTemplateResponse]](
         success=True,
@@ -75,7 +126,7 @@ async def list_templates(
 )
 async def suggest_schedules(
     school_id: uuid.UUID = Query(...),
-    academic_year_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
     class_ids: List[uuid.UUID] = Query(...),
     start_date: date = Query(...),
     end_date: date = Query(...),
@@ -83,6 +134,7 @@ async def suggest_schedules(
     current_user: User = Depends(require_permission("exam.read")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[List[Dict[str, Any]]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     suggestions = await service.suggest_wizard_schedules(
         tenant_id=tenant_id,
         school_id=school_id,
@@ -109,6 +161,7 @@ async def save_wizard(
     current_user: User = Depends(require_permission("exam.create")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
     db_obj = await service.create_examination_wizard(tenant_id, obj_in.school_id, obj_in, current_user)
     return APIResponse[ExaminationResponse](
         success=True,
@@ -133,6 +186,7 @@ async def copy_examination(
     current_user: User = Depends(require_permission("exam.create")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.copy_examination(tenant_id, school_id, obj_in, current_user)
     return APIResponse[ExaminationResponse](
         success=True,
@@ -153,6 +207,7 @@ async def publish_examination(
     current_user: User = Depends(require_permission("exam.update")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.publish_examination(tenant_id, school_id, id, current_user)
     return APIResponse[ExaminationResponse](
         success=True,
@@ -176,6 +231,7 @@ async def get_parent_schedules(
     current_user: User = Depends(require_permission("exam.read")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[List[ExamScheduleResponse]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     schedules = await service.exam_repo.get_parent_schedules(current_user.email, school_id, tenant_id)
     return APIResponse[List[ExamScheduleResponse]](
         success=True,
@@ -199,6 +255,7 @@ async def create_exam(
     current_user: User = Depends(require_permission("exam.create")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
     db_obj = await service.create_examination(tenant_id, obj_in.school_id, obj_in, current_user)
     return APIResponse[ExaminationResponse](
         success=True,
@@ -219,6 +276,7 @@ async def get_exam(
     current_user: User = Depends(require_permission("exam.read")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.exam_repo.get_by_id(id, school_id, tenant_id)
     if not db_obj:
         raise HTTPException(
@@ -247,6 +305,7 @@ async def list_exams(
     current_user: User = Depends(require_permission("exam.read")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[List[ExaminationResponse]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_objs = await service.exam_repo.get_multi(
         school_id=school_id,
         tenant_id=tenant_id,
@@ -275,6 +334,7 @@ async def update_exam(
     current_user: User = Depends(require_permission("exam.update")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.update_examination(tenant_id, school_id, id, obj_in, current_user)
     return APIResponse[ExaminationResponse](
         success=True,
@@ -295,6 +355,7 @@ async def delete_exam(
     current_user: User = Depends(require_permission("exam.delete")),
     service: ExaminationService = Depends(get_examination_service)
 ) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.delete_examination(tenant_id, school_id, id, current_user)
     return APIResponse[ExaminationResponse](
         success=True,

@@ -210,7 +210,7 @@ async def test_student_crud_flow(client: AsyncClient, setup_student_data, db_ses
         "gender": "MALE",
         "date_of_birth": "2015-05-29",
         "blood_group": "O+",
-        "aadhaar_number": "123456789012",
+        "aadhaar_number": "999911112222",
         "emis_number": "EMIS-8877",
         "mobile": "+919988776655",
         "email": "jfk@whitehouse.gov",
@@ -726,3 +726,188 @@ async def test_student_duplicate_regression(client: AsyncClient, setup_student_d
     }
     resp = await client.post("/api/v1/students", json=payload_unique, headers=headers)
     assert resp.status_code == 201
+
+
+@pytest.mark.anyio
+async def test_student_reallocation_and_transfers(client: AsyncClient, setup_student_data, db_session) -> None:
+    data = setup_student_data
+    school_id = data["school_a"].id
+    ay_id = data["ay_a"].id
+    class_id = data["class_a"].id
+    sec_a = data["sec_a"].id  # capacity 1
+    sec_b = data["sec_b"].id  # capacity 10
+    headers = data["auth_headers"]
+
+    import random
+    rand_aadhaar = "".join(str(random.randint(0, 9)) for _ in range(12))
+
+    # 1. Create a student in Section B
+    payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_b),
+        "admission_number": "ADM-REALLOC-1",
+        "roll_number": "ROLL-REALLOC-1",
+        "first_name": "John",
+        "last_name": "Doe",
+        "gender": "MALE",
+        "date_of_birth": "2016-01-01",
+        "admission_date": "2026-06-01",
+        "aadhaar_number": rand_aadhaar
+    }
+    resp = await client.post("/api/v1/students", json=payload, headers=headers)
+    assert resp.status_code == 201
+    student_id = resp.json()["data"]["id"]
+
+    # 2. Reallocate to Section A (successful)
+    update_payload = {
+        "section_id": str(sec_a)
+    }
+    resp_update = await client.put(f"/api/v1/students/{student_id}?school_id={school_id}", json=update_payload, headers=headers)
+    assert resp_update.status_code == 200
+    assert resp_update.json()["data"]["section_id"] == str(sec_a)
+    assert resp_update.json()["data"]["transferred_at"] is not None
+
+    # 3. Try to reallocate to the exact same section -> should fail 400
+    resp_same = await client.put(f"/api/v1/students/{student_id}?school_id={school_id}", json=update_payload, headers=headers)
+    assert resp_same.status_code == 400
+    assert "already assigned" in resp_same.json()["message"].lower()
+
+    # 4. Create another student in Section B
+    payload2 = payload.copy()
+    payload2["admission_number"] = "ADM-REALLOC-2"
+    payload2["roll_number"] = "ROLL-REALLOC-2"
+    payload2["aadhaar_number"] = "".join(str(random.randint(0, 9)) for _ in range(12))
+    resp2 = await client.post("/api/v1/students", json=payload2, headers=headers)
+    assert resp2.status_code == 201
+    student2_id = resp2.json()["data"]["id"]
+
+    # 5. Try to move student 2 to Section A (capacity is 1, currently occupied by student 1) -> should fail 400 capacity exceeded
+    resp_full = await client.put(f"/api/v1/students/{student2_id}?school_id={school_id}", json={"section_id": str(sec_a)}, headers=headers)
+    assert resp_full.status_code == 400
+    assert "capacity exceeded" in resp_full.json()["message"].lower()
+
+    # 6. Test Withdrawal
+    resp_withdraw = await client.put(f"/api/v1/students/{student_id}?school_id={school_id}", json={"status": "WITHDRAWN"}, headers=headers)
+    assert resp_withdraw.status_code == 200
+    assert resp_withdraw.json()["data"]["status"] == "WITHDRAWN"
+    assert resp_withdraw.json()["data"]["is_active"] is False
+
+    # 7. Test Re-admission back to Active
+    resp_readmit = await client.put(f"/api/v1/students/{student_id}?school_id={school_id}", json={"status": "ACTIVE"}, headers=headers)
+    assert resp_readmit.status_code == 200
+    assert resp_readmit.json()["data"]["status"] == "ACTIVE"
+    assert resp_readmit.json()["data"]["is_active"] is True
+
+
+@pytest.mark.anyio
+async def test_class_promotion_engine(client: AsyncClient, setup_student_data, db_session) -> None:
+    data = setup_student_data
+    school_id = data["school_a"].id
+    ay_id = data["ay_a"].id
+    class_id = data["class_a"].id
+    sec_a = data["sec_a"].id
+    sec_b = data["sec_b"].id
+    headers = data["auth_headers"]
+
+    # Set school promotion policy to be lenient so 0 marks/attendance promotes
+    from app.models.school import School
+    from sqlalchemy.orm.attributes import flag_modified
+    school_db = await db_session.get(School, school_id)
+    school_db.settings = {
+        "promotion_policy": {
+            "min_attendance_pct": 0.0,
+            "min_overall_pct": 0.0,
+            "max_failed_subjects": 10
+        }
+    }
+    flag_modified(school_db, "settings")
+    await db_session.commit()
+
+    # 1. Create a next class in the same academic year
+    repo_c = ClassRepository(db_session)
+    next_class = await repo_c.create(
+        tenant_id=data["tenant_a"].id,
+        obj_in=ClassCreate(
+            school_id=school_id,
+            academic_year_id=ay_id,
+            name="Class 11",
+            code="CLASS_11A",
+            level=11,
+            category=ClassCategory.HIGH,
+            capacity=40
+        )
+    )
+    # Map class_a's next_class_id to next_class.id
+    source_class_db = await repo_c.get_by_id(class_id, school_id, data["tenant_a"].id)
+    source_class_db.next_class_id = next_class.id
+    await db_session.commit()
+
+    # Create target section in next class
+    repo_sec = SectionRepository(db_session)
+    target_sec = await repo_sec.create(
+        tenant_id=data["tenant_a"].id,
+        obj_in=SectionCreate(
+            school_id=school_id,
+            academic_year_id=ay_id,
+            class_id=next_class.id,
+            name="A",
+            code="SEC_11A",
+            capacity=10
+        )
+    )
+    await db_session.commit()
+
+    # 2. Add a student to source class (sec_b)
+    payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_b),
+        "admission_number": "ADM-PROM-1",
+        "roll_number": "ROLL-PROM-1",
+        "first_name": "Promo",
+        "last_name": "Student",
+        "gender": "MALE",
+        "date_of_birth": "2016-01-01",
+        "admission_date": "2026-06-01",
+        "aadhaar_number": "111122223339"
+    }
+    resp = await client.post("/api/v1/students", json=payload, headers=headers)
+    assert resp.status_code == 201
+    student_id = resp.json()["data"]["id"]
+
+    # 3. Call promote preview
+    promote_payload = {
+        "target_academic_year_id": str(ay_id),
+        "section_mappings": {
+            str(sec_b): str(target_sec.id)
+        }
+    }
+    resp_preview = await client.post(
+        f"/api/v1/classes/{class_id}/promote?school_id={school_id}&preview=true",
+        json=promote_payload,
+        headers=headers
+    )
+    assert resp_preview.status_code == 200
+    assert resp_preview.json()["data"]["total_students"] == 1
+    assert resp_preview.json()["data"]["promoted_students"][0]["status"] == "PROMOTED"
+
+    # Verify student is still in source class (since it was preview)
+    resp_student = await client.get(f"/api/v1/students/{student_id}?school_id={school_id}", headers=headers)
+    assert resp_student.json()["data"]["class_id"] == str(class_id)
+
+    # 4. Run actual promotion execution
+    resp_promote = await client.post(
+        f"/api/v1/classes/{class_id}/promote?school_id={school_id}&preview=false",
+        json=promote_payload,
+        headers=headers
+    )
+    assert resp_promote.status_code == 200
+    print("PROMOTION RESPONSE:", resp_promote.json())
+
+    # Verify student is moved to next class and target section
+    resp_student_after = await client.get(f"/api/v1/students/{student_id}?school_id={school_id}", headers=headers)
+    assert resp_student_after.json()["data"]["class_id"] == str(next_class.id), f"Promotion failed: {resp_promote.json()}"
+    assert resp_student_after.json()["data"]["section_id"] == str(target_sec.id)

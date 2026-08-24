@@ -119,3 +119,30 @@ class VerificationResponse(BaseModel):
     generated_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
     pdf_url: Optional[str] = None
+
+# ==================================================
+# Student Academic History Schemas
+# ==================================================
+class ExamSubjectMark(BaseModel):
+    subject_name: str
+    max_marks: int
+    marks_obtained: Optional[float] = None
+    grade: str
+    status: str
+    remarks: Optional[str] = None
+
+class ExamHistorySummary(BaseModel):
+    examination_id: uuid.UUID
+    examination_name: str
+    subject_marks: List[ExamSubjectMark]
+    total_max_marks: int
+    total_obtained_marks: float
+    percentage: float
+    grade: str
+
+class StudentAcademicHistoryResponse(BaseModel):
+    student_id: uuid.UUID
+    student_name: str
+    class_name: str
+    section_name: str
+    examinations: List[ExamHistorySummary]

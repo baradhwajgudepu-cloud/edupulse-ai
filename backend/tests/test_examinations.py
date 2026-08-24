@@ -138,13 +138,13 @@ async def setup_exam_test_data(db_session: AsyncSession):
 
     user_admin = await auth_service.create_user(
         tenant_a.id,
-        UserCreate(email=f"admin-{suffix}@a.com", password="Password123!", first_name="School", last_name="Admin")
+        UserCreate(email=f"admin-{suffix}@a.com", password="Password123!", first_name="School", last_name="Admin", school_ids=[school_a.id])
     )
     user_admin.roles.append(role_a)
 
     user_parent = await auth_service.create_user(
         tenant_a.id,
-        UserCreate(email=parent_email, password="Password123!", first_name="Albert", last_name="Einstein Sr")
+        UserCreate(email=parent_email, password="Password123!", first_name="Albert", last_name="Einstein Sr", school_ids=[school_a.id])
     )
     user_parent.roles.append(role_a)
 
@@ -443,3 +443,129 @@ async def test_exam_conflict_detection(client: AsyncClient, setup_exam_test_data
     resp2 = await client.post("/api/v1/examinations/wizard", json=wizard_payload2, headers=headers)
     assert resp2.status_code == 422
     assert "conflict" in resp2.json()["message"]
+
+@pytest.mark.anyio
+async def test_new_examination_validation_rules(client: AsyncClient, setup_exam_test_data) -> None:
+    data = setup_exam_test_data
+    headers = data["auth_headers"]
+    school_id = data["school_a"].id
+    ay_id = data["ay_a"].id
+
+    # 1. Valid future date inside active academic year succeeds + Dynamic academic year resolution (ay_id omitted)
+    payload_valid = {
+        "school_id": str(school_id),
+        "exam_name": "Wizard Valid Exam 2026",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "ALL_CLASSES",
+        "schedules": []
+    }
+    resp_valid = await client.post("/api/v1/examinations/wizard", json=payload_valid, headers=headers)
+    assert resp_valid.status_code == 201
+    res_data = resp_valid.json()["data"]
+    assert res_data["academic_year_id"] == str(ay_id)
+    assert res_data["settings"]["target_scope"] == "ALL_CLASSES"
+
+    # 2. Date outside active academic year fails (2027 is outside 2026 bounds)
+    payload_outside = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Outside Exam",
+        "exam_type": "QUARTERLY",
+        "start_date": "2027-06-01",
+        "end_date": "2027-06-05",
+        "target_scope": "ALL_CLASSES",
+        "schedules": []
+    }
+    resp_outside = await client.post("/api/v1/examinations/wizard", json=payload_outside, headers=headers)
+    assert resp_outside.status_code == 422
+
+    # 3. Start date after end date fails
+    payload_invalid_dates = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Date Conflict Exam",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-05",
+        "end_date": "2026-06-01",
+        "target_scope": "ALL_CLASSES",
+        "schedules": []
+    }
+    resp_invalid_dates = await client.post("/api/v1/examinations/wizard", json=payload_invalid_dates, headers=headers)
+    assert resp_invalid_dates.status_code == 422
+
+    # 4. SPECIFIC_CLASSES requires class_ids
+    payload_spec_classes_fail = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Specific Classes Fail",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "SPECIFIC_CLASSES",
+        "class_ids": [],
+        "schedules": []
+    }
+    resp_spec_classes_fail = await client.post("/api/v1/examinations/wizard", json=payload_spec_classes_fail, headers=headers)
+    assert resp_spec_classes_fail.status_code == 422
+
+    # 5. SPECIFIC_CLASSES succeeds with class_ids
+    payload_spec_classes_ok = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Specific Classes OK",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "SPECIFIC_CLASSES",
+        "class_ids": [str(data["class_a"].id)],
+        "schedules": []
+    }
+    resp_spec_classes_ok = await client.post("/api/v1/examinations/wizard", json=payload_spec_classes_ok, headers=headers)
+    assert resp_spec_classes_ok.status_code == 201
+
+    # 6. SPECIFIC_SECTIONS requires section_ids
+    payload_spec_secs_fail = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Specific Sections Fail",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "SPECIFIC_SECTIONS",
+        "section_ids": [],
+        "schedules": []
+    }
+    resp_spec_secs_fail = await client.post("/api/v1/examinations/wizard", json=payload_spec_secs_fail, headers=headers)
+    assert resp_spec_secs_fail.status_code == 422
+
+    # 7. SPECIFIC_SECTIONS succeeds with section_ids
+    payload_spec_secs_ok = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "exam_name": "Wizard Specific Sections OK",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "SPECIFIC_SECTIONS",
+        "section_ids": [str(data["sec_a1"].id)],
+        "schedules": []
+    }
+    resp_spec_secs_ok = await client.post("/api/v1/examinations/wizard", json=payload_spec_secs_ok, headers=headers)
+    assert resp_spec_secs_ok.status_code == 201
+
+    # 8. Cross-school examination creation remains rejected
+    payload_cross_school = {
+        "school_id": str(data["school_b"].id),
+        "academic_year_id": str(data["ay_b"].id),
+        "exam_name": "Cross School Hack",
+        "exam_type": "QUARTERLY",
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "target_scope": "ALL_CLASSES",
+        "schedules": []
+    }
+    resp_cross = await client.post("/api/v1/examinations/wizard", json=payload_cross_school, headers=headers)
+    assert resp_cross.status_code == 403
+

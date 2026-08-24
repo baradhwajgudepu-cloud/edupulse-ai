@@ -60,8 +60,38 @@ class TeacherService:
                 detail="School not found under the active tenant."
             )
 
+        # Idempotency and Self-Healing Pre-check
+        existing_teacher = await self.teacher_repo.get_by_employee_code(obj_in.employee_code, obj_in.school_id, tenant_id)
+        if not existing_teacher:
+            existing_teacher = await self.teacher_repo.get_by_official_email(obj_in.official_email, tenant_id)
+
+        if existing_teacher:
+            if (existing_teacher.tenant_id != tenant_id or 
+                existing_teacher.school_id != obj_in.school_id or
+                existing_teacher.employee_code != obj_in.employee_code or
+                existing_teacher.official_email.lower() != obj_in.official_email.lower()):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Teacher profile conflict detected under different school, tenant, or attribute mappings."
+                )
+
+            from app.services.identity_provisioning import IdentityProvisioningService
+            provision_service = IdentityProvisioningService(self.teacher_repo.db)
+            user = await provision_service.provision_teacher(tenant_id, obj_in.school_id, existing_teacher.id, created_by)
+
+            from app.core.settings import settings
+            if settings.DEBUG and hasattr(user, "temp_password") and user.temp_password:
+                from app.schemas.auth import ProvisioningCredentialResponse
+                existing_teacher.credentials = ProvisioningCredentialResponse(
+                    user_id=user.id,
+                    email=user.email,
+                    login_id=user.login_id,
+                    temporary_password=user.temp_password,
+                    role="TEACHER"
+                )
+            return existing_teacher
+
         # Unique Checks within School
-        # Employee Code
         dup_emp = await self.teacher_repo.get_by_employee_code(obj_in.employee_code, obj_in.school_id, tenant_id)
         if dup_emp:
             raise HTTPException(
@@ -69,7 +99,6 @@ class TeacherService:
                 detail=f"Teacher with employee code '{obj_in.employee_code}' already exists in this school."
             )
 
-        # Staff Code
         dup_staff = await self.teacher_repo.get_by_staff_code(obj_in.staff_code, obj_in.school_id, tenant_id)
         if dup_staff:
             raise HTTPException(
@@ -78,7 +107,6 @@ class TeacherService:
             )
 
         # Unique Checks within Tenant
-        # Mobile
         dup_mob = await self.teacher_repo.get_by_mobile(obj_in.mobile, tenant_id)
         if dup_mob:
             raise HTTPException(
@@ -86,7 +114,6 @@ class TeacherService:
                 detail=f"Teacher with mobile number '{obj_in.mobile}' already exists."
             )
 
-        # Official Email
         dup_off_email = await self.teacher_repo.get_by_official_email(obj_in.official_email, tenant_id)
         if dup_off_email:
             raise HTTPException(
@@ -94,7 +121,6 @@ class TeacherService:
                 detail=f"Teacher with official email '{obj_in.official_email}' already exists."
             )
 
-        # Personal Email
         if obj_in.personal_email:
             dup_pers_email = await self.teacher_repo.get_by_personal_email(obj_in.personal_email, tenant_id)
             if dup_pers_email:
@@ -103,7 +129,6 @@ class TeacherService:
                     detail=f"Teacher with personal email '{obj_in.personal_email}' already exists."
                 )
 
-        # Aadhaar
         if obj_in.aadhaar_number:
             dup_aadhaar = await self.teacher_repo.get_by_aadhaar(obj_in.aadhaar_number, tenant_id)
             if dup_aadhaar:
@@ -112,7 +137,6 @@ class TeacherService:
                     detail="Teacher with this Aadhaar number already exists."
                 )
 
-        # PAN
         if obj_in.pan_number:
             dup_pan = await self.teacher_repo.get_by_pan(obj_in.pan_number, tenant_id)
             if dup_pan:
@@ -125,16 +149,30 @@ class TeacherService:
         db_obj.status = TeacherStatus.ACTIVE
         db_obj.is_active = True
         
+        # Flush to DB to retrieve teacher ID before provisioning user
+        await self.teacher_repo.db.flush()
+
+        from app.services.identity_provisioning import IdentityProvisioningService
+        provision_service = IdentityProvisioningService(self.teacher_repo.db)
+        user = await provision_service.provision_teacher(tenant_id, obj_in.school_id, db_obj.id, created_by)
+
+        from app.core.settings import settings
+        credentials_data = None
+        if settings.DEBUG and hasattr(user, "temp_password") and user.temp_password:
+            from app.schemas.auth import ProvisioningCredentialResponse
+            credentials_data = ProvisioningCredentialResponse(
+                user_id=user.id,
+                email=user.email,
+                login_id=user.login_id,
+                temporary_password=user.temp_password,
+                role="TEACHER"
+            )
+
         await self.teacher_repo.db.commit()
-
-        try:
-            from app.services.identity_provisioning import IdentityProvisioningService
-            provision_service = IdentityProvisioningService(self.teacher_repo.db)
-            await provision_service.provision_teacher(tenant_id, obj_in.school_id, db_obj.id, created_by)
-        except Exception as ex:
-            logger.error(f"Failed to auto-provision user identity for teacher: {ex}")
-
-        return await self.teacher_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
+        retrieved_teacher = await self.teacher_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
+        if retrieved_teacher and credentials_data:
+            retrieved_teacher.credentials = credentials_data
+        return retrieved_teacher
 
     async def update_teacher(
         self,

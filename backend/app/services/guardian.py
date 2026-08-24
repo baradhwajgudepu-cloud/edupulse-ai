@@ -60,8 +60,51 @@ class GuardianService:
                 detail="School not found under the active tenant."
             )
 
+        # Idempotency and Self-Healing Pre-check
+        existing_guardian = await self.guardian_repo.get_by_mobile(obj_in.mobile, tenant_id)
+        if not existing_guardian and obj_in.email:
+            existing_guardian = await self.guardian_repo.get_by_email(obj_in.email, tenant_id)
+
+        if existing_guardian:
+            # Verify security boundary and school mapping
+            if (existing_guardian.tenant_id != tenant_id or 
+                existing_guardian.school_id != obj_in.school_id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Guardian profile already exists in another school or tenant context."
+                )
+
+            # Check if this is a duplicate conflict rather than an idempotent match
+            if (
+                (obj_in.email and existing_guardian.email and existing_guardian.email != obj_in.email) or
+                (obj_in.aadhaar_number and existing_guardian.aadhaar_number and existing_guardian.aadhaar_number != obj_in.aadhaar_number) or
+                (obj_in.pan_number and existing_guardian.pan_number and existing_guardian.pan_number != obj_in.pan_number)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Guardian with mobile '{obj_in.mobile}' already exists with different details."
+                )
+
+            from app.services.identity_provisioning import IdentityProvisioningService
+            provision_service = IdentityProvisioningService(self.guardian_repo.db)
+            user = await provision_service.provision_guardian(tenant_id, obj_in.school_id, existing_guardian.id, created_by)
+
+            # Re-fetch with user loaded to prevent lazy load exceptions
+            retrieved_guardian = await self.guardian_repo.get_by_id(existing_guardian.id, obj_in.school_id, tenant_id)
+
+            from app.core.settings import settings
+            if settings.DEBUG and hasattr(user, "temp_password") and user.temp_password and retrieved_guardian:
+                from app.schemas.auth import ProvisioningCredentialResponse
+                retrieved_guardian.credentials = ProvisioningCredentialResponse(
+                    user_id=user.id,
+                    email=user.email,
+                    login_id=user.login_id,
+                    temporary_password=user.temp_password,
+                    role="PARENT"
+                )
+            return retrieved_guardian
+
         # Unique checks within the tenant boundary
-        # Mobile
         dup_mob = await self.guardian_repo.get_by_mobile(obj_in.mobile, tenant_id)
         if dup_mob:
             raise HTTPException(
@@ -69,7 +112,6 @@ class GuardianService:
                 detail=f"Guardian with mobile number '{obj_in.mobile}' already exists."
             )
 
-        # Email
         if obj_in.email:
             dup_email = await self.guardian_repo.get_by_email(obj_in.email, tenant_id)
             if dup_email:
@@ -78,7 +120,6 @@ class GuardianService:
                     detail=f"Guardian with email '{obj_in.email}' already exists."
                 )
 
-        # Aadhaar
         if obj_in.aadhaar_number:
             dup_aadhaar = await self.guardian_repo.get_by_aadhaar(obj_in.aadhaar_number, tenant_id)
             if dup_aadhaar:
@@ -87,7 +128,6 @@ class GuardianService:
                     detail="Guardian with this Aadhaar number already exists."
                 )
 
-        # PAN
         if obj_in.pan_number:
             dup_pan = await self.guardian_repo.get_by_pan(obj_in.pan_number, tenant_id)
             if dup_pan:
@@ -100,16 +140,30 @@ class GuardianService:
         db_obj.status = GuardianStatus.ACTIVE
         db_obj.is_active = True
         
+        # Flush to DB to retrieve guardian ID before provisioning user
+        await self.guardian_repo.db.flush()
+
+        from app.services.identity_provisioning import IdentityProvisioningService
+        provision_service = IdentityProvisioningService(self.guardian_repo.db)
+        user = await provision_service.provision_guardian(tenant_id, obj_in.school_id, db_obj.id, created_by)
+
+        from app.core.settings import settings
+        credentials_data = None
+        if settings.DEBUG and hasattr(user, "temp_password") and user.temp_password:
+            from app.schemas.auth import ProvisioningCredentialResponse
+            credentials_data = ProvisioningCredentialResponse(
+                user_id=user.id,
+                email=user.email,
+                login_id=user.login_id,
+                temporary_password=user.temp_password,
+                role="PARENT"
+            )
+
         await self.guardian_repo.db.commit()
-
-        try:
-            from app.services.identity_provisioning import IdentityProvisioningService
-            provision_service = IdentityProvisioningService(self.guardian_repo.db)
-            await provision_service.provision_guardian(tenant_id, obj_in.school_id, db_obj.id, created_by)
-        except Exception as ex:
-            logger.error(f"Failed to auto-provision user identity for guardian: {ex}")
-
-        return await self.guardian_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
+        retrieved_guardian = await self.guardian_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
+        if retrieved_guardian and credentials_data:
+            retrieved_guardian.credentials = credentials_data
+        return retrieved_guardian
 
     async def update_guardian(
         self,

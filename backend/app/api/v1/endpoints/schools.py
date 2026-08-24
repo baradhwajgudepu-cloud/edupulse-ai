@@ -1,8 +1,9 @@
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Any
 from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.school import get_school_service
+from app.api.dependencies.auth import require_permission
 from app.services.school import SchoolService
 from app.schemas.school import SchoolCreate, SchoolUpdate, SchoolResponse
 from app.models.school import SchoolBoard, SchoolStatus
@@ -20,6 +21,7 @@ router = APIRouter()
 async def create_school(
     obj_in: SchoolCreate,
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.create")),
     service: SchoolService = Depends(get_school_service)
 ) -> APIResponse[SchoolResponse]:
     """
@@ -47,6 +49,7 @@ async def list_schools(
     board: Optional[SchoolBoard] = Query(None, description="Filter by board Affiliation"),
     is_active: Optional[bool] = Query(None, description="Filter by active switch"),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.read")),
     service: SchoolService = Depends(get_school_service)
 ) -> APIResponse[List[SchoolResponse]]:
     """
@@ -77,6 +80,7 @@ async def list_schools(
 async def get_school(
     id: uuid.UUID,
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.read")),
     service: SchoolService = Depends(get_school_service)
 ) -> APIResponse[SchoolResponse]:
     """
@@ -101,6 +105,7 @@ async def update_school(
     id: uuid.UUID,
     obj_in: SchoolUpdate,
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.update", "school.write")),
     service: SchoolService = Depends(get_school_service)
 ) -> APIResponse[SchoolResponse]:
     """
@@ -124,6 +129,7 @@ async def update_school(
 async def delete_school(
     id: uuid.UUID,
     tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.delete")),
     service: SchoolService = Depends(get_school_service)
 ) -> APIResponse[SchoolResponse]:
     """

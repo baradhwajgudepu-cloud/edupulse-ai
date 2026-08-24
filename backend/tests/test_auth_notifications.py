@@ -583,3 +583,97 @@ async def test_service_integrations_triggers(setup_notification_test_data, db_se
     res_notif = await db_session.execute(stmt)
     notif = res_notif.scalar_one()
     assert "ABSENT" in notif.message
+
+
+@pytest.mark.anyio
+async def test_device_tokens_endpoints(client: AsyncClient, setup_notification_test_data, db_session: AsyncSession) -> None:
+    headers = setup_notification_test_data["headers_parent"]
+    tenant_id = setup_notification_test_data["tenant_a"].id
+    parent_id = setup_notification_test_data["user_parent"].id
+
+    # 1. Register device token
+    payload = {
+        "device_token": "mock-fcm-device-token-xyz-123",
+        "platform": "android",
+        "app_type": "parent"
+    }
+    resp = await client.post("/api/v1/notifications/device-tokens", json=payload, headers=headers)
+    assert resp.status_code == 201
+    data = resp.json()["data"]
+    assert data["device_token"] == "mock-fcm-device-token-xyz-123"
+    assert data["platform"] == "android"
+    assert data["app_type"] == "parent"
+    assert data["is_active"] is True
+
+    # Check DB
+    from app.models.notification import UserDeviceToken
+    stmt = select(UserDeviceToken).where(
+        UserDeviceToken.tenant_id == tenant_id,
+        UserDeviceToken.user_id == parent_id,
+        UserDeviceToken.device_token == "mock-fcm-device-token-xyz-123"
+    )
+    res = await db_session.execute(stmt)
+    token = res.scalar_one_or_none()
+    assert token is not None
+    assert token.is_active is True
+
+    # 2. Deactivate device token
+    deact_payload = {
+        "device_token": "mock-fcm-device-token-xyz-123"
+    }
+    resp = await client.post("/api/v1/notifications/device-tokens/deactivate", json=deact_payload, headers=headers)
+    assert resp.status_code == 200
+    
+    # Check DB again
+    db_session.expire_all()
+    res2 = await db_session.execute(stmt)
+    token2 = res2.scalar_one_or_none()
+    assert token2 is not None
+    assert token2.is_active is False
+
+
+@pytest.mark.anyio
+async def test_event_idempotency_and_preferences(setup_notification_test_data, db_session: AsyncSession) -> None:
+    tenant_a = setup_notification_test_data["tenant_a"]
+    school_a = setup_notification_test_data["school_a"]
+    student_a = setup_notification_test_data["student_a"]
+
+    tenant_id = tenant_a.id
+    school_id = school_a.id
+    student_id = student_a.id
+
+    repo_n = NotificationRepository(db_session)
+    notif_service = NotificationService(repo_n)
+
+    # Dispatch first fee payment event
+    notifs = await notif_service.dispatch_event(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        event_type="FEE_PAYMENT_RECEIVED",
+        payload={
+            "student_id": student_id,
+            "entity_id": student_id,  # using student_id as mock entity_id
+            "title": "Fee Payment Successful",
+            "message": "Payment of 500.00 was successful.",
+            "related_module": "fee"
+        }
+    )
+    assert len(notifs) == 1
+    assert notifs[0].event_key is not None
+    assert notifs[0].push_status == "NOT_CONFIGURED"
+
+    # Dispatch identical duplicate event
+    notifs_dup = await notif_service.dispatch_event(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        event_type="FEE_PAYMENT_RECEIVED",
+        payload={
+            "student_id": student_id,
+            "entity_id": student_id,
+            "title": "Fee Payment Successful",
+            "message": "Payment of 500.00 was successful.",
+            "related_module": "fee"
+        }
+    )
+    # Should bypass creation completely (length 0)
+    assert len(notifs_dup) == 0

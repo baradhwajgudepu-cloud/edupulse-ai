@@ -58,3 +58,6 @@ pyxlsb==1.0.10
 odfpy==1.4.1
 tzdata
 google-cloud-storage==2.14.0
+reportlab==5.0.0
+pillow==12.3.0
+

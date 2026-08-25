@@ -31,6 +31,7 @@ INTENDED_PERMISSIONS = [
     "class.read",
     "section.read",
     "academic_year.read",
+    "academic_year.create",
 
     "fee.create",
     "fee.read",

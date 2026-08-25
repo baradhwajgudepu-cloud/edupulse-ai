@@ -57,23 +57,24 @@ async def test_fresh_tenant_expected_roles_and_permissions(db_session) -> None:
     principal_role = roles["PRINCIPAL"]
     principal_perms = await get_role_permission_codes(db_session, principal_role.id)
     expected_principal = set(ROLE_PERMISSIONS_MAP["PRINCIPAL"])
-    assert len(principal_perms) == 41
+    assert len(principal_perms) == 42
     assert principal_perms == expected_principal
-
-    # Assert new read permissions are mapped to PRINCIPAL
+    
+    # Assert read and create permissions are mapped to PRINCIPAL
     assert "class.read" in principal_perms
     assert "section.read" in principal_perms
     assert "academic_year.read" in principal_perms
+    assert "academic_year.create" in principal_perms
 
 
 @pytest.mark.anyio
 async def test_identity_provisioning_check_scenarios(db_session, monkeypatch) -> None:
     """
     Covers repair checking logic in IdentityProvisioningService._get_role:
-    1. 41/41 expected permissions -> no repair.
-    2. 40/41 expected permissions -> repair missing permission.
-    3. 40 expected + 1 custom permission -> repair missing expected permission.
-    4. 41 expected + custom permission -> no repair and preserve custom permission.
+    1. 42/42 expected permissions -> no repair.
+    2. 41/42 expected permissions -> repair missing permission.
+    3. 41 expected + 1 custom permission -> repair missing expected permission.
+    4. 42 expected + custom permission -> no repair and preserve custom permission.
     5. Zero permissions -> repair all expected permissions.
     """
     repo_t = TenantRepository(db_session)
@@ -101,14 +102,14 @@ async def test_identity_provisioning_check_scenarios(db_session, monkeypatch) ->
     monkeypatch.setattr("app.services.rbac_provisioning.ensure_tenant_rbac", mock_ensure_tenant_rbac)
     service = IdentityProvisioningService(db_session)
 
-    # Scenario 1: 41/41 expected permissions -> no repair.
+    # Scenario 1: 42/42 expected permissions -> no repair.
     ensure_calls.clear()
     role_retrieved = await service._get_role(tenant.id, "PRINCIPAL", "Principal")
     assert len(ensure_calls) == 0
     role_perms = await get_role_permission_codes(db_session, role_id)
-    assert len(role_perms) == 41
+    assert len(role_perms) == 42
 
-    # Scenario 2: 40/41 expected permissions -> repair missing permission.
+    # Scenario 2: 41/42 expected permissions -> repair missing permission.
     # Manually delete 1 expected permission (fee.report)
     stmt_perm = select(Permission).where(Permission.code == "fee.report")
     res_perm = await db_session.execute(stmt_perm)
@@ -130,10 +131,10 @@ async def test_identity_provisioning_check_scenarios(db_session, monkeypatch) ->
     
     # Verify permission was restored
     role_perms = await get_role_permission_codes(db_session, role_id)
-    assert len(role_perms) == 41
+    assert len(role_perms) == 42
     assert "fee.report" in role_perms
 
-    # Scenario 3: 40 expected + 1 custom permission -> repair missing expected permission.
+    # Scenario 3: 41 expected + 1 custom permission -> repair missing expected permission.
     # Remove fee.report again
     await db_session.execute(
         delete(role_permissions).where(
@@ -154,29 +155,29 @@ async def test_identity_provisioning_check_scenarios(db_session, monkeypatch) ->
     db_session.expire(role)
     await db_session.commit()
 
-    # Verify count is 41 (40 expected + 1 custom) in the DB
+    # Verify count is 42 (41 expected + 1 custom) in the DB
     stmt_count = select(func.count()).select_from(role_permissions).where(role_permissions.c.role_id == role_id)
     res_count = await db_session.execute(stmt_count)
-    assert res_count.scalar() == 41
+    assert res_count.scalar() == 42
 
     ensure_calls.clear()
     await service._get_role(tenant.id, "PRINCIPAL", "Principal")
-    # Should trigger repair because fee.report is missing, even though count was 41
+    # Should trigger repair because fee.report is missing, even though count was 42
     assert len(ensure_calls) == 1
     
-    # Verify restored to 42 (41 expected + 1 custom)
+    # Verify restored to 43 (42 expected + 1 custom)
     role_perms = await get_role_permission_codes(db_session, role_id)
-    assert len(role_perms) == 42
+    assert len(role_perms) == 43
     assert "fee.report" in role_perms
     assert "tenant.write" in role_perms
 
-    # Scenario 4: 41 expected + custom permission -> no repair and preserve custom permission.
+    # Scenario 4: 42 expected + custom permission -> no repair and preserve custom permission.
     ensure_calls.clear()
     await service._get_role(tenant.id, "PRINCIPAL", "Principal")
     assert len(ensure_calls) == 0
     
     role_perms = await get_role_permission_codes(db_session, role_id)
-    assert len(role_perms) == 42
+    assert len(role_perms) == 43
 
     # Scenario 5: Zero permissions -> repair all expected permissions.
     await db_session.execute(
@@ -190,7 +191,7 @@ async def test_identity_provisioning_check_scenarios(db_session, monkeypatch) ->
     assert len(ensure_calls) == 1
     
     role_perms = await get_role_permission_codes(db_session, role_id)
-    assert len(role_perms) == 41
+    assert len(role_perms) == 42
 
 
 @pytest.mark.anyio
@@ -246,7 +247,7 @@ async def test_tenant_rbac_idempotency_no_deletion_isolation(db_session) -> None
 
     # Reload Tenant A permissions
     role_a_perms = await get_role_permission_codes(db_session, role_a_id)
-    assert len(role_a_perms) == 42
+    assert len(role_a_perms) == 43
     assert "tenant.write" in role_a_perms
 
     # 8. Verify Tenant B remained completely untouched by Tenant A's repair

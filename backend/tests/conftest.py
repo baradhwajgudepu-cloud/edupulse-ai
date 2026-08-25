@@ -1,3 +1,5 @@
+import sqlite3
+import uuid
 import pytest
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
@@ -5,6 +7,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
+
+# Register SQLite adapters for UUID compatibility in Python 3.14+
+sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
 
 # Use a shared in-memory SQLite database for fast, self-contained unit testing
 TEST_DATABASE_URL = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared"

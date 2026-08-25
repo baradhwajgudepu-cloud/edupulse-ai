@@ -4,15 +4,20 @@ from app.seed_uat_principal_permissions import INTENDED_PERMISSIONS
 def test_intended_principal_permissions_count():
     """
     Verifies that the list of intended PRINCIPAL permission codes is unique
-    and exactly equals 38 (compiled from all 8 migrations).
+    and exactly equals 41 (compiled from all migrations).
     """
     unique_permissions = set(INTENDED_PERMISSIONS)
     
     # Assert there are no duplicates in the list
     assert len(INTENDED_PERMISSIONS) == len(unique_permissions), "Duplicate permission codes found in seed script!"
     
-    # Assert the exact authoritative count of 38
-    assert len(unique_permissions) == 38, f"Expected 38 permissions, got {len(unique_permissions)}"
+    # Assert the exact authoritative count of 41
+    assert len(unique_permissions) == 41, f"Expected 41 permissions, got {len(unique_permissions)}"
+
+    # Assert that the new read permissions exist
+    assert "class.read" in unique_permissions
+    assert "section.read" in unique_permissions
+    assert "academic_year.read" in unique_permissions
 
 def test_target_tenant_is_fixed_correctly():
     """

@@ -28,6 +28,10 @@ INTENDED_PERMISSIONS = [
     "staff_attendance.read",
     "staff_attendance.admin",
     
+    "class.read",
+    "section.read",
+    "academic_year.read",
+
     "fee.create",
     "fee.read",
     "fee.update",

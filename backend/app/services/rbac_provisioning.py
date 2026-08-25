@@ -39,6 +39,7 @@ ROLE_PERMISSIONS_MAP = {
         # Core Administrative Permissions
         "student.read", "teacher.read", "attendance.read", "exam.read", "marks.read",
         "marks.publish", "homework.read", "report_card.read", "report_card.download", "report_card.publish",
+        "class.read", "section.read", "academic_year.read",
         # Staff Attendance
         "staff_attendance.read", "staff_attendance.admin",
         # Fee Management

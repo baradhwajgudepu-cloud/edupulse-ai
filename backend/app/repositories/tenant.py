@@ -68,6 +68,12 @@ class TenantRepository:
             created_by=created_by
         )
         self.db.add(db_obj)
+        await self.db.flush()  # Generate db_obj.id
+        
+        # Initialize default system roles and map permissions for the new tenant
+        from app.services.rbac_provisioning import initialize_tenant_rbac
+        await initialize_tenant_rbac(self.db, db_obj.id)
+        
         await self.db.commit()
         await self.db.refresh(db_obj)
         return db_obj

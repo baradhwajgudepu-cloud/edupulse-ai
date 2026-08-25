@@ -145,6 +145,31 @@ async def test_engine():
             {"id": uuid.uuid4(), "name": "Cancel Teacher Leave", "code": "teacher_leave.cancel", "description": "Allows cancelling pending teacher leave"},
             {"id": uuid.uuid4(), "name": "Review Teacher Leave", "code": "teacher_leave.review", "description": "Allows reviewing teacher leaves"},
             {"id": uuid.uuid4(), "name": "Admin Teacher Leave", "code": "teacher_leave.admin", "description": "Allows administrative teacher leave operations"},
+            # Fees Management
+            {"id": uuid.uuid4(), "name": "Create Fee", "code": "fee.create", "description": "Allows creating fee structures"},
+            {"id": uuid.uuid4(), "name": "Read Fee", "code": "fee.read", "description": "Allows viewing fee structures"},
+            {"id": uuid.uuid4(), "name": "Update Fee", "code": "fee.update", "description": "Allows updating fee structures"},
+            {"id": uuid.uuid4(), "name": "Delete Fee", "code": "fee.delete", "description": "Allows deleting fee structures"},
+            {"id": uuid.uuid4(), "name": "Pay Fee", "code": "fee.pay", "description": "Allows processing fee payments"},
+            {"id": uuid.uuid4(), "name": "Cancel Fee", "code": "fee.cancel", "description": "Allows cancelling fee transactions"},
+            {"id": uuid.uuid4(), "name": "Report Fee", "code": "fee.report", "description": "Allows generating fee reports"},
+            # School Planner (Events)
+            {"id": uuid.uuid4(), "name": "Create Event", "code": "event.create", "description": "Allows creating events"},
+            {"id": uuid.uuid4(), "name": "Read Event", "code": "event.read", "description": "Allows viewing events"},
+            {"id": uuid.uuid4(), "name": "Update Event", "code": "event.update", "description": "Allows updating events"},
+            {"id": uuid.uuid4(), "name": "Delete Event", "code": "event.delete", "description": "Allows deleting events"},
+            {"id": uuid.uuid4(), "name": "Publish Event", "code": "event.publish", "description": "Allows publishing events"},
+            # School Planner (Announcements)
+            {"id": uuid.uuid4(), "name": "Create Announcement", "code": "announcement.create", "description": "Allows creating announcements"},
+            {"id": uuid.uuid4(), "name": "Read Announcement", "code": "announcement.read", "description": "Allows viewing announcements"},
+            {"id": uuid.uuid4(), "name": "Update Announcement", "code": "announcement.update", "description": "Allows updating announcements"},
+            {"id": uuid.uuid4(), "name": "Delete Announcement", "code": "announcement.delete", "description": "Allows deleting announcements"},
+            {"id": uuid.uuid4(), "name": "Publish Announcement", "code": "announcement.publish", "description": "Allows publishing announcements"},
+            # Migrations
+            {"id": uuid.uuid4(), "name": "Read Migration Job", "code": "migration.read", "description": "Allows viewing migration jobs"},
+            {"id": uuid.uuid4(), "name": "Create Migration Job", "code": "migration.create", "description": "Allows creating migration jobs"},
+            {"id": uuid.uuid4(), "name": "Execute Migration Job", "code": "migration.execute", "description": "Allows executing migration jobs"},
+            {"id": uuid.uuid4(), "name": "Cancel Migration Job", "code": "migration.cancel", "description": "Allows canceling migration jobs"},
         ]
         from sqlalchemy import select
         res = await conn.execute(select(Permission))

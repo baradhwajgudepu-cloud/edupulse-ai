@@ -48,16 +48,49 @@ class IdentityProvisioningService:
         )
         res_r = await self.db.execute(stmt_r)
         role = res_r.scalar_one_or_none()
+        
+        # Check if the role is missing or has incomplete permissions
+        role_needs_repair = False
         if not role:
-            role = Role(
-                tenant_id=tenant_id,
-                name=role_name,
-                code=role_code,
-                is_system=True,
-                version=1
-            )
-            self.db.add(role)
-            await self.db.flush()
+            role_needs_repair = True
+        else:
+            from app.models.permission import Permission
+            from app.models.role import role_permissions
+            from app.services.rbac_provisioning import ROLE_PERMISSIONS_MAP
+            
+            # Query the actual permission codes currently mapped to this role
+            stmt_codes = select(Permission.code).join(
+                role_permissions,
+                Permission.id == role_permissions.c.permission_id
+            ).where(role_permissions.c.role_id == role.id)
+            res_codes = await self.db.execute(stmt_codes)
+            actual_codes = set(res_codes.scalars().all())
+            
+            expected_codes = set(ROLE_PERMISSIONS_MAP.get(role_code.upper(), []))
+            
+            # Calculate the set difference: missing = expected_codes - actual_codes
+            missing = expected_codes - actual_codes
+            if missing:
+                role_needs_repair = True
+                
+        if role_needs_repair:
+            from app.services.rbac_provisioning import ensure_tenant_rbac
+            await ensure_tenant_rbac(self.db, tenant_id)
+            
+            # Re-query the role after tenant RBAC verification/repair
+            res_r = await self.db.execute(stmt_r)
+            role = res_r.scalar_one_or_none()
+            
+            if not role:
+                role = Role(
+                    tenant_id=tenant_id,
+                    name=role_name,
+                    code=role_code,
+                    is_system=True,
+                    version=1
+                )
+                self.db.add(role)
+                await self.db.flush()
         return role
 
     async def _generate_parent_login_id(self, tenant_id: uuid.UUID, school_id: uuid.UUID, school_code: str) -> str:

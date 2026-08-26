@@ -180,22 +180,28 @@ async def setup_rc2_test_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Roles creation
-    admin_role = Role(name="Admin", code="ADMIN", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Roles (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_admin = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "ADMIN").options(selectinload(Role.permissions))
+    admin_role = (await db_session.execute(stmt_role_admin)).scalar_one()
     admin_role.permissions = all_perms
     db_session.add(admin_role)
 
-    principal_role = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
+    stmt_role_principal = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL").options(selectinload(Role.permissions))
+    principal_role = (await db_session.execute(stmt_role_principal)).scalar_one()
     principal_role.permissions = [p for p in all_perms if not p.code.startswith("tenant.")]
     db_session.add(principal_role)
 
-    teacher_role = Role(name="Teacher", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    stmt_role_teacher = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    teacher_role = (await db_session.execute(stmt_role_teacher)).scalar_one()
     teacher_role.permissions = [p for p in all_perms if p.code in ["exam.read", "report_card.read", "report_card.generate", "fee.read", "announcement.publish", "announcement.create"]]
     db_session.add(teacher_role)
 
-    parent_role = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_a.id)
+    stmt_role_parent = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PARENT").options(selectinload(Role.permissions))
+    parent_role = (await db_session.execute(stmt_role_parent)).scalar_one()
     parent_role.permissions = [p for p in all_perms if p.code in ["exam.read", "report_card.read", "fee.read"]]
     db_session.add(parent_role)
+
     await db_session.commit()
 
     # 8. Create Users

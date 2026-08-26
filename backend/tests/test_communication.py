@@ -106,18 +106,18 @@ async def setup_communication_test_data(db_session: AsyncSession):
     refresh_repo = RefreshTokenRepository(db_session)
     auth_service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, repo_s)
 
-    # Roles
-    role_parent = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_a.id)
-    db_session.add(role_parent)
+    # Fetch existing Roles (created automatically by initialize_tenant_rbac)
+    stmt_role_p_a = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PARENT")
+    role_parent = (await db_session.execute(stmt_role_p_a)).scalar_one()
 
-    role_teacher = Role(name="Teacher", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
-    db_session.add(role_teacher)
+    stmt_role_t_a = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER")
+    role_teacher = (await db_session.execute(stmt_role_t_a)).scalar_one()
 
-    role_principal = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
-    db_session.add(role_principal)
+    stmt_role_pr_a = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL")
+    role_principal = (await db_session.execute(stmt_role_pr_a)).scalar_one()
 
-    role_parent_b = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_b.id)
-    db_session.add(role_parent_b)
+    stmt_role_p_b = select(Role).where(Role.tenant_id == tenant_b.id, Role.code == "PARENT")
+    role_parent_b = (await db_session.execute(stmt_role_p_b)).scalar_one()
 
     await db_session.commit()
 

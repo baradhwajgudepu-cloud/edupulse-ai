@@ -66,8 +66,12 @@ async def setup_attendance_test_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Map Teacher permissions
-    role_teacher = Role(name="Teacher Role", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Teacher Role (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_t = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    res_role_t = await db_session.execute(stmt_role_t)
+    role_teacher = res_role_t.scalar_one()
+
     teacher_perm_codes = ["staff_attendance.read", "staff_attendance.create", "staff_attendance.update"]
     role_teacher.permissions = [p for p in all_perms if p.code in teacher_perm_codes]
     db_session.add(role_teacher)

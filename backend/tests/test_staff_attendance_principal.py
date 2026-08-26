@@ -61,16 +61,26 @@ async def setup_principal_attendance_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Roles setup
-    role_teacher = Role(name="Teacher", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Teacher, Principal, & Admin Roles (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_t = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    res_role_t = await db_session.execute(stmt_role_t)
+    role_teacher = res_role_t.scalar_one()
+
+    stmt_role_p = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL").options(selectinload(Role.permissions))
+    res_role_p = await db_session.execute(stmt_role_p)
+    role_principal = res_role_p.scalar_one()
+
+    stmt_role_ad = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "ADMIN").options(selectinload(Role.permissions))
+    res_role_ad = await db_session.execute(stmt_role_ad)
+    role_admin = res_role_ad.scalar_one()
+
     role_teacher.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.create", "staff_attendance.update"]]
     db_session.add(role_teacher)
 
-    role_principal = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
     role_principal.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.update"]]
     db_session.add(role_principal)
 
-    role_admin = Role(name="Admin", code="ADMIN", is_system=True, tenant_id=tenant_a.id)
     role_admin.permissions = [p for p in all_perms if p.code in ["staff_attendance.read", "staff_attendance.admin", "school.update"]]
     db_session.add(role_admin)
 

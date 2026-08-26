@@ -56,14 +56,20 @@ async def setup_leave_test_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Map Teacher permissions
-    role_teacher = Role(name="Teacher Role", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Teacher & Principal Roles (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_t = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    res_role_t = await db_session.execute(stmt_role_t)
+    role_teacher = res_role_t.scalar_one()
+
+    stmt_role_p = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL").options(selectinload(Role.permissions))
+    res_role_p = await db_session.execute(stmt_role_p)
+    role_principal = res_role_p.scalar_one()
+
     teacher_perm_codes = ["teacher_leave.read", "teacher_leave.create", "teacher_leave.cancel"]
     role_teacher.permissions = [p for p in all_perms if p.code in teacher_perm_codes]
     db_session.add(role_teacher)
 
-    # Map Principal permissions
-    role_principal = Role(name="Principal Role", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
     principal_perm_codes = ["teacher_leave.read", "teacher_leave.review", "teacher_leave.admin"]
     role_principal.permissions = [p for p in all_perms if p.code in principal_perm_codes]
     db_session.add(role_principal)

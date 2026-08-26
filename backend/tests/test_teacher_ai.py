@@ -61,8 +61,10 @@ async def setup_teacher_ai_data(db_session: AsyncSession):
     refresh_repo = RefreshTokenRepository(db_session)
     auth_service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, repo_s)
 
-    role_t = Role(name="Teacher Role", code="TEACHER", is_system=True, tenant_id=tenant.id)
-    db_session.add(role_t)
+    # Fetch existing Teacher Role (created automatically by initialize_tenant_rbac)
+    stmt_role = select(Role).where(Role.tenant_id == tenant.id, Role.code == "TEACHER")
+    res_role = await db_session.execute(stmt_role)
+    role_t = res_role.scalar_one()
 
     # Teacher 1 (Authorized)
     user_t1 = await auth_service.create_user(

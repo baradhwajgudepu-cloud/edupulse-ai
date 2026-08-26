@@ -66,21 +66,28 @@ async def setup_identity_test_data(db_session: AsyncSession):
     role_admin.permissions = all_perms
     db_session.add(role_admin)
 
-    role_parent = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_a.id, version=1)
+    # Fetch existing Roles (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_parent = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PARENT").options(selectinload(Role.permissions))
+    role_parent = (await db_session.execute(stmt_role_parent)).scalar_one()
     role_parent.permissions = [p for p in all_perms if p.code in ["notification.read", "notification.mark_read"]]
     db_session.add(role_parent)
 
-    role_teacher = Role(name="Teacher", code="TEACHER", is_system=True, tenant_id=tenant_a.id, version=1)
+    stmt_role_teacher = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    role_teacher = (await db_session.execute(stmt_role_teacher)).scalar_one()
     role_teacher.permissions = [p for p in all_perms if p.code in ["notification.read", "notification.mark_read"]]
     db_session.add(role_teacher)
 
-    role_principal = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id, version=1)
+    stmt_role_principal = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL").options(selectinload(Role.permissions))
+    role_principal = (await db_session.execute(stmt_role_principal)).scalar_one()
     role_principal.permissions = all_perms
     db_session.add(role_principal)
 
-    role_staff = Role(name="Staff", code="STAFF", is_system=True, tenant_id=tenant_a.id, version=1)
+    stmt_role_staff = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "STAFF").options(selectinload(Role.permissions))
+    role_staff = (await db_session.execute(stmt_role_staff)).scalar_one()
     role_staff.permissions = all_perms
     db_session.add(role_staff)
+
     await db_session.flush()
 
     # Admin User for provision trigger requests

@@ -166,8 +166,12 @@ async def setup_boundary_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Roles
-    role_teacher = Role(name="Teacher Role", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Teacher Role (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    res_role = await db_session.execute(stmt_role)
+    role_teacher = res_role.scalar_one()
+
     teacher_perms = [
         "student.read", "teacher_subject_assignment.read", "marks.read", "marks.create", 
         "marks.update", "marks.delete", "marks.publish", "attendance.read", "attendance.create", 

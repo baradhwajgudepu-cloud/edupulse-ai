@@ -131,20 +131,25 @@ async def setup_notification_test_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    # Roles
-    role_parent = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing Roles (created automatically by initialize_tenant_rbac)
+    from sqlalchemy.orm import selectinload
+    stmt_role_parent = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PARENT").options(selectinload(Role.permissions))
+    role_parent = (await db_session.execute(stmt_role_parent)).scalar_one()
     role_parent.permissions = [p for p in all_perms if p.code in ["notification.read", "notification.mark_read", "notification.delete"]]
     db_session.add(role_parent)
 
-    role_teacher = Role(name="Teacher", code="TEACHER", is_system=True, tenant_id=tenant_a.id)
+    stmt_role_teacher = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+    role_teacher = (await db_session.execute(stmt_role_teacher)).scalar_one()
     role_teacher.permissions = [p for p in all_perms if p.code in ["notification.read", "notification.mark_read"]]
     db_session.add(role_teacher)
 
-    role_principal = Role(name="Principal", code="PRINCIPAL", is_system=True, tenant_id=tenant_a.id)
+    stmt_role_principal = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL").options(selectinload(Role.permissions))
+    role_principal = (await db_session.execute(stmt_role_principal)).scalar_one()
     role_principal.permissions = all_perms
     db_session.add(role_principal)
 
-    role_parent_b = Role(name="Parent", code="PARENT", is_system=True, tenant_id=tenant_b.id)
+    stmt_role_parent_b = select(Role).where(Role.tenant_id == tenant_b.id, Role.code == "PARENT").options(selectinload(Role.permissions))
+    role_parent_b = (await db_session.execute(stmt_role_parent_b)).scalar_one()
     role_parent_b.permissions = [p for p in all_perms if p.code in ["notification.read", "notification.mark_read"]]
     db_session.add(role_parent_b)
 

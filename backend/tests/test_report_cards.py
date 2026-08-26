@@ -597,7 +597,11 @@ async def test_report_card_security_restrictions(client: AsyncClient, setup_repo
     res_p = await db_session.execute(stmt_p)
     rc_perms = list(res_p.scalars().all())
     
-    parent_role = Role(name="Parent", code="PARENT", is_system=False, tenant_id=tenant_id)
+    # Fetch existing PARENT role under tenant_id (created automatically by TenantRepository)
+    from sqlalchemy.orm import selectinload
+    stmt_role = select(Role).where(Role.tenant_id == tenant_id, Role.code == "PARENT").options(selectinload(Role.permissions))
+    res_role = await db_session.execute(stmt_role)
+    parent_role = res_role.scalar_one()
     parent_role.permissions = rc_perms
     db_session.add(parent_role)
     await db_session.commit()
@@ -700,8 +704,11 @@ async def test_report_card_security_restrictions(client: AsyncClient, setup_repo
         assert resp_p2.status_code == 403
         assert "Access denied" in resp_p2.json()["message"]
         
-        # Create Teacher role
-        teacher_role = Role(name="Teacher", code="TEACHER", is_system=False, tenant_id=tenant_id)
+        # Fetch existing TEACHER role under tenant_id (created automatically by TenantRepository)
+        from sqlalchemy.orm import selectinload
+        stmt_role_t = select(Role).where(Role.tenant_id == tenant_id, Role.code == "TEACHER").options(selectinload(Role.permissions))
+        res_role_t = await db_session.execute(stmt_role_t)
+        teacher_role = res_role_t.scalar_one()
         teacher_role.permissions = rc_perms
         db_session.add(teacher_role)
         await db_session.commit()

@@ -91,7 +91,11 @@ async def setup_planner_test_data(db_session: AsyncSession):
     res_p = await db_session.execute(stmt_p)
     all_perms = list(res_p.scalars().all())
 
-    admin_role = Role(name="ADMIN", code="ADMIN", is_system=True, tenant_id=tenant_a.id)
+    # Fetch existing ADMIN role under tenant_a (created automatically by TenantRepository)
+    from sqlalchemy.orm import selectinload
+    stmt_role = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "ADMIN").options(selectinload(Role.permissions))
+    res_role = await db_session.execute(stmt_role)
+    admin_role = res_role.scalar_one()
     admin_role.permissions = all_perms
     db_session.add(admin_role)
     await db_session.commit()

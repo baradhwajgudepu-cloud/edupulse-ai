@@ -431,10 +431,10 @@ async def test_tenant_analytics_overview(client: AsyncClient, setup_report_test_
     assert "fee_collection_percentage" in data
 
     # 2. Block principal/teacher without tenant roles (RBAC check)
-    # Create a principal user with standard Principal role under tenant_a
-    principal_role = Role(name="Principal", code="PRINCIPAL", tenant_id=tenant_a.id)
-    db_session.add(principal_role)
-    await db_session.flush()
+    # Fetch existing Principal role under tenant_a (created automatically by TenantRepository)
+    stmt_role = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "PRINCIPAL")
+    res_role = await db_session.execute(stmt_role)
+    principal_role = res_role.scalar_one()
 
     principal_user = User(
         email="principal_test@example.com",

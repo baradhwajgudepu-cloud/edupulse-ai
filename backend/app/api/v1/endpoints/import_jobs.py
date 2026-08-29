@@ -207,7 +207,7 @@ async def validate_import_job(
     "/parse",
     status_code=status.HTTP_200_OK,
     summary="Parse spreadsheet upload content",
-    description="Reads a spreadsheet file (CSV, XLS, XLSX, XLSM, XLSB, ODS) and returns sheet names, normalized headers, and first 50 rows for validation previews."
+    description="Reads a spreadsheet file (CSV, XLS, XLSX, XLSM, XLSB, ODS) and returns sheet names, normalized headers, server-side validation summary, full dataset rows, and structured preview limits."
 )
 async def parse_spreadsheet_file(
     file: UploadFile = File(...),
@@ -215,6 +215,7 @@ async def parse_spreadsheet_file(
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("migration.create"))
 ):
+    import re
     from app.utils.spreadsheet_reader import read_spreadsheet, normalize_header
     content = await file.read()
     try:
@@ -226,8 +227,70 @@ async def parse_spreadsheet_file(
         )
 
     headers = [normalize_header(h) for h in rows[0]] if rows else []
+    data_rows = rows[1:] if len(rows) > 1 else []
+    total_data_rows = len(data_rows)
     preview_limit = 50
     preview_rows = rows[:preview_limit]
+
+    # Server-Side Full Dataset Validation
+    email_regex = re.compile(r'^[\w\.-]+@([\w-]+\.)+[\w-]{2,4}$')
+    phone_regex = re.compile(r'^\+?[0-9\s-]{10,15}$')
+    date_regex = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+    validation_errors = []
+    warning_count = 0
+    valid_count = 0
+    invalid_count = 0
+
+    seen_primary_keys = set()
+
+    for idx, r in enumerate(data_rows, start=2):
+        row_dict = {headers[h_idx]: str(r[h_idx] or '').strip() for h_idx in range(min(len(headers), len(r)))}
+        row_errors = []
+
+        # Validate mandatory non-empty cells for common identifying fields
+        for col_name, val in row_dict.items():
+            if 'email' in col_name and val:
+                if not email_regex.match(val):
+                    row_errors.append({"row": idx, "column": col_name, "message": f"Invalid email format: '{val}'"})
+            elif ('phone' in col_name or 'mobile' in col_name) and val:
+                if not phone_regex.match(val):
+                    row_errors.append({"row": idx, "column": col_name, "message": f"Invalid phone format: '{val}'"})
+            elif ('date' in col_name or col_name.endswith('_at')) and val:
+                if not date_regex.match(val):
+                    row_errors.append({"row": idx, "column": col_name, "message": f"Invalid date format (expected YYYY-MM-DD): '{val}'"})
+
+        # Check primary key duplication
+        pk_col = next((c for c in headers if c.endswith('_code') or c == 'admission_number'), None)
+        if pk_col and row_dict.get(pk_col):
+            pk_val = row_dict[pk_col]
+            if pk_val in seen_primary_keys:
+                row_errors.append({"row": idx, "column": pk_col, "message": f"Duplicate primary key '{pk_val}' in row {idx}"})
+            else:
+                seen_primary_keys.add(pk_val)
+
+        if row_errors:
+            invalid_count += 1
+            validation_errors.extend(row_errors)
+        else:
+            valid_count += 1
+
+    validation_summary = {
+        "total_rows": total_data_rows,
+        "valid_rows": valid_count,
+        "invalid_rows": invalid_count,
+        "warnings_count": warning_count,
+        "errors": validation_errors[:100],  # Return first 100 errors to prevent payload bloat
+        "has_errors": invalid_count > 0
+    }
+
+    preview_payload = {
+        "headers": headers,
+        "rows": preview_rows,
+        "limit": preview_limit,
+        "total_rows": total_data_rows,
+        "is_truncated": total_data_rows > (len(preview_rows) - 1 if preview_rows else 0)
+    }
 
     return {
         "success": True,
@@ -238,8 +301,12 @@ async def parse_spreadsheet_file(
             "sheets": sheets,
             "selected_sheet": selected_sheet,
             "columns": headers,
-            "row_count": len(rows),
-            "preview_rows": preview_rows
+            "row_count": total_data_rows,
+            "total_records": total_data_rows,
+            "validation_summary": validation_summary,
+            "preview": preview_payload,
+            "preview_rows": preview_rows,
+            "rows": rows
         }
     }
 

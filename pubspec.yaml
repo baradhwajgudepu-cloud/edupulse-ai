@@ -5,6 +5,7 @@ environment:
   sdk: '>=3.5.0 <4.0.0'
 
 workspace:
+  - edupulse_flutter/apps/admin_portal
   - edupulse_flutter/apps/parent_app
   - edupulse_flutter/packages/edupulse_core
   - edupulse_flutter/packages/edupulse_config

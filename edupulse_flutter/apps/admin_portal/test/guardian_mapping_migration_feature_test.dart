@@ -43,9 +43,28 @@ class FakeMappingRepository implements AuthRepository {
   Future<ApiResult<void>> requestPasswordReset({required String email}) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeMappingSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
@@ -373,7 +392,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Upload Mapping CSV'), findsOneWidget);
+    expect(find.text('Upload Mapping File'), findsOneWidget);
     expect(find.text('Download Official Template'), findsOneWidget);
     
     // Check format guidelines

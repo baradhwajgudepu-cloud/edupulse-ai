@@ -99,6 +99,14 @@ class _MigrationCenterScreenState extends ConsumerState<MigrationCenterScreen> {
                           ),
                           ElevatedButton.icon(
                             onPressed: () {
+                              ref.read(guardianMigrationWizardProvider.notifier).reset();
+                              context.push('/migrations/guardians/new');
+                            },
+                            icon: const Icon(Icons.group_add),
+                            label: const Text('New Guardian Migration'),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () {
                               ref.read(guardianMappingMigrationWizardProvider.notifier).reset();
                               context.push('/migrations/guardian-mapping/new');
                             },
@@ -135,6 +143,13 @@ class _MigrationCenterScreenState extends ConsumerState<MigrationCenterScreen> {
                             selected: state.filterType == 'ACADEMIC_SETUP',
                             onSelected: (val) {
                               if (val) notifier.changeFilter('ACADEMIC_SETUP');
+                            },
+                          ),
+                          ChoiceChip(
+                            label: const Text('Guardians'),
+                            selected: state.filterType == 'GUARDIANS',
+                            onSelected: (val) {
+                              if (val) notifier.changeFilter('GUARDIANS');
                             },
                           ),
                           ChoiceChip(
@@ -235,11 +250,14 @@ class _MigrationCenterScreenState extends ConsumerState<MigrationCenterScreen> {
         final job = jobs[index];
         final isAcademicSetup = job.importType == 'ACADEMIC_SETUP';
         final isGuardianMapping = job.importType == 'GUARDIAN_MAPPING';
+        final isGuardians = job.importType == 'GUARDIANS';
         final detailRoute = isGuardianMapping
             ? '/migrations/guardian-mapping/${job.id}'
             : isAcademicSetup
                 ? '/migrations/academic-setup/${job.id}'
-                : '/migrations/students/${job.id}';
+                : isGuardians
+                    ? '/migrations/guardians/${job.id}'
+                    : '/migrations/students/${job.id}';
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
@@ -276,6 +294,8 @@ class _MigrationCenterScreenState extends ConsumerState<MigrationCenterScreen> {
                         typeLabel = 'Academic Setup';
                       } else if (job.importType == 'GUARDIAN_MAPPING') {
                         typeLabel = 'Guardian Mapping';
+                      } else if (job.importType == 'GUARDIANS') {
+                        typeLabel = 'Guardians';
                       }
                       return Text('Type: $typeLabel',
                           style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500));
@@ -329,17 +349,22 @@ class _MigrationCenterScreenState extends ConsumerState<MigrationCenterScreen> {
           rows: jobs.map((job) {
             final isAcademicSetup = job.importType == 'ACADEMIC_SETUP';
             final isGuardianMapping = job.importType == 'GUARDIAN_MAPPING';
+            final isGuardians = job.importType == 'GUARDIANS';
             final detailRoute = isGuardianMapping
                 ? '/migrations/guardian-mapping/${job.id}'
                 : isAcademicSetup
                     ? '/migrations/academic-setup/${job.id}'
-                    : '/migrations/students/${job.id}';
+                    : isGuardians
+                        ? '/migrations/guardians/${job.id}'
+                        : '/migrations/students/${job.id}';
 
             String typeLabel = 'Students';
             if (job.importType == 'ACADEMIC_SETUP') {
               typeLabel = 'Academic Setup';
             } else if (job.importType == 'GUARDIAN_MAPPING') {
               typeLabel = 'Guardian Mapping';
+            } else if (job.importType == 'GUARDIANS') {
+              typeLabel = 'Guardians';
             }
 
             return DataRow(

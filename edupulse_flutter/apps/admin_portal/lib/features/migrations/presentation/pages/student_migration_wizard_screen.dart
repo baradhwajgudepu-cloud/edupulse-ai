@@ -305,15 +305,15 @@ class _StudentMigrationWizardScreenState extends ConsumerState<StudentMigrationW
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Upload Student CSV', style: theme.textTheme.headlineSmall),
+        Text('Upload Student File', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 8),
-        const Text('Pick the student CSV file. Only .csv format is supported.'),
+        const Text('Supported formats: CSV, XLS, XLSX, XLSM, XLSB, ODS'),
         const SizedBox(height: 24),
         InkWell(
           onTap: () async {
             final result = await FilePicker.platform.pickFiles(
               type: FileType.custom,
-              allowedExtensions: ['csv'],
+              allowedExtensions: const ['csv', 'xlsx', 'xls', 'xlsm', 'xlsb', 'ods'],
               withData: true,
             );
             if (result != null && result.files.isNotEmpty) {
@@ -419,10 +419,32 @@ class _StudentMigrationWizardScreenState extends ConsumerState<StudentMigrationW
     final failedRowsCount = job.failedRows;
     final totalRowsCount = job.totalRows;
     final validRowsCount = totalRowsCount - failedRowsCount;
+    final sheets = job.jobMetadata['sheets'] as List<dynamic>?;
+    final selectedSheet = job.jobMetadata['selected_sheet'] as String?;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (sheets != null && sheets.length > 1) ...[
+          Text('Select Worksheet:', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          DropdownButton<String>(
+            value: selectedSheet,
+            items: sheets.map((s) {
+              final name = s.toString();
+              return DropdownMenuItem<String>(
+                value: name,
+                child: Text(name),
+              );
+            }).toList(),
+            onChanged: (newSheet) {
+              if (newSheet != null && newSheet != selectedSheet) {
+                ref.read(studentMigrationWizardProvider.notifier).updateSelectedSheet(newSheet);
+              }
+            },
+          ),
+          const SizedBox(height: 24),
+        ],
         Text('Validation Results Summary', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 16),
         Container(

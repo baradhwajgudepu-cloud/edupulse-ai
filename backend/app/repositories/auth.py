@@ -10,6 +10,7 @@ from app.models.permission import Permission
 from app.models.refresh_token import RefreshToken
 from app.schemas.auth import UserCreate, UserUpdate, RoleCreate, RoleUpdate
 
+
 class UserRepository:
     """
     Repository for User database operations.
@@ -90,6 +91,21 @@ class UserRepository:
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_password_reset_hash(self, token_hash: str) -> Optional[User]:
+        """
+        Retrieves a user by their active password reset hash.
+        """
+        stmt = select(User).where(
+            User.password_reset_hash == token_hash,
+            User.deleted_at.is_(None)
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
 
     async def create(
         self,

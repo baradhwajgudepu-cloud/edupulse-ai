@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "SUPER_SECRET_KEY_FOR_LOCAL_DEV_CHANGE_IN_PRODUCTION"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
-    ENABLE_BOOTSTRAP: bool = True
+    ENABLE_BOOTSTRAP: bool = False
 
     @field_validator("CORS_ORIGINS", "EDUPULSE_CORS_ORIGINS", mode="before")
     @classmethod
@@ -102,4 +102,28 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str | None = None
     WHATSAPP_BUSINESS_ACCOUNT_ID: str | None = None
 
+    # Super Admin Bootstrap Settings (Values read from environment only; no hardcoded credentials)
+    SUPER_ADMIN_EMAIL: str | None = None
+    SUPER_ADMIN_INITIAL_PASSWORD: str | None = None
+    SUPER_ADMIN_FIRST_NAME: str = "Super"
+    SUPER_ADMIN_LAST_NAME: str = "Admin"
+
+
+    # SMTP & Email Delivery Settings
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_FROM_EMAIL: str = "noreply@edupulse.com"
+    SMTP_FROM_NAME: str = "EduPulse AI"
+    SMTP_USE_TLS: bool = True
+
+    # Frontend Recovery Settings
+    FRONTEND_BASE_URL: str = "https://edupulse-ai-17221.web.app"
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Password Recovery Rate Limiting Settings
+    PASSWORD_RESET_RATE_LIMIT_PER_IP: int = 10
+    PASSWORD_RESET_RATE_LIMIT_PER_EMAIL: int = 5
+    PASSWORD_RESET_RATE_LIMIT_WINDOW_MINUTES: int = 15
 settings = Settings()

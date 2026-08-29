@@ -1,8 +1,11 @@
 class AppRoutes {
   static const String login = '/login';
+  static const String forgotPassword = '/forgot-password';
+  static const String resetPassword = '/reset-password';
   static const String dashboard = '/dashboard';
   static const String users = '/users';
   static const String userDetail = '/users/:id';
+  static const String tenants = '/tenants';
   
   static const String schools = '/schools';
   static const String schoolDetail = '/schools/:id';
@@ -24,6 +27,11 @@ class AppRoutes {
   static const String feesLedger = '/fees/ledger';
   static const String feesOutstanding = '/fees/outstanding';
 
+  static const String results = '/results';
+  static const String studentResultDetail = '/results/students/:studentId';
+  static const String reportCards = '/results/report-cards';
+  static const String reportCardDetail = '/results/report-cards/:studentId';
+
   static const String migrations = '/migrations';
   static const String migrationNew = '/migrations/students/new';
   static const String migrationDetail = '/migrations/students/:jobId';
@@ -31,6 +39,32 @@ class AppRoutes {
   static const String academicSetupMigrationDetail = '/migrations/academic-setup/:jobId';
   static const String guardianMappingMigrationNew = '/migrations/guardian-mapping/new';
   static const String guardianMappingMigrationDetail = '/migrations/guardian-mapping/:jobId';
+  static const String guardianMigrationNew = '/migrations/guardians/new';
+  static const String guardianMigrationDetail = '/migrations/guardians/:jobId';
+
+  static const String teachers = '/teachers';
+  static const String teacherDetail = '/teachers/:id';
+
+  static const String attendance = '/attendance';
+  static const String attendanceSessionDetail = '/attendance/:sessionId';
+
+  static const String guardians = '/guardians';
+  static const String guardianDetail = '/guardians/:id';
+  static const String promotions = '/promotions';
+
+  static const String reports = '/reports';
+
+  static const String connectAnalytics = '/connect-analytics';
+  static const String settings = '/settings';
+  static const String notifications = '/notifications';
+
+  // School Planner Routes
+  static const String plannerCalendar = '/planner/calendar';
+  static const String plannerEvents = '/planner/events';
+  static const String plannerAnnouncements = '/planner/announcements';
+  static const String plannerCirculars = '/planner/circulars';
+  static const String plannerExams = '/planner/exams';
+  static const String plannerSchedule = '/planner/schedule';
 }
 
 

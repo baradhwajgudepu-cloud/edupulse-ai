@@ -49,14 +49,44 @@ class PasswordChangeRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
 class PasswordResetConfirm(BaseModel):
     token: str = Field(..., description="The password reset token received by the user")
     new_password: str
+    confirm_password: Optional[str] = None
 
     @field_validator("new_password")
     @classmethod
     def check_password(cls, v: str) -> str:
         return validate_password_strength(v)
+
+    @field_validator("confirm_password")
+    @classmethod
+    def check_match(cls, v: Optional[str], info) -> Optional[str]:
+        if v is not None and "new_password" in info.data:
+            if v != info.data["new_password"]:
+                raise ValueError("Passwords do not match.")
+        return v
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="The password reset token received by the user")
+    new_password: str
+    confirm_password: Optional[str] = None
+
+    @field_validator("new_password")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+    @field_validator("confirm_password")
+    @classmethod
+    def check_match(cls, v: Optional[str], info) -> Optional[str]:
+        if v is not None and "new_password" in info.data:
+            if v != info.data["new_password"]:
+                raise ValueError("Passwords do not match.")
+        return v
 
 # --- RBAC SCHEMAS ---
 

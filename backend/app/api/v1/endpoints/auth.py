@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.role import Role
 from app.schemas.auth import (
     LoginRequest, TokenResponse, PasswordChangeRequest, PasswordResetRequest, PasswordResetConfirm,
+    ForgotPasswordRequest, ResetPasswordRequest,
     UserResponse, RoleCreate, RoleUpdate, RoleResponse, PermissionResponse,
     BootstrapRequest, BootstrapResponse
 )
@@ -142,21 +143,71 @@ async def change_password(
     )
 
 @router.post(
+    "/auth/forgot-password",
+    response_model=APIResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Forgot Password Request",
+    description="Initiates a secure password reset flow for users. Prevents account enumeration by returning a generic success confirmation."
+)
+async def forgot_password(
+    request: Request,
+    reset_in: ForgotPasswordRequest,
+    service: AuthService = Depends(get_auth_service)
+) -> APIResponse[None]:
+    client_ip = request.client.host if request.client else None
+    await service.request_password_reset(
+        email=reset_in.email,
+        client_ip=client_ip
+    )
+    return APIResponse[None](
+        success=True,
+        message="If an account exists for this email address, password reset instructions have been sent.",
+        data=None
+    )
+
+@router.post(
+    "/auth/reset-password",
+    response_model=APIResponse[None],
+    status_code=status.HTTP_200_OK,
+    summary="Reset Password Confirmation",
+    description="Resets user password using a valid, single-use, non-expired reset token."
+)
+async def reset_password(
+    confirm_in: ResetPasswordRequest,
+    service: AuthService = Depends(get_auth_service)
+) -> APIResponse[None]:
+    await service.confirm_password_reset(
+        token=confirm_in.token,
+        new_password=confirm_in.new_password
+    )
+    return APIResponse[None](
+        success=True,
+        message="Password has been reset successfully. You may now sign in with your new password.",
+        data=None
+    )
+
+@router.post(
     "/auth/reset-password-request",
     response_model=APIResponse[None],
     status_code=status.HTTP_200_OK,
-    summary="Request Password Reset",
+    summary="Request Password Reset (Legacy)",
     description="Generates a secure password reset token stored as a hash to avoid enumeration."
 )
 async def request_password_reset(
+    request: Request,
     reset_in: PasswordResetRequest,
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    tenant_id: Optional[uuid.UUID] = None,
     service: AuthService = Depends(get_auth_service)
 ) -> APIResponse[None]:
-    await service.request_password_reset(tenant_id, reset_in.email)
+    client_ip = request.client.host if request.client else None
+    await service.request_password_reset(
+        email=reset_in.email,
+        tenant_id=tenant_id,
+        client_ip=client_ip
+    )
     return APIResponse[None](
         success=True,
-        message="If the email exists, a password reset link has been dispatched.",
+        message="If an account exists for this email address, password reset instructions have been sent.",
         data=None
     )
 
@@ -164,15 +215,19 @@ async def request_password_reset(
     "/auth/reset-password-confirm",
     response_model=APIResponse[None],
     status_code=status.HTTP_200_OK,
-    summary="Confirm Password Reset",
+    summary="Confirm Password Reset (Legacy)",
     description="Updates user password using a valid, non-expired password reset token."
 )
 async def confirm_password_reset(
     confirm_in: PasswordResetConfirm,
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    tenant_id: Optional[uuid.UUID] = None,
     service: AuthService = Depends(get_auth_service)
 ) -> APIResponse[None]:
-    await service.confirm_password_reset(tenant_id, confirm_in.token, confirm_in.new_password)
+    await service.confirm_password_reset(
+        token=confirm_in.token,
+        new_password=confirm_in.new_password,
+        tenant_id=tenant_id
+    )
     return APIResponse[None](
         success=True,
         message="Password reset successfully.",

@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'routes.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/pages/login_screen.dart';
+import '../../features/auth/presentation/pages/forgot_password_screen.dart';
+import '../../features/auth/presentation/pages/reset_password_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/shell/presentation/admin_shell.dart';
 import '../../features/users/presentation/pages/users_screen.dart';
@@ -30,6 +32,30 @@ import '../../features/migrations/presentation/pages/migration_center_screen.dar
 import '../../features/migrations/presentation/pages/student_migration_wizard_screen.dart';
 import '../../features/migrations/presentation/pages/academic_setup_migration_wizard_screen.dart';
 import '../../features/migrations/presentation/pages/guardian_mapping_migration_wizard_screen.dart';
+import '../../features/migrations/presentation/pages/guardian_migration_wizard_screen.dart';
+import '../../features/results/presentation/pages/results_dashboard_screen.dart';
+import '../../features/results/presentation/pages/student_result_detail_screen.dart';
+import '../../features/results/presentation/pages/report_card_management_screen.dart';
+import '../../features/teachers/presentation/pages/teachers_screen.dart';
+import '../../features/teachers/presentation/pages/teacher_details_screen.dart';
+import '../../features/attendance/presentation/pages/attendance_screen.dart';
+import '../../features/attendance/presentation/pages/attendance_session_details_screen.dart';
+
+// School Planner imports
+import '../../features/planner/presentation/pages/planner_calendar_screen.dart';
+import '../../features/planner/presentation/pages/planner_events_screen.dart';
+import '../../features/planner/presentation/pages/planner_announcements_screen.dart';
+import '../../features/planner/presentation/pages/planner_circulars_screen.dart';
+import '../../features/planner/presentation/pages/planner_exams_screen.dart';
+import '../../features/planner/presentation/pages/planner_schedule_screen.dart';
+import '../../features/guardians/presentation/pages/guardians_screen.dart';
+import '../../features/guardians/presentation/pages/guardian_details_screen.dart';
+import '../../features/promotions/presentation/pages/promotions_screen.dart';
+import '../../features/tenant_setup/presentation/pages/tenants_screen.dart';
+import '../../features/reports/presentation/pages/reports_dashboard_screen.dart';
+import '../../features/communication_analytics/presentation/pages/communication_analytics_screen.dart';
+import '../../features/settings/presentation/pages/settings_screen.dart';
+import '../../features/notifications/presentation/pages/notifications_screen.dart';
 
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -38,7 +64,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: AppRoutes.dashboard,
     redirect: (context, state) {
-      final isLoggingIn = state.matchedLocation == AppRoutes.login;
+      final loc = state.matchedLocation;
+      final isPublicAuthRoute = loc == AppRoutes.login ||
+          loc == AppRoutes.forgotPassword ||
+          loc == AppRoutes.resetPassword;
 
       if (authState is AuthInitial) {
         return null;
@@ -47,11 +76,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isLoggedIn = authState is Authenticated;
 
       if (!isLoggedIn) {
-        if (!isLoggingIn) {
+        if (!isPublicAuthRoute) {
           return AppRoutes.login;
         }
       } else {
-        if (isLoggingIn || state.matchedLocation == '/') {
+        if (isPublicAuthRoute || loc == '/') {
           return AppRoutes.dashboard;
         }
       }
@@ -63,12 +92,28 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.login,
         builder: (context, state) => const LoginScreen(),
       ),
+      GoRoute(
+        path: AppRoutes.forgotPassword,
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.resetPassword,
+        builder: (context, state) {
+          final token = state.uri.queryParameters['token'];
+          return ResetPasswordScreen(initialToken: token);
+        },
+      ),
       ShellRoute(
         builder: (context, state, child) => AdminShell(child: child),
+
         routes: [
           GoRoute(
             path: AppRoutes.dashboard,
             builder: (context, state) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.tenants,
+            builder: (context, state) => const TenantsScreen(),
           ),
           GoRoute(
             path: AppRoutes.users,
@@ -160,6 +205,40 @@ final routerProvider = Provider<GoRouter>((ref) {
             },
           ),
           GoRoute(
+            path: AppRoutes.teachers,
+            builder: (context, state) => const TeachersScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.teacherDetail,
+            builder: (context, state) => TeacherDetailsScreen(
+              teacherId: state.pathParameters['id']!,
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.attendance,
+            builder: (context, state) => const AttendanceScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.attendanceSessionDetail,
+            builder: (context, state) => AttendanceSessionDetailsScreen(
+              sessionId: state.pathParameters['sessionId']!,
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.guardians,
+            builder: (context, state) => const GuardiansScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.guardianDetail,
+            builder: (context, state) => GuardianDetailsScreen(
+              guardianId: state.pathParameters['id']!,
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.promotions,
+            builder: (context, state) => const PromotionsScreen(),
+          ),
+          GoRoute(
             path: AppRoutes.bulkImport,
             builder: (context, state) => const BulkImportScreen(),
           ),
@@ -192,6 +271,26 @@ final routerProvider = Provider<GoRouter>((ref) {
                 onlyDefaulters: onlyDefaulters,
               );
             },
+          ),
+          GoRoute(
+            path: AppRoutes.results,
+            builder: (context, state) => const ResultsDashboardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.studentResultDetail,
+            builder: (context, state) => StudentResultDetailScreen(
+              studentId: state.pathParameters['studentId']!,
+            ),
+          ),
+          GoRoute(
+            path: AppRoutes.reportCards,
+            builder: (context, state) => const ReportCardManagementScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.reportCardDetail,
+            builder: (context, state) => StudentResultDetailScreen(
+              studentId: state.pathParameters['studentId']!,
+            ),
           ),
           GoRoute(
             path: AppRoutes.migrations,
@@ -230,7 +329,57 @@ final routerProvider = Provider<GoRouter>((ref) {
               return GuardianMappingMigrationWizardScreen(jobId: jobId);
             },
           ),
-
+          GoRoute(
+            path: AppRoutes.guardianMigrationNew,
+            builder: (context, state) => const GuardianMigrationWizardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.guardianMigrationDetail,
+            builder: (context, state) {
+              final jobId = state.pathParameters['jobId']!;
+              return GuardianMigrationWizardScreen(jobId: jobId);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.reports,
+            builder: (context, state) => const ReportsDashboardScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.connectAnalytics,
+            builder: (context, state) => const CommunicationAnalyticsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.settings,
+            builder: (context, state) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.notifications,
+            builder: (context, state) => const NotificationsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerCalendar,
+            builder: (context, state) => const PlannerCalendarScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerEvents,
+            builder: (context, state) => const PlannerEventsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerAnnouncements,
+            builder: (context, state) => const PlannerAnnouncementsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerCirculars,
+            builder: (context, state) => const PlannerCircularsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerExams,
+            builder: (context, state) => const PlannerExamsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.plannerSchedule,
+            builder: (context, state) => const PlannerScheduleScreen(),
+          ),
         ],
       ),
     ],

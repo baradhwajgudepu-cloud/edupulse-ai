@@ -1079,7 +1079,13 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
         _buildDependencyImpact(state, theme),
         const SizedBox(height: 24),
 
-        _buildIdentityProvisioningSummary(state, theme, ref.watch(selectedSchoolIdProvider) ?? ''),
+        _buildIdentityProvisioningSummary(
+          state,
+          theme,
+          state.resolvedSchools.isNotEmpty
+              ? state.resolvedSchools.values.first
+              : (ref.watch(selectedSchoolIdProvider) ?? ''),
+        ),
 
         if (failedModules.isNotEmpty) ...[
           Text('Failed Modules Filter', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
@@ -1751,12 +1757,23 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                           onPressed: _isPrincipalProvisioning
                               ? null
                               : () async {
+                                  final cleanSchoolId = schoolId.trim();
+                                  if (cleanSchoolId.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Unable to provision Principal: School ID is unavailable. Please refresh the school context.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   setState(() {
                                     _isPrincipalProvisioning = true;
                                   });
                                   final result = await ref
                                       .read(schoolOnboardingProvider.notifier)
-                                      .provisionPrincipal(schoolId);
+                                      .provisionPrincipal(cleanSchoolId);
                                   setState(() {
                                     _isPrincipalProvisioning = false;
                                   });

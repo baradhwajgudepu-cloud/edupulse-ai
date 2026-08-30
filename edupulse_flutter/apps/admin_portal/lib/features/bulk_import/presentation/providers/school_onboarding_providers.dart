@@ -171,8 +171,9 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   // Populate pre-configured synthetic data for demo/tests
   void loadSyntheticFixture() {
-    // Generate Deterministic UUID formats
-    const ayCode = 'AY2026';
+    // Shared relational constants
+    const schoolCode = 'DPSH';
+    const ayCode = 'AY2026-2027';
     const classCode = 'CLASS08';
     const sectionCode = 'SEC_A';
     const subCode = 'SUB_MATH';
@@ -181,23 +182,23 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     const student1 = 'ADM001';
     const student2 = 'ADM002';
 
-    // 1. School
+    // 1. School Information
     loadCsvFile(
       OnboardingStep.school,
       'school.csv',
       'school_code,school_name,board,school_type,address,city,state,postal_code,phone,email,website,status\n'
-      'DPSH,Delhi Public School Hyderabad,CBSE,HIGH_SCHOOL,Gachibowli,Hyderabad,Telangana,500032,9876543210,contact@dpsh.in,www.dpsh.in,ACTIVE',
+      '$schoolCode,Delhi Public School Hyderabad,CBSE,HIGH_SCHOOL,Survey No. 35 Financial District Gachibowli,Hyderabad,Telangana,500032,9876543210,contact@dpsh.edu.in,https://www.dpsh.edu.in,ACTIVE',
     );
 
-    // 2. Academic Years
+    // 2. Academic Structure / Academic Years
     loadCsvFile(
       OnboardingStep.academicYears,
       'academic_years.csv',
       'school_code,academic_year_code,academic_year_name,start_date,end_date,status,is_current\n'
-      'DPSH,$ayCode,2026-27,2026-06-01,2027-03-31,ACTIVE,true',
+      '$schoolCode,$ayCode,Academic Year 2026-27,2026-06-01,2027-03-31,ACTIVE,true',
     );
 
-    // 3. Classes
+    // 3. Grade Levels / Classes
     loadCsvFile(
       OnboardingStep.classes,
       'classes.csv',
@@ -205,7 +206,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       '$ayCode,$classCode,Class 8,8,MIDDLE,General,40,8,ACTIVE',
     );
 
-    // 4. Sections
+    // 4. Sections & Rooms
     loadCsvFile(
       OnboardingStep.sections,
       'sections.csv',
@@ -213,40 +214,40 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       '$classCode,$sectionCode,Section A,40,Room 101,1,ACTIVE',
     );
 
-    // 5. Subjects
+    // 5. Subjects Catalog
     loadCsvFile(
       OnboardingStep.subjects,
       'subjects.csv',
       'subject_code,subject_name,category,subject_type,credit_hours,weekly_periods,theory_marks,practical_marks,pass_marks,display_order,academic_year_code\n'
-      '$subCode,Mathematics,CORE,THEORY_PRACTICAL,4,4,80,20,35,1,$ayCode',
+      '$subCode,Mathematics,CORE,THEORY_PRACTICAL,4,6,80,20,35,1,$ayCode',
     );
 
-    // 6. Teachers
+    // 6. Teachers Roster
     loadCsvFile(
       OnboardingStep.teachers,
       'teachers.csv',
       'teacher_code,first_name,middle_name,last_name,gender,date_of_birth,mobile,email,employee_code,designation,joining_date,status,employment_type\n'
-      '$tCode,Priya,,Sharma,FEMALE,1985-04-12,9876543211,priya@dpsh.in,EMP001,PGT Maths,2020-06-01,ACTIVE,FULL_TIME',
+      '$tCode,Priya,,Sharma,FEMALE,1985-04-12,9876543211,priya.sharma@dpsh.edu.in,EMP001,PGT Mathematics,2020-06-01,ACTIVE,FULL_TIME',
     );
 
-    // 7. Guardians
+    // 7. Parents & Guardians
     loadCsvFile(
       OnboardingStep.guardians,
       'guardians.csv',
       'guardian_code,first_name,middle_name,last_name,gender,date_of_birth,mobile,email,guardian_type,address,city,state,status\n'
-      '$gCode,Ramesh,,Kumar,MALE,1980-05-15,9876543212,ramesh@gmail.com,FATHER,Madhapur,Hyderabad,Telangana,ACTIVE',
+      '$gCode,Ramesh,,Kumar,MALE,1980-05-15,9876543212,ramesh.kumar@parent.edupulse.in,FATHER,Flat 402 Sai Residency Madhapur,Hyderabad,Telangana,ACTIVE',
     );
 
-    // 8. Students
+    // 8. Students Register
     loadCsvFile(
       OnboardingStep.students,
       'students.csv',
       'admission_number,first_name,middle_name,last_name,gender,date_of_birth,blood_group,aadhaar_number,emis_number,mobile,email,photo_url,admission_date,roll_number,academic_year_code,class_code,section_code,address_line,city,state,status\n'
-      '$student1,Aarav,,Kumar,MALE,2014-05-12,A+,123456789012,EMIS001,9876543213,aarav@gmail.com,,2026-06-01,1,$ayCode,$classCode,$sectionCode,Madhapur,Hyderabad,Telangana,ACTIVE\n'
-      '$student2,Ananya,,Kumar,FEMALE,2014-05-12,A+,123456789013,EMIS002,9876543214,ananya@gmail.com,,2026-06-01,2,$ayCode,$classCode,$sectionCode,Madhapur,Hyderabad,Telangana,ACTIVE',
+      '$student1,Aarav,,Kumar,MALE,2014-05-12,A+,123456789012,EMIS001,9876543213,aarav.kumar@student.edupulse.in,,2026-06-01,1,$ayCode,$classCode,$sectionCode,Flat 402 Sai Residency Madhapur,Hyderabad,Telangana,ACTIVE\n'
+      '$student2,Ananya,,Kumar,FEMALE,2014-09-24,B+,123456789013,EMIS002,9876543214,ananya.kumar@student.edupulse.in,,2026-06-01,2,$ayCode,$classCode,$sectionCode,Flat 402 Sai Residency Madhapur,Hyderabad,Telangana,ACTIVE',
     );
 
-    // 9. Student-Guardian Relationships
+    // 9. Student-Guardian Links
     loadCsvFile(
       OnboardingStep.relationships,
       'student_guardians.csv',
@@ -263,7 +264,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       '$tCode,$subCode,$classCode,$sectionCode,$ayCode,PRIMARY,6,2026-06-01',
     );
 
-    // 11. Timetable
+    // 11. Timetable Slots
     loadCsvFile(
       OnboardingStep.timetable,
       'timetable.csv',
@@ -271,15 +272,15 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       '$ayCode,MONDAY,1,09:00:00,09:45:00,$classCode,$sectionCode,$subCode,$tCode,Room 101,REGULAR',
     );
 
-    // 12. Syllabus
+    // 12. Syllabus Metadata
     loadCsvFile(
       OnboardingStep.syllabus,
       'syllabus.csv',
       'academic_year_code,class_code,subject_code,syllabus_code,unit_name,chapter_name,topic_name,description,sequence_order\n'
-      '$ayCode,$classCode,$subCode,SYLL_MATH_08,Unit 1,Rational Numbers,Operations,Rational operations description,1',
+      '$ayCode,$classCode,$subCode,SYLL_MATH_08,Unit 1,Rational Numbers,Operations on Rational Numbers,Rational numbers and operations description,1',
     );
 
-    // 13. Exams
+    // 13. Exams & Documents
     loadCsvFile(
       OnboardingStep.exams,
       'exams.csv',
@@ -492,20 +493,29 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
     switch (step) {
       case OnboardingStep.school:
-        final code = row.data['school_code'] ?? '';
+        final code = (row.data['school_code'] ?? row.data['code'] ?? '').trim();
+        final rawPhone = row.data['phone'] ?? '';
+        final cleanPhone = rawPhone.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+        final rawPostal = row.data['postal_code'] ?? '';
+        final cleanPostal = rawPostal.trim().replaceAll(RegExp(r'\s+'), '');
+        final email = (row.data['email'] ?? 'contact@school.edu').trim();
+        final schoolName = (row.data['school_name'] ?? row.data['name'] ?? '').trim();
+        final board = (row.data['board'] ?? 'CBSE').trim().toUpperCase();
+        final schoolType = (row.data['school_type'] ?? 'HIGH_SCHOOL').trim().toUpperCase();
+
         final result = await apiClient.post(
           '/schools',
           data: {
-            'name': row.data['school_name'],
+            'name': schoolName,
             'code': code,
-            'board': (row.data['board'] ?? 'CBSE').toUpperCase(),
-            'school_type': (row.data['school_type'] ?? 'HIGH_SCHOOL').toUpperCase(),
-            'email': row.data['email'] ?? 'contact@school.edu',
-            'phone': row.data['phone'],
-            'address': row.data['address'],
-            'city': row.data['city'],
-            'state': row.data['state'],
-            'postal_code': row.data['postal_code'],
+            'board': board,
+            'school_type': schoolType,
+            'email': email,
+            if (cleanPhone.isNotEmpty) 'phone': cleanPhone,
+            if (row.data['address'] != null && row.data['address']!.trim().isNotEmpty) 'address': row.data['address']!.trim(),
+            if (row.data['city'] != null && row.data['city']!.trim().isNotEmpty) 'city': row.data['city']!.trim(),
+            if (row.data['state'] != null && row.data['state']!.trim().isNotEmpty) 'state': row.data['state']!.trim(),
+            if (cleanPostal.isNotEmpty) 'postal_code': cleanPostal,
             'is_active': true,
             'status': 'ACTIVE',
           },
@@ -838,22 +848,26 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         }
 
       case OnboardingStep.teachers:
-        final code = row.data['teacher_code'] ?? '';
+        final code = (row.data['teacher_code'] ?? row.data['staff_code'] ?? '').trim();
+        final rawMobile = row.data['mobile'] ?? '';
+        final cleanMobile = rawMobile.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+        final officialEmail = (row.data['email'] ?? row.data['official_email'] ?? '').trim();
+
         final result = await apiClient.post(
           '/teachers',
           data: {
-            'first_name': row.data['first_name'],
-            'middle_name': row.data['middle_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'mobile': row.data['mobile'],
-            'official_email': row.data['email'] ?? row.data['official_email'],
-            'employee_code': row.data['employee_code'] ?? row.data['teacher_code'] ?? code,
-            'staff_code': row.data['staff_code'] ?? row.data['teacher_code'] ?? code,
-            'employment_type': (row.data['employment_type'] ?? '').toUpperCase(),
-            'designation': row.data['designation'] ?? 'TGT',
-            'joining_date': row.data['joining_date'] ?? '2026-06-01',
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            if (cleanMobile.isNotEmpty) 'mobile': cleanMobile,
+            'official_email': officialEmail,
+            'employee_code': (row.data['employee_code'] ?? row.data['teacher_code'] ?? code).trim(),
+            'staff_code': (row.data['staff_code'] ?? row.data['teacher_code'] ?? code).trim(),
+            'employment_type': (row.data['employment_type'] ?? 'FULL_TIME').trim().toUpperCase(),
+            'designation': (row.data['designation'] ?? 'TGT').trim(),
+            'joining_date': (row.data['joining_date'] ?? '2026-06-01').trim(),
             'school_id': schoolId,
           },
           mapper: (json) {
@@ -902,18 +916,23 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         }
 
       case OnboardingStep.guardians:
-        final code = row.data['guardian_code'] ?? '';
+        final code = (row.data['guardian_code'] ?? '').trim();
         if (state.resolvedGuardians.containsKey(code)) return row.copyWith(status: OnboardingRowStatus.success, resolvedId: state.resolvedGuardians[code]!);
+        final rawMobile = row.data['mobile'] ?? '';
+        final cleanMobile = rawMobile.trim().replaceAll(RegExp(r'[\s\-()]'), '');
+        final email = (row.data['email'] ?? '').trim();
+
         final result = await apiClient.post(
           '/guardians',
           data: {
-            'first_name': row.data['first_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'mobile': row.data['mobile'] ?? '9999999999',
-            'email': row.data['email'],
-            'guardian_type': (row.data['guardian_type'] ?? 'FATHER').toUpperCase(),
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            'mobile': cleanMobile.isNotEmpty ? cleanMobile : '9999999999',
+            if (email.isNotEmpty) 'email': email,
+            'guardian_type': (row.data['guardian_type'] ?? 'FATHER').trim().toUpperCase(),
             'school_id': schoolId,
             'is_active': true,
           },
@@ -963,10 +982,10 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         }
 
       case OnboardingStep.students:
-        final adm = row.data['admission_number'] ?? '';
+        final adm = (row.data['admission_number'] ?? '').trim();
         final ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
-        final classCode = row.data['class_code'] ?? '';
-        final secCode = row.data['section_code'] ?? '';
+        final classCode = (row.data['class_code'] ?? '').trim();
+        final secCode = (row.data['section_code'] ?? '').trim();
         final ayId = state.resolvedAcademicYears[ayCode];
         if (ayId == null) return _createDependencySkipRow(row, OnboardingStep.academicYears, 'academic_year_code', ayCode, 'academic year');
         final classId = state.resolvedClasses[classCode];
@@ -976,12 +995,13 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         final result = await apiClient.post(
           '/students',
           data: {
-            'first_name': row.data['first_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'roll_number': row.data['roll_number'],
-            'admission_date': row.data['admission_date'],
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            'roll_number': row.data['roll_number']?.trim(),
+            'admission_date': row.data['admission_date']?.trim(),
             'admission_number': adm,
             'academic_year_id': ayId,
             'class_id': classId,
@@ -2001,7 +2021,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         break;
       case OnboardingStep.syllabus:
         code = data['subject_code'] ?? '';
-        name = data['topic_title'] ?? '';
+        name = data['topic_name'] ?? data['topic_title'] ?? data['chapter_name'] ?? '';
         break;
       case OnboardingStep.exams:
         code = data['exam_code'] ?? '';

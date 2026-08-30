@@ -48,13 +48,25 @@ class ApiExceptionMapper {
         final responseData = exception.response?.data;
         String errorMessage = 'A server error occurred.';
 
-        if (responseData is Map && responseData.containsKey('detail')) {
-          final detail = responseData['detail'];
-          if (detail is String) {
-            errorMessage = detail;
-          } else if (detail is List) {
-            errorMessage =
-                detail.map((e) => e['msg'] ?? e.toString()).join('\n');
+        if (responseData is Map) {
+          if (responseData['message'] is String && (responseData['message'] as String).trim().isNotEmpty) {
+            errorMessage = (responseData['message'] as String).trim();
+          } else if (responseData.containsKey('detail')) {
+            final detail = responseData['detail'];
+            if (detail is String && detail.trim().isNotEmpty) {
+              errorMessage = detail.trim();
+            } else if (detail is List) {
+              errorMessage = detail.map((e) {
+                if (e is Map) {
+                  final loc = (e['loc'] as List?)?.join(' -> ') ?? '';
+                  final msg = e['msg'] ?? e.toString();
+                  return loc.isNotEmpty ? '[$loc]: $msg' : '$msg';
+                }
+                return e.toString();
+              }).join('\n');
+            }
+          } else if (responseData['error'] != null) {
+            errorMessage = responseData['error'].toString().trim();
           }
         }
 

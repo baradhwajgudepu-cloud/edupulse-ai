@@ -10,8 +10,34 @@ import 'base_api_client.dart';
 
 final authTokenProvider = Provider<AuthTokenProvider?>((ref) => null);
 
+final sessionExpiredProvider = StateProvider<bool>((ref) => false);
+
 final buildConfigProvider = Provider<BuildConfig>((ref) {
   return BuildConfig.fromEnvironment();
+});
+
+final selectedTenantIdProvider = StateProvider<String?>((ref) => null);
+
+final activeTenantIdProvider = Provider<String?>((ref) {
+  final selected = ref.watch(selectedTenantIdProvider);
+  if (selected != null && selected.isNotEmpty) {
+    return selected;
+  }
+
+  final config = ref.watch(buildConfigProvider);
+  return config.tenantId;
+});
+
+final refreshDioProvider = Provider<Dio>((ref) {
+  final config = ref.watch(buildConfigProvider);
+
+  return Dio(
+    BaseOptions(
+      baseUrl: config.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ),
+  );
 });
 
 final dioProvider = Provider<Dio>((ref) {
@@ -31,11 +57,12 @@ final dioProvider = Provider<Dio>((ref) {
   dio.interceptors.addAll([
     JwtInterceptor(
       tokenProvider: tokenProv,
-      tenantId: config.tenantId,
+      tenantIdGetter: () => ref.read(activeTenantIdProvider),
     ),
     RefreshTokenInterceptor(
       tokenProvider: tokenProv,
       dio: dio,
+      ref: ref,
     ),
     RetryInterceptor(
       dio: dio,

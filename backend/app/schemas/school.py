@@ -174,6 +174,11 @@ class SchoolResponse(SchoolBase):
     def geofence_radius(self) -> int:
         return self.geofence_radius_meters
 
+    @computed_field
+    @property
+    def branding_logo_url(self) -> Optional[str]:
+        return self.logo_url
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={

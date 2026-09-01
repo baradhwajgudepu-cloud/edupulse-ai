@@ -63,6 +63,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   final bool _shouldHaveSession;
 
   FakeSessionManager({bool hasSession = true})

@@ -47,7 +47,7 @@ class _MarksReviewScreenState extends ConsumerState<MarksReviewScreen> {
         return AlertDialog(
           title: const Text('Publish Marks?'),
           content: const Text(
-            'Once published, these marks may become visible in the parent portal.',
+            'Publishing marks will make the result available to parents and may send configured notifications.',
           ),
           actions: [
             TextButton(
@@ -76,8 +76,9 @@ class _MarksReviewScreenState extends ConsumerState<MarksReviewScreen> {
           // Go back to selection screen
           context.go(AppRoutes.marks);
         } else {
+          final err = ref.read(marksWizardProvider(widget.examScheduleId)).errorMessage;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to publish marks. Please try again.')),
+            SnackBar(content: Text(err != null && err.isNotEmpty ? err : 'Failed to publish marks. Please try again.')),
           );
         }
       }
@@ -96,6 +97,16 @@ class _MarksReviewScreenState extends ConsumerState<MarksReviewScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Review Assessment'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.marks);
+            }
+          },
+        ),
       ),
       body: SingleChildScrollView(
         child: Padding(

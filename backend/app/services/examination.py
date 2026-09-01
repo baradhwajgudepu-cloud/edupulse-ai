@@ -3,24 +3,51 @@ from datetime import date, time, datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
-from app.models.examination import ExamTemplate, Examination, ExamSchedule, ExamStatus, ExamType
+from app.models.examination import (
+    ExamTypeMaster, ExamTemplate, Examination, ExamSchedule,
+    ExaminationClass, ExamStatus, ExamType, ExamTypeCategory
+)
 from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+from app.models.class_entity import Class
+from app.models.section import Section
+from app.models.subject import Subject
 from app.models.user import User
-from app.repositories.examination import ExamTemplateRepository, ExaminationRepository, ExamScheduleRepository
+from app.repositories.examination import (
+    ExamTypeMasterRepository, ExamTemplateRepository,
+    ExaminationRepository, ExamScheduleRepository
+)
 from app.repositories.school import SchoolRepository
 from app.repositories.academic_year import AcademicYearRepository
 from app.repositories.teacher_subject_assignment import TeacherSubjectAssignmentRepository
 from app.schemas.examination import (
+    ExamTypeMasterCreate, ExamTypeMasterUpdate,
     ExamTemplateCreate, ExamTemplateUpdate,
     ExaminationCreate, ExaminationUpdate,
+    ExamStatusTransitionRequest,
     ExaminationWizardCreate, ExaminationCopyRequest,
-    ExamScheduleCreate
+    ExamScheduleCreate, ExamScheduleUpdate,
+    BulkTimetablePreviewRequest, BulkTimetablePreviewItem, BulkTimetablePreviewResponse,
+    BulkTimetableConfirmRequest
 )
+
+ALLOWED_TRANSITIONS = {
+    ExamStatus.DRAFT: [ExamStatus.SCHEDULED],
+    ExamStatus.SCHEDULED: [ExamStatus.DRAFT, ExamStatus.ONGOING],
+    ExamStatus.ONGOING: [ExamStatus.MARKS_ENTRY],
+    ExamStatus.MARKS_ENTRY: [ExamStatus.UNDER_REVIEW],
+    ExamStatus.UNDER_REVIEW: [ExamStatus.MARKS_ENTRY, ExamStatus.APPROVED],
+    ExamStatus.APPROVED: [ExamStatus.PUBLISHED],
+    ExamStatus.PUBLISHED: [ExamStatus.COMPLETED],
+    ExamStatus.COMPLETED: [ExamStatus.ARCHIVED],
+    ExamStatus.ARCHIVED: []
+}
 
 class ExaminationService:
     def __init__(
         self,
+        type_repo: ExamTypeMasterRepository,
         template_repo: ExamTemplateRepository,
         exam_repo: ExaminationRepository,
         schedule_repo: ExamScheduleRepository,
@@ -28,12 +55,99 @@ class ExaminationService:
         academic_year_repo: AcademicYearRepository,
         tsa_repo: TeacherSubjectAssignmentRepository
     ) -> None:
+        self.type_repo = type_repo
         self.template_repo = template_repo
         self.exam_repo = exam_repo
         self.schedule_repo = schedule_repo
         self.school_repo = school_repo
         self.academic_year_repo = academic_year_repo
         self.tsa_repo = tsa_repo
+
+    # ==================================================
+    # Exam Types Workflows
+    # ==================================================
+    async def list_exam_types(
+        self, tenant_id: uuid.UUID, school_id: Optional[uuid.UUID] = None, skip: int = 0, limit: int = 100
+    ) -> List[ExamTypeMaster]:
+        items = await self.type_repo.get_multi(tenant_id, school_id, skip, limit)
+        if not items:
+            # Seed default system exam types on first query
+            defaults = [
+                {"name": "Unit Test", "code": "UNIT_TEST", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 20.0},
+                {"name": "Weekly Test", "code": "WEEKLY_TEST", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 10.0},
+                {"name": "Monthly Test", "code": "MONTHLY", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 25.0},
+                {"name": "Quarterly Examination", "code": "QUARTERLY", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 50.0},
+                {"name": "Half-Yearly Examination", "code": "HALF_YEARLY", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 80.0},
+                {"name": "Pre-Final Examination", "code": "PRE_FINAL", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 100.0},
+                {"name": "Annual / Final Examination", "code": "ANNUAL", "category": ExamTypeCategory.SCHOLASTIC, "default_weightage": 100.0},
+                {"name": "Practical Examination", "code": "PRACTICAL", "category": ExamTypeCategory.PRACTICAL, "default_weightage": 50.0},
+                {"name": "Internal Assessment", "code": "INTERNAL_ASSESSMENT", "category": ExamTypeCategory.INTERNAL_ASSESSMENT, "default_weightage": 30.0},
+            ]
+            for d in defaults:
+                db_t = ExamTypeMaster(
+                    tenant_id=tenant_id,
+                    school_id=school_id,
+                    name=d["name"],
+                    code=d["code"],
+                    description=f"Standard {d['name']}",
+                    category=d["category"],
+                    default_weightage=d["default_weightage"],
+                    is_system=True,
+                    is_active=True
+                )
+                self.type_repo.db.add(db_t)
+            await self.type_repo.db.commit()
+            items = await self.type_repo.get_multi(tenant_id, school_id, skip, limit)
+        return items
+
+    async def get_exam_type(
+        self, tenant_id: uuid.UUID, school_id: Optional[uuid.UUID], id: uuid.UUID
+    ) -> ExamTypeMaster:
+        db_obj = await self.type_repo.get_by_id(id, tenant_id, school_id)
+        if not db_obj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Exam type master entity not found."
+            )
+        return db_obj
+
+    async def create_exam_type(
+        self, tenant_id: uuid.UUID, obj_in: ExamTypeMasterCreate, current_user: User
+    ) -> ExamTypeMaster:
+        existing = await self.type_repo.get_by_code(obj_in.code.upper(), tenant_id, obj_in.school_id)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"An exam type with code '{obj_in.code.upper()}' already exists."
+            )
+        db_obj = await self.type_repo.create(tenant_id, obj_in, created_by=current_user.id)
+        await self.type_repo.db.commit()
+        await self.type_repo.db.refresh(db_obj)
+        return db_obj
+
+    async def update_exam_type(
+        self, tenant_id: uuid.UUID, school_id: Optional[uuid.UUID], id: uuid.UUID, obj_in: ExamTypeMasterUpdate, current_user: User
+    ) -> ExamTypeMaster:
+        db_obj = await self.get_exam_type(tenant_id, school_id, id)
+        update_data = obj_in.model_dump(exclude_unset=True)
+        await self.type_repo.update(db_obj, update_data, updated_by=current_user.id)
+        await self.type_repo.db.commit()
+        await self.type_repo.db.refresh(db_obj)
+        return db_obj
+
+    async def delete_exam_type(
+        self, tenant_id: uuid.UUID, school_id: Optional[uuid.UUID], id: uuid.UUID, current_user: User
+    ) -> ExamTypeMaster:
+        db_obj = await self.get_exam_type(tenant_id, school_id, id)
+        is_ref = await self.type_repo.is_referenced(db_obj.code, tenant_id, school_id)
+        if is_ref:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot delete exam type because it is referenced by existing examinations."
+            )
+        await self.type_repo.delete(db_obj)
+        await self.type_repo.db.commit()
+        return db_obj
 
     # ==================================================
     # Templates Workflows
@@ -46,7 +160,6 @@ class ExaminationService:
         obj_in: ExamTemplateCreate,
         current_user: User
     ) -> ExamTemplate:
-        # Check active academic year
         ay = await self.academic_year_repo.get_by_id(academic_year_id, school_id, tenant_id)
         if not ay or ay.status.value != "ACTIVE":
             raise HTTPException(
@@ -146,7 +259,7 @@ class ExaminationService:
         db_obj = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
         if not db_obj:
             raise HTTPException(
-                status_code=status.HTTP_440_NOT_FOUND if hasattr(status, "HTTP_440_NOT_FOUND") else 404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Examination entity not found."
             )
 
@@ -180,8 +293,16 @@ class ExaminationService:
         await self.exam_repo.db.commit()
         return await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
 
-    async def publish_examination(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID, current_user: User
+    # ==================================================
+    # Examination Status Lifecycle Workflows
+    # ==================================================
+    async def transition_exam_status(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        req: ExamStatusTransitionRequest,
+        current_user: User
     ) -> Examination:
         db_obj = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
         if not db_obj:
@@ -190,11 +311,66 @@ class ExaminationService:
                 detail="Examination not found."
             )
 
-        # Transition to PUBLISHED status
-        update_data = {"status": ExamStatus.PUBLISHED}
-        await self.exam_repo.update(db_obj, update_data, updated_by=current_user.id)
+        current_status = db_obj.status
+        target_status = req.new_status
+
+        if current_status == target_status:
+            return db_obj
+
+        if req.is_administrative_override:
+            if not req.reason or len(req.reason.strip()) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Administrative status override requires a mandatory justification reason."
+                )
+        else:
+            allowed = ALLOWED_TRANSITIONS.get(current_status, [])
+            if target_status not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid examination status transition from {current_status.value} to {target_status.value}. Allowed transitions: {[s.value for s in allowed]}"
+                )
+
+            # Pre-condition check for SCHEDULED: must have participating classes
+            if target_status == ExamStatus.SCHEDULED:
+                if len(db_obj.participating_classes) == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Add participating classes before scheduling examination papers."
+                    )
+
+        # Record audit trail
+        history = list(db_obj.settings.get("status_audit_trail", []))
+        history.append({
+            "from_status": current_status.value,
+            "to_status": target_status.value,
+            "is_override": req.is_administrative_override,
+            "reason": req.reason or "Standard lifecycle progression",
+            "transitioned_by": str(current_user.id),
+            "transitioned_at": datetime.now(timezone.utc).isoformat()
+        })
+        db_obj.settings["status_audit_trail"] = history
+        db_obj.status = target_status
+        db_obj.updated_by = current_user.id
+        self.exam_repo.db.add(db_obj)
         await self.exam_repo.db.commit()
+
+        # If transitioning to PUBLISHED, attempt notification dispatch safely without breaking transaction
+        if target_status == ExamStatus.PUBLISHED:
+            try:
+                from app.services.notification import get_notification_service
+                notif_service = get_notification_service(self.exam_repo.db)
+                await notif_service.notify_examination_published(tenant_id, school_id, exam_id)
+            except Exception:
+                pass
+
         return await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
+
+    async def publish_examination(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID, current_user: User
+    ) -> Examination:
+        req = ExamStatusTransitionRequest(new_status=ExamStatus.PUBLISHED, is_administrative_override=True, reason="Direct publish trigger")
+        return await self.transition_exam_status(tenant_id, school_id, exam_id, req, current_user)
 
     async def delete_examination(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID, current_user: User
@@ -506,3 +682,307 @@ class ExaminationService:
         await self.exam_repo.db.commit()
         self.exam_repo.db.expire(new_master)
         return await self.exam_repo.get_by_id(new_exam_id, school_id, tenant_id)
+
+    # ==================================================
+    # Timetable & Schedule Workflows
+    # ==================================================
+    async def list_schedules(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: Optional[uuid.UUID] = None,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 500
+    ) -> List[ExamSchedule]:
+        return await self.schedule_repo.get_multi(
+            school_id=school_id,
+            tenant_id=tenant_id,
+            exam_id=exam_id,
+            class_id=class_id,
+            section_id=section_id,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+
+    async def create_schedule(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        obj_in: ExamScheduleCreate,
+        current_user: User
+    ) -> ExamSchedule:
+        exam = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        if exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot add schedule to a frozen or completed examination."
+            )
+
+        # 1. Date containment check
+        if obj_in.exam_date < exam.start_date or obj_in.exam_date > exam.end_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Schedule date {obj_in.exam_date} falls outside examination dates range ({exam.start_date} to {exam.end_date})."
+            )
+
+        # 2. Timing check
+        if obj_in.end_time <= obj_in.start_time:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Schedule end time must be later than start time."
+            )
+
+        # 3. Duplicate subject check in same exam
+        dup_sub = await self.schedule_repo.check_duplicate_subject(
+            exam_id=exam_id,
+            class_id=obj_in.class_id,
+            section_id=obj_in.section_id,
+            subject_id=obj_in.subject_id
+        )
+        if dup_sub:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Duplicate schedule: This subject is already scheduled for this class and section in this examination."
+            )
+
+        # 4. Class timing overlap check
+        class_clash = await self.schedule_repo.check_class_overlap(
+            class_id=obj_in.class_id,
+            section_id=obj_in.section_id,
+            exam_date=obj_in.exam_date,
+            start_time=obj_in.start_time,
+            end_time=obj_in.end_time
+        )
+        if class_clash:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Scheduling conflict: Class/Section already has an examination paper at this time slot ({obj_in.exam_date} {obj_in.start_time}-{obj_in.end_time})."
+            )
+
+        db_obj = await self.schedule_repo.create(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            academic_year_id=exam.academic_year_id,
+            exam_id=exam_id,
+            obj_in=obj_in,
+            created_by=current_user.id
+        )
+        await self.schedule_repo.db.commit()
+        return await self.schedule_repo.get_by_id(db_obj.id, school_id, tenant_id)
+
+    async def update_schedule(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        schedule_id: uuid.UUID,
+        obj_in: ExamScheduleUpdate,
+        current_user: User
+    ) -> ExamSchedule:
+        db_sched = await self.schedule_repo.get_by_id(schedule_id, school_id, tenant_id)
+        if not db_sched:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam schedule not found.")
+
+        exam = await self.exam_repo.get_by_id(db_sched.exam_id, school_id, tenant_id)
+        if exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot modify schedule of a frozen or completed examination."
+            )
+
+        update_data = obj_in.model_dump(exclude_unset=True)
+        exam_date = update_data.get("exam_date", db_sched.exam_date)
+        start_time = update_data.get("start_time", db_sched.start_time)
+        end_time = update_data.get("end_time", db_sched.end_time)
+
+        if end_time <= start_time:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Schedule end time must be later than start time."
+            )
+
+        if exam_date < exam.start_date or exam_date > exam.end_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Schedule date {exam_date} falls outside examination dates range ({exam.start_date} to {exam.end_date})."
+            )
+
+        class_clash = await self.schedule_repo.check_class_overlap(
+            class_id=db_sched.class_id,
+            section_id=db_sched.section_id,
+            exam_date=exam_date,
+            start_time=start_time,
+            end_time=end_time,
+            exclude_schedule_id=schedule_id
+        )
+        if class_clash:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Scheduling conflict: Class/Section already has an examination paper at this time slot ({exam_date} {start_time}-{end_time})."
+            )
+
+        await self.schedule_repo.update(db_sched, update_data, updated_by=current_user.id)
+        await self.schedule_repo.db.commit()
+        return await self.schedule_repo.get_by_id(schedule_id, school_id, tenant_id)
+
+    async def delete_schedule(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        schedule_id: uuid.UUID,
+        current_user: User
+    ) -> None:
+        db_sched = await self.schedule_repo.get_by_id(schedule_id, school_id, tenant_id)
+        if not db_sched:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam schedule not found.")
+
+        exam = await self.exam_repo.get_by_id(db_sched.exam_id, school_id, tenant_id)
+        if exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot delete schedule from a frozen or completed examination."
+            )
+
+        await self.schedule_repo.delete(db_sched, deleted_by=current_user.id)
+        await self.schedule_repo.db.commit()
+
+    # ==================================================
+    # Bulk Timetable Auto-Generation Workflows
+    # ==================================================
+    async def preview_bulk_timetable(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        req: BulkTimetablePreviewRequest
+    ) -> BulkTimetablePreviewResponse:
+        exam = await self.exam_repo.get_by_id(req.examination_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        stmt = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.class_id.in_(req.class_ids),
+            TeacherSubjectAssignment.school_id == school_id,
+            TeacherSubjectAssignment.tenant_id == tenant_id,
+            TeacherSubjectAssignment.is_active == True,
+            TeacherSubjectAssignment.deleted_at.is_(None)
+        ).options(
+            joinedload(TeacherSubjectAssignment.class_obj),
+            joinedload(TeacherSubjectAssignment.section),
+            joinedload(TeacherSubjectAssignment.subject)
+        )
+        if req.section_ids:
+            stmt = stmt.where(TeacherSubjectAssignment.section_id.in_(req.section_ids))
+        if req.subject_ids:
+            stmt = stmt.where(TeacherSubjectAssignment.subject_id.in_(req.subject_ids))
+
+        res = await self.schedule_repo.db.execute(stmt)
+        tsas = list(res.scalars().all())
+
+        start_time = req.start_time
+        end_time = (datetime.combine(date.today(), start_time) + timedelta(minutes=req.duration_minutes)).time()
+
+        grouped_by_class: Dict[uuid.UUID, List[TeacherSubjectAssignment]] = {}
+        for tsa in tsas:
+            grouped_by_class.setdefault(tsa.class_id, []).append(tsa)
+
+        preview_items: List[BulkTimetablePreviewItem] = []
+
+        for class_id, class_tsas in grouped_by_class.items():
+            subject_map: Dict[uuid.UUID, List[TeacherSubjectAssignment]] = {}
+            for tsa in class_tsas:
+                subject_map.setdefault(tsa.subject_id, []).append(tsa)
+
+            current_date = req.start_date
+            for subject_id, sub_tsas in subject_map.items():
+                if req.exclude_weekends:
+                    while current_date.weekday() >= 5:
+                        current_date += timedelta(days=1)
+
+                seen_sections = set()
+                for tsa in sub_tsas:
+                    if tsa.section_id in seen_sections:
+                        continue
+                    seen_sections.add(tsa.section_id)
+
+                    preview_items.append(BulkTimetablePreviewItem(
+                        class_id=tsa.class_id,
+                        class_name=tsa.class_obj.name if tsa.class_obj else "Class",
+                        section_id=tsa.section_id,
+                        section_name=tsa.section.name if tsa.section else "Section",
+                        subject_id=tsa.subject_id,
+                        subject_name=tsa.subject.subject_name if tsa.subject else "Subject",
+                        teacher_subject_assignment_id=tsa.id,
+                        exam_date=current_date,
+                        start_time=start_time,
+                        end_time=end_time,
+                        max_marks=req.max_marks,
+                        pass_marks=req.pass_marks,
+                        room_number=None
+                    ))
+
+                current_date += timedelta(days=req.gap_days + 1)
+                if req.exclude_weekends:
+                    while current_date.weekday() >= 5:
+                        current_date += timedelta(days=1)
+
+        return BulkTimetablePreviewResponse(
+            total_slots=len(preview_items),
+            schedules=preview_items
+        )
+
+    async def confirm_bulk_timetable(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        req: BulkTimetableConfirmRequest,
+        current_user: User
+    ) -> List[ExamSchedule]:
+        exam = await self.exam_repo.get_by_id(req.examination_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        created_objs = []
+        for sched_in in req.schedules:
+            clash = await self.schedule_repo.check_class_overlap(
+                class_id=sched_in.class_id,
+                section_id=sched_in.section_id,
+                exam_date=sched_in.exam_date,
+                start_time=sched_in.start_time,
+                end_time=sched_in.end_time
+            )
+            if clash:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Clash detected for class/section on {sched_in.exam_date} {sched_in.start_time}-{sched_in.end_time}."
+                )
+
+            dup = await self.schedule_repo.check_duplicate_subject(
+                exam_id=exam.id,
+                class_id=sched_in.class_id,
+                section_id=sched_in.section_id,
+                subject_id=sched_in.subject_id
+            )
+            if dup:
+                continue
+
+            db_sched = await self.schedule_repo.create(
+                tenant_id=tenant_id,
+                school_id=school_id,
+                academic_year_id=exam.academic_year_id,
+                exam_id=exam.id,
+                obj_in=sched_in,
+                created_by=current_user.id
+            )
+            created_objs.append(db_sched)
+
+        await self.schedule_repo.db.commit()
+        return await self.schedule_repo.get_multi(school_id=school_id, tenant_id=tenant_id, exam_id=exam.id)

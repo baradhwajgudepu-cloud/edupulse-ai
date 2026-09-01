@@ -15,4 +15,9 @@ abstract class MyClassesRepository {
     required String classId,
     required String sectionId,
   });
+
+  Future<ApiResult<List<StudentEntity>>> getTeacherStudents({
+    required String schoolId,
+    required String academicYearId,
+  });
 }

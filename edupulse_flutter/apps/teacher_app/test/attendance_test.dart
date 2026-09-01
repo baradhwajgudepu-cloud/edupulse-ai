@@ -73,6 +73,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   final bool hasSessionValue;
   String? cachedSchoolId;
 
@@ -200,7 +210,13 @@ class FakeMyClassesRepository implements MyClassesRepository {
     return ApiResult.success(studentsMock);
   }
 
-
+  @override
+  Future<ApiResult<List<StudentEntity>>> getTeacherStudents({
+    required String schoolId,
+    required String academicYearId,
+  }) async {
+    return ApiResult.success(studentsMock);
+  }
 }
 
 // --- ATTENDANCE REPO FAKE ---

@@ -168,4 +168,45 @@ class MyClassesRepositoryImpl implements MyClassesRepository {
       },
     );
   }
+
+  @override
+  Future<ApiResult<List<StudentEntity>>> getTeacherStudents({
+    required String schoolId,
+    required String academicYearId,
+  }) async {
+    final result = await _remoteDatasource.getTeacherStudents(
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+    );
+
+    return result.when(
+      onFailure: (failure) => ApiResult.failure(failure),
+      onSuccess: (studentDtos) async {
+        final students = studentDtos.map((dto) {
+          return StudentEntity(
+            id: dto.id,
+            firstName: dto.firstName,
+            middleName: dto.middleName,
+            lastName: dto.lastName,
+            gender: dto.gender,
+            dateOfBirth: dto.dateOfBirth,
+            bloodGroup: dto.bloodGroup,
+            mobile: dto.mobile,
+            email: dto.email,
+            photoUrl: dto.photoUrl,
+            admissionNumber: dto.admissionNumber,
+            rollNumber: dto.rollNumber,
+            status: dto.status,
+            className: dto.className ?? 'Class',
+            sectionName: dto.sectionName ?? 'Section',
+          );
+        }).toList();
+
+        // Sort students by name
+        students.sort((a, b) => a.fullName.compareTo(b.fullName));
+
+        return ApiResult.success(students);
+      },
+    );
+  }
 }

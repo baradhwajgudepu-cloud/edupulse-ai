@@ -1014,6 +1014,12 @@
       "rootUri": "../edupulse_flutter/packages/edupulse_ui",
       "packageUri": "lib/",
       "languageVersion": "3.5"
+    },
+    {
+      "name": "edupulse_files",
+      "rootUri": "../edupulse_flutter/packages/edupulse_files",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
     }
   ],
   "generator": "pub",

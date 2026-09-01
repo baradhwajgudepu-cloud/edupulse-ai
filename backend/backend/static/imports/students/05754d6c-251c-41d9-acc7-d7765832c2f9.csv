@@ -1,0 +1,4 @@
+﻿first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+SmokePartialOne,Student,MALE,2015-04-04,SMKP1AD8E,904,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d
+SmokePartialTwo,Student,FEMALE,2015-05-05,SMK1AD8E,901,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d
+SmokePartialThree,Student,MALE,2015-06-06,SMKP3AD8E,906,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d

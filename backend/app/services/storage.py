@@ -113,6 +113,23 @@ class StorageService:
                 return os.path.exists(full_path)
             return await asyncio.to_thread(_local_exists)
 
+    def download_sync(self, path: str) -> bytes:
+        """
+        Synchronously downloads file bytes.
+        """
+        if self.client:
+            bucket = self.client.bucket(self.bucket_name)
+            blob = bucket.blob(path)
+            if not blob.exists():
+                raise FileNotFoundError(f"Object '{path}' not found in GCS bucket '{self.bucket_name}'.")
+            return blob.download_as_bytes()
+        else:
+            full_path = os.path.join(self.local_fallback_dir, path)
+            if not os.path.exists(full_path):
+                raise FileNotFoundError(f"Local mock storage file not found: {full_path}")
+            with open(full_path, "rb") as f:
+                return f.read()
+
 _storage_service_instance = None
 
 def get_storage_service() -> StorageService:

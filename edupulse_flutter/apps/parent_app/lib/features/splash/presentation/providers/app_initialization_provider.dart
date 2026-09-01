@@ -1,32 +1,63 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:edupulse_core/edupulse_core.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../../../core/providers/bootstrap_provider.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 
-class AppInitializationNotifier extends AutoDisposeNotifier<AsyncValue<void>> {
+enum SplashNavigationTarget {
+  initial,
+  loading,
+  login,
+  dashboard,
+  error,
+}
+
+class AppInitializationNotifier
+    extends AutoDisposeNotifier<SplashNavigationTarget> {
   @override
-  AsyncValue<void> build() {
-    return const AsyncValue.data(null);
+  SplashNavigationTarget build() {
+    return SplashNavigationTarget.initial;
   }
 
-  Future<void> initialize() async {
-    state = const AsyncValue.loading();
+  Future<void> initializeAndCheckSession() async {
+    state = SplashNavigationTarget.loading;
 
-    final result = ref.read(bootstrapResultProvider);
+    final bootResult = ref.read(bootstrapResultProvider);
+    if (!bootResult.success) {
+      state = SplashNavigationTarget.error;
+      return;
+    }
 
-    // Brief delay to ensure smooth logo fading transition
+    // Minimum delay for smooth logo animation transition
     await Future.delayed(const Duration(milliseconds: 1500));
 
-    if (result.success) {
-      state = const AsyncValue.data(null);
-    } else {
-      state = AsyncValue.error(
-        result.errorMessage ?? 'Bootstrap failed',
-        StackTrace.current,
-      );
+    final sessionManager = ref.read(sessionManagerProvider);
+    final hasSession = await sessionManager.hasSession();
+
+    if (!hasSession) {
+      state = SplashNavigationTarget.login;
+      return;
     }
+
+    final validateSession = ref.read(validateSessionUseCaseProvider);
+    final result = await validateSession();
+
+    await result.when(
+      onSuccess: (user) async {
+        ref.read(authStateProvider.notifier).setAuthenticated(user);
+        state = SplashNavigationTarget.dashboard;
+      },
+      onFailure: (failure) async {
+        EduLogger.w(
+            'Saved authentication session token has expired: ${failure.message}');
+        await sessionManager.clearSession();
+        state = SplashNavigationTarget.login;
+      },
+    );
   }
 }
 
-final appInitializationProvider =
-    NotifierProvider.autoDispose<AppInitializationNotifier, AsyncValue<void>>(
+final appInitializationProvider = NotifierProvider.autoDispose<
+    AppInitializationNotifier, SplashNavigationTarget>(
   AppInitializationNotifier.new,
 );

@@ -41,7 +41,11 @@ class TeacherLeaveRepository:
                 TeacherLeave.tenant_id == tenant_id,
                 TeacherLeave.deleted_at.is_(None)
             )
-        ).order_by(TeacherLeave.requested_at.desc())
+        ).order_by(
+            TeacherLeave.requested_at.desc()
+        ).options(
+            selectinload(TeacherLeave.teacher)
+        )
         res = await self.db.execute(stmt)
         return list(res.scalars().all())
 

@@ -2,10 +2,15 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:edupulse_core/edupulse_core.dart';
+import 'package:edupulse_config/edupulse_config.dart';
+import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
 import 'app.dart';
 import 'core/observers/provider_observer.dart';
 import 'core/providers/bootstrap_provider.dart';
+import 'firebase_options.dart';
 
 void main() {
   // 1. Intercept Flutter framework errors
@@ -28,6 +33,16 @@ void main() {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
+    // Initialize Firebase Core
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // Resolve API Base URL and load build configuration
+    final resolvedUrl = await BuildConfig.resolveApiBaseUrl();
+    final buildConfig = BuildConfig.fromEnvironment(resolvedApiBaseUrl: resolvedUrl);
+    buildConfig.printDiagnostics();
+
     // Call bootstrap service to load databases, SharedPreferences, and configs
     final bootstrapResult = await BootstrapService.initialize();
 
@@ -36,6 +51,31 @@ void main() {
         observers: [AppProviderObserver()],
         overrides: [
           bootstrapResultProvider.overrideWithValue(bootstrapResult),
+          buildConfigProvider.overrideWithValue(buildConfig),
+          // Connect the concrete SessionManager token delegate to the networking layer
+          authTokenProvider.overrideWith((ref) {
+            final sessionManager = ref.watch(sessionManagerProvider);
+            final refreshDio = ref.watch(refreshDioProvider);
+            return TokenProviderImpl(
+              sessionManager,
+              (refreshToken) async {
+                final response = await refreshDio.post(
+                  '/auth/refresh',
+                  data: {
+                    'refresh_token': refreshToken,
+                  },
+                );
+
+                final payload = response.data as Map<String, dynamic>;
+                final data = payload['data'] as Map<String, dynamic>;
+                return SessionToken(
+                  accessToken: data['access_token'] as String,
+                  refreshToken: data['refresh_token'] as String,
+                  tokenType: data['token_type'] as String,
+                );
+              },
+            );
+          }),
         ],
         child: const EduPulseApp(),
       ),

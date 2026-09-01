@@ -121,6 +121,27 @@ async def seed_reports_settings_permissions():
             import logging
             logging.getLogger("uvicorn").error(f"Error seeding reports and settings permissions: {e}")
 
+
+async def sync_tenant_rbac_permissions():
+    from app.models.tenant import Tenant
+    from app.services.rbac_provisioning import ensure_tenant_rbac
+    from app.db.session import AsyncSessionLocal
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as session:
+        try:
+            stmt_t = select(Tenant)
+            res_t = await session.execute(stmt_t)
+            tenants = res_t.scalars().all()
+            for tenant in tenants:
+                await ensure_tenant_rbac(session, tenant.id)
+            await session.commit()
+        except Exception as e:
+            await session.rollback()
+            import logging
+            logging.getLogger("uvicorn").error(f"Error syncing tenant RBAC permissions: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
@@ -132,6 +153,11 @@ async def lifespan(app: FastAPI):
         await seed_reports_settings_permissions()
     except Exception as e:
         logger.error(f"Failed to seed reports and settings permissions during startup: {e}")
+
+    try:
+        await sync_tenant_rbac_permissions()
+    except Exception as e:
+        logger.error(f"Failed to sync tenant RBAC permissions during startup: {e}")
 
     # Start background scheduled notification worker
     from app.db.session import AsyncSessionLocal
@@ -200,9 +226,22 @@ app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[str(origin) for origin in settings.cors_origins_list],
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=[
+        "Content-Length",
+        "Content-Range",
+        "X-Trace-ID",
+        "X-Process-Time",
+        "x-trace-id",
+        "x-process-time",
+        "X-Tenant-ID",
+        "X-School-ID",
+        "Content-Disposition",
+    ],
+    max_age=86400,
 )
 
 setup_exception_handlers(app)

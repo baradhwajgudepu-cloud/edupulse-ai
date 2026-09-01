@@ -19,4 +19,9 @@ class AppRoutes {
   static const String teacherLeaveDetail = '/teacher-leaves/:leaveId';
   static const String teacherLeaveHistory = '/teacher-leaves/teacher/:teacherId/history';
   static const String geofence = '/geofence';
+  static const String communication = '/communication';
+  static const String communicationDetails = '/communication/details/:id';
+  static const String planner = '/planner';
+  static const String manageExams = '/manage-exams';
+  static const String outstandingDetails = '/fees/outstanding-details';
 }

@@ -451,7 +451,10 @@ class MarksWizardNotifier extends StateNotifier<MarksWizardState> {
         return true;
       },
       onFailure: (failure) {
-        state = state.copyWith(isPublishing: false);
+        state = state.copyWith(
+          isPublishing: false,
+          errorMessage: failure.message,
+        );
         return false;
       },
     );

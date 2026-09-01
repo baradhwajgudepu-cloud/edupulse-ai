@@ -46,15 +46,56 @@ async def list_student_guardians(
     current_user: User = Depends(require_permission("guardian.read")),
     service: GuardianService = Depends(get_guardian_service)
 ) -> APIResponse[List[StudentGuardianResponse]]:
-    if student_id:
-        mappings = await service.student_guardian_repo.get_student_guardians(student_id, tenant_id)
-    elif guardian_id:
-        mappings = await service.student_guardian_repo.get_guardian_students(guardian_id, tenant_id)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either student_id or guardian_id query parameter must be provided."
+    user_role_codes = [role.code for role in current_user.roles]
+    if "PARENT" in user_role_codes and not current_user.is_superuser:
+        from app.models.guardian import Guardian
+        from sqlalchemy import select
+        
+        stmt = select(Guardian.id).where(
+            Guardian.user_id == current_user.id,
+            Guardian.tenant_id == tenant_id,
+            Guardian.deleted_at.is_(None)
         )
+        res = await service.student_guardian_repo.db.execute(stmt)
+        my_guardian_id = res.scalar()
+        if not my_guardian_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. No guardian profile linked to your user account."
+            )
+            
+        if guardian_id and guardian_id != my_guardian_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You cannot view mappings for other guardians."
+            )
+            
+        if student_id:
+            from app.models.guardian import StudentGuardian
+            stmt_link = select(1).select_from(StudentGuardian).where(
+                StudentGuardian.student_id == student_id,
+                StudentGuardian.guardian_id == my_guardian_id,
+                StudentGuardian.deleted_at.is_(None)
+            )
+            res_link = await service.student_guardian_repo.db.execute(stmt_link)
+            if not res_link.scalar():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You are not linked to this student."
+                )
+        
+        query_guardian_id = guardian_id or my_guardian_id
+        mappings = await service.student_guardian_repo.get_guardian_students(query_guardian_id, tenant_id)
+    else:
+        if student_id:
+            mappings = await service.student_guardian_repo.get_student_guardians(student_id, tenant_id)
+        elif guardian_id:
+            mappings = await service.student_guardian_repo.get_guardian_students(guardian_id, tenant_id)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either student_id or guardian_id query parameter must be provided."
+            )
     
     responses = [StudentGuardianResponse.model_validate(m) for m in mappings]
     return APIResponse[List[StudentGuardianResponse]](

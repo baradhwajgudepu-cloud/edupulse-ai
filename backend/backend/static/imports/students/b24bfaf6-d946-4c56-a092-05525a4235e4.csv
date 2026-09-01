@@ -1,0 +1,4 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+E2E_S4,E2E_L4,MALE,2018-05-15,E2E_ADM_36A0ED_004,104,2026-06-01,51bccf31-de11-4a25-af26-2d8673cec2f7,a9d79e09-e932-4cd7-bf33-e7f143c8bd2a,b7a2c179-89c3-44a7-9e9c-34a0d2e794eb
+E2E_S2,E2E_L2,FEMALE,2018-08-20,E2E_ADM_36A0ED_001,102,2026-06-01,51bccf31-de11-4a25-af26-2d8673cec2f7,a9d79e09-e932-4cd7-bf33-e7f143c8bd2a,b7a2c179-89c3-44a7-9e9c-34a0d2e794eb
+E2E_S5,E2E_L5,MALE,2018-02-10,E2E_ADM_36A0ED_005,105,2026-06-01,51bccf31-de11-4a25-af26-2d8673cec2f7,a9d79e09-e932-4cd7-bf33-e7f143c8bd2a,b7a2c179-89c3-44a7-9e9c-34a0d2e794eb

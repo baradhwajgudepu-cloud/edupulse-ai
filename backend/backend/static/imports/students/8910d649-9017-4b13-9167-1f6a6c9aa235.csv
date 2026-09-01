@@ -1,0 +1,2 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+John,Doe,MALE,2015-05-15,ADM_FAIL_AUDIT,1,2026-06-01,33a670ef-0cd7-431a-8b51-599f93e736b8,65ec80d9-cb11-4ee5-8eb2-871c56319f97,8dc38310-29b1-443b-997b-6aa4fea90e54

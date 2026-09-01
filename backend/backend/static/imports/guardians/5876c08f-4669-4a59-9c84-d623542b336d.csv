@@ -1,0 +1,4 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email
+G_001,FATHER,John,Doe,MALE,1980-01-01,9876543215,john@test.com
+G_002,MOTHER,Mary,Smith,FEMALE,1982-06-15,9876543215,mary@test.com
+G_003,UNCLE,Bob,Smith,MALE,1975-04-10,9876543216,john@test.com

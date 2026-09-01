@@ -18,6 +18,9 @@ class HomeworkFormScreen extends ConsumerStatefulWidget {
   final String? subjectId;
   final String? classId;
   final String? sectionId;
+  final String? initialTitle;
+  final String? initialDescription;
+  final int? initialEstimatedMinutes;
 
   const HomeworkFormScreen({
     super.key,
@@ -27,6 +30,9 @@ class HomeworkFormScreen extends ConsumerStatefulWidget {
     this.subjectId,
     this.classId,
     this.sectionId,
+    this.initialTitle,
+    this.initialDescription,
+    this.initialEstimatedMinutes,
   });
 
   @override
@@ -90,6 +96,15 @@ class _HomeworkFormScreenState extends ConsumerState<HomeworkFormScreen> {
         _selectedSubjectId = widget.subjectId;
         _selectedTsaId = widget.teacherSubjectAssignmentId;
       });
+    }
+    if (widget.initialTitle != null) {
+      _titleController.text = widget.initialTitle!;
+    }
+    if (widget.initialDescription != null) {
+      _descriptionController.text = widget.initialDescription!;
+    }
+    if (widget.initialEstimatedMinutes != null) {
+      _estimatedMinutesController.text = widget.initialEstimatedMinutes!.toString();
     }
   }
 

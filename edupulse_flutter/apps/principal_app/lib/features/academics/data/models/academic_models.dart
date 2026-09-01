@@ -37,6 +37,7 @@ class Examination {
   final String startDate;
   final String endDate;
   final String status;
+  final String? description;
   final List<ExamSchedule> schedules;
 
   Examination({
@@ -46,6 +47,7 @@ class Examination {
     required this.startDate,
     required this.endDate,
     required this.status,
+    this.description,
     required this.schedules,
   });
 
@@ -58,6 +60,7 @@ class Examination {
       startDate: json['start_date'] as String? ?? '',
       endDate: json['end_date'] as String? ?? '',
       status: json['status'] as String? ?? '',
+      description: json['description'] as String?,
       schedules: schedList.map((e) => ExamSchedule.fromJson(e as Map<String, dynamic>)).toList(),
     );
   }

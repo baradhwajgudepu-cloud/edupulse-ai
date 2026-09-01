@@ -1,0 +1,2 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+John,Doe,MALE,2015-05-15,ADM_SUCC_TERM,1,2026-06-01,5485e5dc-50f2-4dae-a915-a2ed13abd5fd,2921dcce-fc74-4ebd-9171-394a6bed1819,31d010a3-4160-4019-b4ce-43755bb4eb5c

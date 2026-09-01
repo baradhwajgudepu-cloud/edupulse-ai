@@ -1,10 +1,12 @@
+import os
 import uuid
 from typing import List, Optional, Any
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException, status
 from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.school import get_school_service
 from app.api.dependencies.auth import require_permission
 from app.services.school import SchoolService
+from app.services.storage import get_storage_service, StorageService
 from app.schemas.school import SchoolCreate, SchoolUpdate, SchoolResponse
 from app.models.school import SchoolBoard, SchoolStatus
 from app.schemas.response import APIResponse
@@ -140,5 +142,114 @@ async def delete_school(
     return APIResponse[SchoolResponse](
         success=True,
         message="School deleted successfully.",
+        data=school_response
+    )
+
+@router.post(
+    "/{id}/logo",
+    response_model=APIResponse[SchoolResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Upload or update school logo",
+    description="Uploads a new branding image (PNG, JPG, JPEG, WebP) for the school within tenant scope."
+)
+async def upload_school_logo(
+    id: uuid.UUID,
+    file: UploadFile = File(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.update", "school.write")),
+    service: SchoolService = Depends(get_school_service),
+    storage_service: StorageService = Depends(get_storage_service)
+) -> APIResponse[SchoolResponse]:
+    """
+    Uploads and replaces a school's branding logo image with format and size validation.
+    """
+    # 1. Verify school exists under tenant scope
+    school = await service.get_school(id, tenant_id)
+
+    # 2. Validate file size (max 5MB)
+    contents = await file.read()
+    file_size = len(contents)
+    max_size = 5 * 1024 * 1024
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds the maximum allowed limit of 5MB."
+        )
+    if file_size == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty."
+        )
+
+    # 3. Validate file extension and MIME type
+    filename = file.filename or "logo.png"
+    ext = os.path.splitext(filename)[1].lower().strip(".")
+    allowed_exts = {"png", "jpg", "jpeg", "webp"}
+    if ext not in allowed_exts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file format '.{ext}'. Allowed formats: PNG, JPG, JPEG, WebP."
+        )
+
+    allowed_mimes = {"image/png", "image/jpeg", "image/pjpeg", "image/webp"}
+    if file.content_type and file.content_type.lower() not in allowed_mimes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported content type '{file.content_type}'. Allowed types: image/png, image/jpeg, image/webp."
+        )
+
+    # 4. Cleanup existing logo from storage if it is a storage path
+    if school.logo_url and not school.logo_url.startswith("http"):
+        try:
+            await storage_service.delete(school.logo_url)
+        except Exception:
+            pass
+
+    # 5. Upload new logo to storage path
+    storage_path = f"tenants/{tenant_id}/schools/{id}/branding/{uuid.uuid4().hex}.{ext}"
+    await storage_service.upload(contents, storage_path, content_type=file.content_type or f"image/{ext}")
+
+    # 6. Update school record
+    updated_school = await service.update_logo(tenant_id, id, storage_path)
+    school_response = SchoolResponse.model_validate(updated_school)
+    return APIResponse[SchoolResponse](
+        success=True,
+        message="School branding logo uploaded successfully.",
+        data=school_response
+    )
+
+@router.delete(
+    "/{id}/logo",
+    response_model=APIResponse[SchoolResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Remove school logo",
+    description="Deletes the branding logo associated with the school."
+)
+async def delete_school_logo(
+    id: uuid.UUID,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: Any = Depends(require_permission("school.update", "school.write")),
+    service: SchoolService = Depends(get_school_service),
+    storage_service: StorageService = Depends(get_storage_service)
+) -> APIResponse[SchoolResponse]:
+    """
+    Deletes the branding logo of a school.
+    """
+    # 1. Verify school exists under tenant scope
+    school = await service.get_school(id, tenant_id)
+
+    # 2. Cleanup from storage
+    if school.logo_url and not school.logo_url.startswith("http"):
+        try:
+            await storage_service.delete(school.logo_url)
+        except Exception:
+            pass
+
+    # 3. Update school record
+    updated_school = await service.update_logo(tenant_id, id, None)
+    school_response = SchoolResponse.model_validate(updated_school)
+    return APIResponse[SchoolResponse](
+        success=True,
+        message="School branding logo removed successfully.",
         data=school_response
     )

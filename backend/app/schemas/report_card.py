@@ -11,6 +11,8 @@ from app.models.report_card import ReportCardStatus
 class ReportCardGenerateRequest(BaseModel):
     student_id: uuid.UUID
     school_id: uuid.UUID
+    examination_id: Optional[uuid.UUID] = None
+    academic_year_id: Optional[uuid.UUID] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "generated_from_live_data": True,
         "show_attendance": True,
@@ -22,6 +24,8 @@ class ReportCardClassGenerateRequest(BaseModel):
     class_id: uuid.UUID
     section_id: uuid.UUID
     school_id: uuid.UUID
+    examination_id: Optional[uuid.UUID] = None
+    academic_year_id: Optional[uuid.UUID] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "generated_from_live_data": True,
         "show_attendance": True,
@@ -102,6 +106,16 @@ class StudentFailureDetail(BaseModel):
 class BulkClassGenerateResponse(BaseModel):
     total_students: int
     generated_count: int
+    failed_count: int
+    failures: List[StudentFailureDetail] = []
+
+class BulkReportCardActionRequest(BaseModel):
+    report_card_ids: List[uuid.UUID]
+    school_id: uuid.UUID
+
+class BulkReportCardActionResponse(BaseModel):
+    total_requested: int
+    success_count: int
     failed_count: int
     failures: List[StudentFailureDetail] = []
 

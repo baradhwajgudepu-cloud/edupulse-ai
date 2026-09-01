@@ -1,0 +1,19 @@
+teacher_code,first_name,last_name,gender,date_of_birth,mobile,email,employee_code,designation,joining_date,status,middle_name,employment_type
+TCH001,Dr. Sreenivas,Sharma,MALE,1978-04-12,9848011221,sreenivas.sharma@telanganaschool.edu,EMP101,PRINCIPAL,2015-06-01,ACTIVE,,FULL_TIME
+TCH002,Ananya,Reddy,FEMALE,1983-05-18,9848011222,ananya.reddy@telanganaschool.edu,EMP102,PGT,2016-06-01,ACTIVE,,FULL_TIME
+TCH003,Rajesh,Goud,MALE,1985-11-23,9848011223,rajesh.goud@telanganaschool.edu,EMP103,PGT,2017-06-01,ACTIVE,Kumar,FULL_TIME
+TCH004,Kavitha,Rao,FEMALE,1988-08-14,9848011224,kavitha.rao@telanganaschool.edu,EMP104,PGT,2017-06-01,ACTIVE,,FULL_TIME
+TCH005,Venkat,Ramana,MALE,1982-01-30,9848011225,venkat.ramana@telanganaschool.edu,EMP105,TGT,2018-06-01,ACTIVE,,FULL_TIME
+TCH006,Sunitha,Chowdary,FEMALE,1990-03-25,9848011226,sunitha.chowdary@telanganaschool.edu,EMP106,TGT,2018-06-01,ACTIVE,,FULL_TIME
+TCH007,Madhav,Sastry,MALE,1986-07-19,9848011227,madhav.sastry@telanganaschool.edu,EMP107,TGT,2019-06-01,ACTIVE,,FULL_TIME
+TCH008,Prathibha,Naidu,FEMALE,1991-09-12,9848011228,prathibha.naidu@telanganaschool.edu,EMP108,TGT,2019-06-01,ACTIVE,,FULL_TIME
+TCH009,Karthik,Varma,MALE,1987-12-05,9848011229,karthik.varma@telanganaschool.edu,EMP109,TGT,2020-06-01,ACTIVE,,FULL_TIME
+TCH010,Sandhya,Rani,FEMALE,1992-06-22,9848011230,sandhya.rani@telanganaschool.edu,EMP110,TGT,2020-06-01,ACTIVE,,FULL_TIME
+TCH011,Ramesh,Yadav,MALE,1984-10-15,9848011231,ramesh.yadav@telanganaschool.edu,EMP111,TGT,2021-06-01,ACTIVE,,FULL_TIME
+TCH012,Padmavathi,Gaddam,FEMALE,1989-02-28,9848011232,padmavathi.gaddam@telanganaschool.edu,EMP112,TGT,2021-06-01,ACTIVE,,FULL_TIME
+TCH013,Sridhar,Babu,MALE,1987-04-17,9848011233,sridhar.babu@telanganaschool.edu,EMP113,TGT,2022-06-01,ACTIVE,,FULL_TIME
+TCH014,Deepika,Kondapalli,FEMALE,1993-08-11,9848011234,deepika.kondapalli@telanganaschool.edu,EMP114,TGT,2022-06-01,ACTIVE,,FULL_TIME
+TCH015,Naveen,Kumar,MALE,1990-11-09,9848011235,naveen.kumar@telanganaschool.edu,EMP115,TGT,2023-06-01,ACTIVE,,FULL_TIME
+TCH016,Swapna,Boddu,FEMALE,1994-05-16,9848011236,swapna.boddu@telanganaschool.edu,EMP116,TGT,2023-06-01,ACTIVE,,FULL_TIME
+TCH017,Santosh,Vemula,MALE,1988-09-03,9848011237,santosh.vemula@telanganaschool.edu,EMP117,PRT,2024-06-01,ACTIVE,,FULL_TIME
+TCH018,Lavanya,Avula,FEMALE,1995-01-21,9848011238,lavanya.avula@telanganaschool.edu,EMP118,PRT,2024-06-01,ACTIVE,,FULL_TIME

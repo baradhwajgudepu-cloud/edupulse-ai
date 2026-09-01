@@ -11,6 +11,7 @@ import '../widgets/student_score_row.dart';
 import '../widgets/marks_summary_card.dart';
 import '../widgets/marks_validation_banner.dart';
 import '../../../../core/router/routes.dart';
+import '../../../my_classes/presentation/providers/my_classes_provider.dart';
 
 class MarksBoardScreen extends ConsumerStatefulWidget {
   final String examScheduleId;
@@ -56,16 +57,64 @@ class _MarksBoardScreenState extends ConsumerState<MarksBoardScreen> {
 
     final remarksTemplates = remarksTemplatesAsync.value ?? [];
 
+    final classesState = ref.watch(myClassesStateProvider);
+    String? subjectId;
+    if (classesState is MyClassesSuccess) {
+      for (final group in classesState.classes) {
+        for (final assignment in group.assignments) {
+          if (assignment.id == widget.teacherSubjectAssignmentId) {
+            subjectId = assignment.subjectId;
+            break;
+          }
+        }
+        if (subjectId != null) break;
+      }
+    } else if (classesState is MyClassesRefreshing) {
+      for (final group in classesState.classes) {
+        for (final assignment in group.assignments) {
+          if (assignment.id == widget.teacherSubjectAssignmentId) {
+            subjectId = assignment.subjectId;
+            break;
+          }
+        }
+        if (subjectId != null) break;
+      }
+    }
+
     if (state.isLoading) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.examName)),
+        appBar: AppBar(
+          title: Text(widget.examName),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go(AppRoutes.marks);
+              }
+            },
+          ),
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (state.errorMessage != null) {
       return Scaffold(
-        appBar: AppBar(title: Text(widget.examName)),
+        appBar: AppBar(
+          title: Text(widget.examName),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go(AppRoutes.marks);
+              }
+            },
+          ),
+        ),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -142,6 +191,16 @@ class _MarksBoardScreenState extends ConsumerState<MarksBoardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.examName} - ${widget.subjectName}'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.marks);
+            }
+          },
+        ),
         actions: [
           if (state.saveStatusText != null)
             Padding(
@@ -284,6 +343,7 @@ class _MarksBoardScreenState extends ConsumerState<MarksBoardScreen> {
                         maxMarks: widget.maxMarks,
                         isLocked: isLocked,
                         remarksTemplates: remarksTemplates,
+                        subjectId: subjectId,
                         onChanged: (newInput) {
                           ref
                               .read(marksWizardProvider(widget.examScheduleId).notifier)

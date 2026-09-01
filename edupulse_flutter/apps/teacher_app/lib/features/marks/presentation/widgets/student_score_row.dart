@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/entities/marks_wizard_entity.dart';
 import '../../domain/entities/student_mark_entity.dart';
 import '../../domain/repositories/marks_repository.dart';
 import 'marks_status_selector.dart';
+import '../../../teacher_ai/presentation/providers/teacher_ai_provider.dart';
 
 class StudentScoreRow extends StatefulWidget {
   final StudentShortInfoEntity student;
@@ -12,6 +14,7 @@ class StudentScoreRow extends StatefulWidget {
   final bool isLocked;
   final ValueChanged<SingleMarkInput> onChanged;
   final List<String> remarksTemplates;
+  final String? subjectId;
 
   const StudentScoreRow({
     super.key,
@@ -22,6 +25,7 @@ class StudentScoreRow extends StatefulWidget {
     required this.isLocked,
     required this.onChanged,
     required this.remarksTemplates,
+    this.subjectId,
   });
 
   @override
@@ -68,42 +72,103 @@ class _StudentScoreRowState extends State<StudentScoreRow> {
         final theme = Theme.of(context);
         return AlertDialog(
           title: Text('Remarks for ${widget.student.fullName}'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: remarksController,
-                maxLength: 500,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  hintText: 'Enter remarks...',
-                  border: OutlineInputBorder(),
+          content: Consumer(
+            builder: (context, ref, child) {
+              final aiState = ref.watch(remarkGenerationNotifierProvider);
+
+              // Listen/watch for generated remark to update the controller
+              ref.listen<RemarkGenerationState>(remarkGenerationNotifierProvider, (prev, next) {
+                if (next is RemarkGenerationSuccess) {
+                  remarksController.text = next.remark.draftRemark;
+                  ref.read(remarkGenerationNotifierProvider.notifier).clearRemark();
+                }
+              });
+
+              return SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: remarksController,
+                      maxLength: 500,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        hintText: 'Enter remarks...',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (widget.subjectId != null) ...[
+                      const SizedBox(height: 12),
+                      if (aiState is RemarkGenerationLoading) ...[
+                        const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8.0),
+                            child: Column(
+                              children: [
+                                CircularProgressIndicator(strokeWidth: 2),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Generating AI Remark Draft...',
+                                  style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            ref.read(remarkGenerationNotifierProvider.notifier).generateRemark(
+                                  studentId: widget.student.id,
+                                  subjectId: widget.subjectId!,
+                                );
+                          },
+                          icon: const Icon(Icons.auto_awesome, size: 16),
+                          label: const Text('Generate Remark with AI'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: theme.colorScheme.primaryContainer,
+                            foregroundColor: theme.colorScheme.onPrimaryContainer,
+                            elevation: 0,
+                          ),
+                        ),
+                      ],
+                      if (aiState is RemarkGenerationError) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          aiState.message,
+                          style: TextStyle(color: theme.colorScheme.error, fontSize: 11),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ],
+                    if (widget.remarksTemplates.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Quick Templates',
+                          style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: widget.remarksTemplates.map((template) {
+                          return ActionChip(
+                            label: Text(template, style: const TextStyle(fontSize: 11)),
+                            onPressed: () {
+                              remarksController.text = template;
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ],
                 ),
-              ),
-              if (widget.remarksTemplates.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Quick Templates',
-                    style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: widget.remarksTemplates.map((template) {
-                    return ActionChip(
-                      label: Text(template, style: const TextStyle(fontSize: 11)),
-                      onPressed: () {
-                        remarksController.text = template;
-                      },
-                    );
-                  }).toList(),
-                ),
-              ],
-            ],
+              );
+            },
           ),
           actions: [
             TextButton(

@@ -129,3 +129,18 @@ class SchoolService:
         """
         school = await self.get_school(school_id, tenant_id)
         return await self.repo.soft_delete(school, deleted_by=deleted_by)
+
+    async def update_logo(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        logo_url: Optional[str]
+    ) -> School:
+        """
+        Updates the logo_url for a school within the tenant scope.
+        """
+        school = await self.get_school(school_id, tenant_id)
+        school.logo_url = logo_url
+        await self.repo.db.commit()
+        await self.repo.db.refresh(school)
+        return school

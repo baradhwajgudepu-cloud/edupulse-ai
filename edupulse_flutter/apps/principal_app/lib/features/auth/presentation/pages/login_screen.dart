@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -207,8 +208,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 return local?.translate('email_required') ??
                                     'Email is required';
                               }
-                              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                                  .hasMatch(value.trim())) {
+                              final email = value.trim();
+                              bool isValid = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,6}$').hasMatch(email);
+                              if (!isValid && !kReleaseMode) {
+                                isValid = RegExp(r'^[\w-\.]+@([\w-]+\.)+local$', caseSensitive: false).hasMatch(email);
+                              }
+                              if (!isValid) {
                                 return local?.translate('invalid_email_format') ??
                                     'Please enter a valid email address';
                               }

@@ -65,6 +65,7 @@ class StaffDailyAttendanceSummary {
   final int lateCount;
   final int halfDayCount;
   final int onLeaveCount;
+  final int notMarkedCount;
   final double attendanceRate;
   final List<StaffDailyAttendanceReportItem> records;
 
@@ -76,6 +77,7 @@ class StaffDailyAttendanceSummary {
     required this.lateCount,
     required this.halfDayCount,
     required this.onLeaveCount,
+    required this.notMarkedCount,
     required this.attendanceRate,
     required this.records,
   });
@@ -91,6 +93,7 @@ class StaffDailyAttendanceSummary {
       lateCount: (json['late_count'] as num?)?.toInt() ?? 0,
       halfDayCount: (json['half_day_count'] as num?)?.toInt() ?? 0,
       onLeaveCount: (json['on_leave_count'] as num?)?.toInt() ?? 0,
+      notMarkedCount: (json['not_marked_count'] as num?)?.toInt() ?? 0,
       attendanceRate: (json['attendance_rate'] as num?)?.toDouble() ?? 0.0,
       records: recordsList,
     );

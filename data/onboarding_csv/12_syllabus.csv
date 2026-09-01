@@ -1,0 +1,115 @@
+academic_year_code,class_code,subject_code,syllabus_code,unit_name,chapter_name,topic_name,description,sequence_order
+AY2025-2026,C5,MATH101,SYL_C5_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C5,MATH101,SYL_C5_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C5,MATH101,SYL_C5_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C5,MATH101,SYL_C5_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C5,ENG101,SYL_C5_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C5,ENG101,SYL_C5_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C5,ENG101,SYL_C5_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C5,TEL101,SYL_C5_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C5,TEL101,SYL_C5_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C5,TEL101,SYL_C5_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C5,HIN101,SYL_C5_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C5,HIN101,SYL_C5_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C5,HIN101,SYL_C5_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C5,SCI101,SYL_C5_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C5,SCI101,SYL_C5_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C5,SCI101,SYL_C5_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C5,SOC101,SYL_C5_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C5,SOC101,SYL_C5_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C5,SOC101,SYL_C5_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3
+AY2025-2026,C6,MATH101,SYL_C6_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C6,MATH101,SYL_C6_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C6,MATH101,SYL_C6_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C6,MATH101,SYL_C6_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C6,ENG101,SYL_C6_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C6,ENG101,SYL_C6_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C6,ENG101,SYL_C6_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C6,TEL101,SYL_C6_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C6,TEL101,SYL_C6_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C6,TEL101,SYL_C6_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C6,HIN101,SYL_C6_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C6,HIN101,SYL_C6_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C6,HIN101,SYL_C6_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C6,SCI101,SYL_C6_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C6,SCI101,SYL_C6_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C6,SCI101,SYL_C6_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C6,SOC101,SYL_C6_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C6,SOC101,SYL_C6_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C6,SOC101,SYL_C6_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3
+AY2025-2026,C7,MATH101,SYL_C7_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C7,MATH101,SYL_C7_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C7,MATH101,SYL_C7_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C7,MATH101,SYL_C7_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C7,ENG101,SYL_C7_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C7,ENG101,SYL_C7_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C7,ENG101,SYL_C7_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C7,TEL101,SYL_C7_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C7,TEL101,SYL_C7_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C7,TEL101,SYL_C7_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C7,HIN101,SYL_C7_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C7,HIN101,SYL_C7_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C7,HIN101,SYL_C7_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C7,SCI101,SYL_C7_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C7,SCI101,SYL_C7_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C7,SCI101,SYL_C7_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C7,SOC101,SYL_C7_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C7,SOC101,SYL_C7_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C7,SOC101,SYL_C7_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3
+AY2025-2026,C8,MATH101,SYL_C8_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C8,MATH101,SYL_C8_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C8,MATH101,SYL_C8_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C8,MATH101,SYL_C8_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C8,ENG101,SYL_C8_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C8,ENG101,SYL_C8_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C8,ENG101,SYL_C8_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C8,TEL101,SYL_C8_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C8,TEL101,SYL_C8_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C8,TEL101,SYL_C8_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C8,HIN101,SYL_C8_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C8,HIN101,SYL_C8_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C8,HIN101,SYL_C8_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C8,SCI101,SYL_C8_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C8,SCI101,SYL_C8_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C8,SCI101,SYL_C8_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C8,SOC101,SYL_C8_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C8,SOC101,SYL_C8_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C8,SOC101,SYL_C8_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3
+AY2025-2026,C9,MATH101,SYL_C9_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C9,MATH101,SYL_C9_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C9,MATH101,SYL_C9_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C9,MATH101,SYL_C9_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C9,ENG101,SYL_C9_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C9,ENG101,SYL_C9_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C9,ENG101,SYL_C9_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C9,TEL101,SYL_C9_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C9,TEL101,SYL_C9_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C9,TEL101,SYL_C9_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C9,HIN101,SYL_C9_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C9,HIN101,SYL_C9_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C9,HIN101,SYL_C9_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C9,SCI101,SYL_C9_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C9,SCI101,SYL_C9_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C9,SCI101,SYL_C9_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C9,SOC101,SYL_C9_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C9,SOC101,SYL_C9_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C9,SOC101,SYL_C9_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3
+AY2025-2026,C10,MATH101,SYL_C10_MATH_01,Number Systems & Real Numbers,Real Numbers & Rational Arithmetic,Fundamental Theorem of Arithmetic,Properties of positive integers and primes,1
+AY2025-2026,C10,MATH101,SYL_C10_MATH_02,Polynomials & Algebraic Expressions,Quadratic Polynomials,Geometric Meaning of Zeros,Graphing and algebraic zeros of polynomials,2
+AY2025-2026,C10,MATH101,SYL_C10_MATH_03,Linear Equations in Two Variables,Pair of Linear Equations,Algebraic Methods of Solution,Substitution and elimination techniques,3
+AY2025-2026,C10,MATH101,SYL_C10_MATH_04,Geometry & Coordinate Geometry,Triangles and Similarity,Criteria for Similarity of Triangles,"AAA, SAS, SSS theorem proofs",4
+AY2025-2026,C10,ENG101,SYL_C10_ENG1_01,Reading Comprehension,Prose & Narrative Texts,Analytical Reading & Inferences,Contextual meaning and vocabulary building,1
+AY2025-2026,C10,ENG101,SYL_C10_ENG1_02,Writing Skills,Formal Letters & Notices,Format and Cohesive Writing,Official communication drafting guidelines,2
+AY2025-2026,C10,ENG101,SYL_C10_ENG1_03,Grammar & Mechanics,Tenses & Voice Transformation,Active and Passive Voice Concord,Sentence restructuring and correction,3
+AY2025-2026,C10,TEL101,SYL_C10_TEL1_01,Pracheena Kavitvam,Kavya Parichayam,Padya Bhavam & Chandassu,Classical poetry meters and aesthetic meaning,1
+AY2025-2026,C10,TEL101,SYL_C10_TEL1_02,Vachana Sahityam,Kathaanikalu,Samaja Chaitanyam,Contemporary short stories and prose analysis,2
+AY2025-2026,C10,TEL101,SYL_C10_TEL1_03,Vyakaranam,Sandhulu & Samasalu,Tatpurusha & Dvigu Samasalu,Grammar synthesis and morphological analysis,3
+AY2025-2026,C10,HIN101,SYL_C10_HIN1_01,Gadya Khand,Premchand ki Kahaniya,Do Bailon ki Katha,Story analysis and character motivations,1
+AY2025-2026,C10,HIN101,SYL_C10_HIN1_02,Kavya Khand,Kabir ki Sakhiyan,Sakhi evam Sabad,Spiritual verses and poetic devices,2
+AY2025-2026,C10,HIN101,SYL_C10_HIN1_03,Vyakaran,Vakya Bhed & Upsarg-Pratyay,Rachna ke Aadhar par Vakya,Syntactic structures and affixation,3
+AY2025-2026,C10,SCI101,SYL_C10_SCI1_01,Chemical Substances & Reactions,Chemical Equations,Types of Chemical Reactions,"Combination, decomposition, displacement, redox",1
+AY2025-2026,C10,SCI101,SYL_C10_SCI1_02,World of Living,Life Processes,Nutrition and Respiration Mechanisms,Autotrophic/heterotrophic energy synthesis,2
+AY2025-2026,C10,SCI101,SYL_C10_SCI1_03,Natural Phenomena,Light - Reflection and Refraction,Spherical Mirrors and Lens Formula,Ray diagrams and optical calculations,3
+AY2025-2026,C10,SOC101,SYL_C10_SOC1_01,India & The Contemporary World,Nationalism in India,The Non-Cooperation and Civil Disobedience Movement,Historical phases of Indian freedom struggle,1
+AY2025-2026,C10,SOC101,SYL_C10_SOC1_02,Resources and Development,Land and Soil Resources,Soil Classification and Conservation,Resource planning in India,2
+AY2025-2026,C10,SOC101,SYL_C10_SOC1_03,Democratic Politics,Power Sharing & Federalism,Forms of Power Sharing,Federal structures and local self-government,3

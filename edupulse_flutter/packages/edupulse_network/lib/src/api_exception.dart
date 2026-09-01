@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 import 'api_failure.dart';
 
 class ApiException implements Exception {
@@ -16,8 +17,9 @@ class ApiExceptionMapper {
     }
 
     if (error is FormatException) {
-      return const ApiFailure(
-        message: 'Parsing error occurred. Failed to serialize response.',
+      EduLogger.e('Serialization/parsing error: ${error.message}', error);
+      return ApiFailure(
+        message: 'Parsing error occurred. Failed to serialize response: ${error.message}',
         type: ApiFailureType.validation,
       );
     }
@@ -46,21 +48,47 @@ class ApiExceptionMapper {
 
       case DioExceptionType.badResponse:
         final responseData = exception.response?.data;
-        String errorMessage = 'A server error occurred.';
+        String errorMessage = '';
 
-        if (responseData is Map && responseData.containsKey('detail')) {
-          final detail = responseData['detail'];
-          if (detail is String) {
-            errorMessage = detail;
-          } else if (detail is List) {
-            errorMessage =
-                detail.map((e) => e['msg'] ?? e.toString()).join('\n');
+        if (responseData is Map) {
+          if (responseData.containsKey('message')) {
+            final msg = responseData['message'];
+            if (msg is String && msg.isNotEmpty) {
+              errorMessage = msg;
+            }
+          }
+          if (errorMessage.isEmpty && responseData.containsKey('detail')) {
+            final detail = responseData['detail'];
+            if (detail is String) {
+              errorMessage = detail;
+            } else if (detail is List) {
+              errorMessage = detail.map((e) {
+                if (e is Map) {
+                  final loc = e['loc'];
+                  final msg = e['msg'] ?? e.toString();
+                  if (loc is List && loc.isNotEmpty) {
+                    final field = loc.last;
+                    return '$field: $msg';
+                  }
+                  return msg.toString();
+                }
+                return e.toString();
+              }).join('\n');
+            }
           }
         }
 
+        if (errorMessage.isEmpty) {
+          errorMessage = 'A server error occurred.';
+        }
+
+        final formattedMessage = statusCode != null
+            ? 'HTTP $statusCode\n"$errorMessage"'
+            : errorMessage;
+
         if (statusCode == 401) {
           return ApiFailure(
-            message: 'Unauthorized access. Please login again.',
+            message: formattedMessage,
             type: ApiFailureType.unauthorized,
             statusCode: statusCode,
             originalError: exception,
@@ -69,8 +97,7 @@ class ApiExceptionMapper {
 
         if (statusCode == 422) {
           return ApiFailure(
-            message:
-                errorMessage.isNotEmpty ? errorMessage : 'Validation failed.',
+            message: formattedMessage,
             type: ApiFailureType.validation,
             statusCode: statusCode,
             originalError: exception,
@@ -79,7 +106,7 @@ class ApiExceptionMapper {
 
         if (statusCode != null && statusCode >= 500) {
           return ApiFailure(
-            message: 'Internal server error occurred.',
+            message: formattedMessage,
             type: ApiFailureType.server,
             statusCode: statusCode,
             originalError: exception,
@@ -87,31 +114,38 @@ class ApiExceptionMapper {
         }
 
         return ApiFailure(
-          message: errorMessage,
+          message: formattedMessage,
           type: ApiFailureType.unknown,
           statusCode: statusCode,
           originalError: exception,
         );
 
       case DioExceptionType.cancel:
+        final errorMsg = exception.error?.toString();
         return ApiFailure(
-          message: 'Request was cancelled.',
+          message: errorMsg != null && errorMsg.isNotEmpty ? errorMsg : 'Request was cancelled.',
           type: ApiFailureType.unknown,
           statusCode: statusCode,
           originalError: exception,
         );
 
       case DioExceptionType.connectionError:
+        final messageDetail = 'Browser network/CORS connection failure. Details: ${exception.message} | Error: ${exception.error}';
+        // ignore: avoid_print
+        print('[JWT_INTERCEPTOR _mapDioException connectionError] $messageDetail');
         return ApiFailure(
-          message: 'No internet connection detected.',
+          message: messageDetail,
           type: ApiFailureType.network,
           statusCode: statusCode,
           originalError: exception,
         );
 
       default:
+        final messageDetail = 'Unexpected network error occurred. Type: ${exception.type} | Details: ${exception.message} | Error: ${exception.error}';
+        // ignore: avoid_print
+        print('[JWT_INTERCEPTOR _mapDioException default] $messageDetail');
         return ApiFailure(
-          message: 'Unexpected network error occurred.',
+          message: messageDetail,
           type: ApiFailureType.network,
           statusCode: statusCode,
           originalError: exception,

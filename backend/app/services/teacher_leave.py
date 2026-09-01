@@ -306,7 +306,7 @@ class TeacherLeaveService:
                     tenant_id=tenant_id,
                     school_id=school_id,
                     obj_in=obj_in,
-                    created_by=leave_request.teacher_id
+                    created_by=leave_request.created_by
                 )
             
             if principals:

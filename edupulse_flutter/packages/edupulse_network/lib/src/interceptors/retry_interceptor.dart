@@ -21,8 +21,32 @@ class RetryInterceptor extends Interceptor {
     final requestOptions = err.requestOptions;
     final extra = requestOptions.extra;
     final int retryCount = (extra['retry_count'] as int?) ?? 0;
+    final bool disableRetry = extra['disable_retry'] == true;
+    final bool isPost = requestOptions.method.toUpperCase() == 'POST';
+    final bool allowPostRetry = extra['allow_retry'] == true;
 
-    final shouldRetry = _isNetworkError(err) && retryCount < maxRetries;
+    if (requestOptions.path.contains('students') || requestOptions.path.contains('guardians')) {
+      // ignore: avoid_print
+      print('=== [RETRY_INTERCEPTOR onError] ===');
+      // ignore: avoid_print
+      print('Exception runtimeType: ${err.runtimeType}');
+      // ignore: avoid_print
+      print('Exception message: ${err.message}');
+      // ignore: avoid_print
+      print('DioExceptionType: ${err.type}');
+      // ignore: avoid_print
+      print('response?.statusCode: ${err.response?.statusCode}');
+      // ignore: avoid_print
+      print('requestOptions.uri: ${requestOptions.uri}');
+      // ignore: avoid_print
+      print('disableRetry: $disableRetry | isPost: $isPost | allowPostRetry: $allowPostRetry');
+    }
+
+    // Never retry if explicitly disabled or on unsafe non-idempotent POST requests without explicit permission
+    final shouldRetry = !disableRetry &&
+        (!isPost || allowPostRetry) &&
+        _isNetworkError(err) &&
+        retryCount < maxRetries;
 
     if (shouldRetry) {
       final nextRetry = retryCount + 1;

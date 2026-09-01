@@ -10,6 +10,10 @@ from app.db.mixins import BaseModelMixin
 
 class MarksStatus(str, enum.Enum):
     DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    RETURNED = "RETURNED"
+    APPROVED = "APPROVED"
     PUBLISHED = "PUBLISHED"
     LOCKED = "LOCKED"
 

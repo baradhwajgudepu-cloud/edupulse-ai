@@ -1,0 +1,4 @@
+﻿first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+SmokeOne,Student,MALE,2015-01-01,SMK1403B,950,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d
+SmokeTwo,Student,FEMALE,2015-02-02,SMK2403B,951,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d
+SmokeThree,Student,MALE,2015-03-03,SMK3403B,952,2026-06-01,113282c1-9831-4e54-a00e-1746d3c2829d,9bd61e83-865b-4425-8f79-038785a913b1,ef181da7-aa3a-425b-a6b7-cb52c2b3640d

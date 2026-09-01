@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import '../../../../core/router/routes.dart';
 import '../providers/fees_provider.dart';
 
 class FeesScreen extends ConsumerStatefulWidget {
@@ -32,6 +34,16 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/dashboard');
+            }
+          },
+        ),
         title: const Text('Fees Analytics & AI Insights'),
       ),
       body: RefreshIndicator(
@@ -253,6 +265,7 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
                           separatorBuilder: (context, index) => SizedBox(height: spacing.xs),
                           itemBuilder: (context, index) {
                             final item = data.topOutstandingClasses[index];
+                            final classId = item['class_id'] as String?;
                             final className = item['class_name'] as String? ?? 'Unknown Class';
                             final outstandingAmt = (item['outstanding_amount'] as num?)?.toDouble() ?? 0.0;
 
@@ -263,6 +276,17 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
                                 side: BorderSide(color: theme.colorScheme.outlineVariant),
                               ),
                               child: ListTile(
+                                onTap: () {
+                                  context.push(
+                                    Uri(
+                                      path: AppRoutes.outstandingDetails,
+                                      queryParameters: {
+                                        if (classId != null) 'classId': classId,
+                                        'className': className,
+                                      },
+                                    ).toString(),
+                                  );
+                                },
                                 leading: CircleAvatar(
                                   backgroundColor: theme.colorScheme.errorContainer,
                                   child: Icon(Icons.school, color: theme.colorScheme.error, size: 20),

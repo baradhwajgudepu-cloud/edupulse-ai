@@ -56,6 +56,16 @@ class _TeacherListScreenState extends ConsumerState<TeacherListScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/dashboard');
+            }
+          },
+        ),
         title: const Text('Teacher Directory'),
       ),
       body: Column(

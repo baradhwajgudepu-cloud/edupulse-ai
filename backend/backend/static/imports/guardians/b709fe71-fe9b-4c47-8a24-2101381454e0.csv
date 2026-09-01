@@ -1,0 +1,5 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email
+G_M01,FATHER,NewExec,Father,MALE,1980-01-01,9876543230,new.f@test.com
+G_M02,MOTHER,DupDb,Mobile,FEMALE,1985-01-01,9876543232,dup.m@test.com
+G_M03,MOTHER,SoftDup,Mother,FEMALE,1985-08-15,9876543233,soft.dup@test.com
+G_M04,MOTHER,Invalid,Row,INVALID_GENDER,1985-08-15,9876543231,

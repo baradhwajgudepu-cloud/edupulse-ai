@@ -71,6 +71,9 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
         if (_selectedFilter == 'LEAVE') {
           return matchesSearch && record.attendanceStatus == 'ON_LEAVE';
         }
+        if (_selectedFilter == 'NOT_MARKED') {
+          return matchesSearch && record.attendanceStatus == 'NOT_MARKED';
+        }
         return matchesSearch;
       }).toList();
     }
@@ -183,6 +186,8 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
                           _buildFilterChip('HALF_DAY', 'Half Day (${state.summary!.halfDayCount})'),
                           SizedBox(width: spacing.xs),
                           _buildFilterChip('LEAVE', 'On Leave (${state.summary!.onLeaveCount})'),
+                          SizedBox(width: spacing.xs),
+                          _buildFilterChip('NOT_MARKED', 'Not Marked (${state.summary!.notMarkedCount})'),
                         ],
                       ),
                     ),
@@ -243,8 +248,8 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
     return Container(
       padding: EdgeInsets.all(spacing.md),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(radius.lg),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(radius.md),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
@@ -262,17 +267,17 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
               Expanded(
                 child: _buildKpiItem(
                   context,
-                  title: 'Absent',
-                  value: summary.absentCount.toString(),
-                  color: Colors.red,
+                  title: 'Late',
+                  value: summary.lateCount.toString(),
+                  color: Colors.amber,
                 ),
               ),
               Expanded(
                 child: _buildKpiItem(
                   context,
-                  title: 'Late',
-                  value: summary.lateCount.toString(),
-                  color: Colors.amber,
+                  title: 'Half Day',
+                  value: summary.halfDayCount.toString(),
+                  color: Colors.orange,
                 ),
               ),
             ],
@@ -283,11 +288,32 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
               Expanded(
                 child: _buildKpiItem(
                   context,
+                  title: 'Absent',
+                  value: summary.absentCount.toString(),
+                  color: Colors.red,
+                ),
+              ),
+              Expanded(
+                child: _buildKpiItem(
+                  context,
                   title: 'On Leave',
                   value: summary.onLeaveCount.toString(),
                   color: Colors.blue,
                 ),
               ),
+              Expanded(
+                child: _buildKpiItem(
+                  context,
+                  title: 'Not Marked',
+                  value: summary.notMarkedCount.toString(),
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          Divider(height: spacing.lg),
+          Row(
+            children: [
               Expanded(
                 child: _buildKpiItem(
                   context,
@@ -373,6 +399,9 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
         break;
       case 'ON_LEAVE':
         statusColor = Colors.blue;
+        break;
+      case 'NOT_MARKED':
+        statusColor = Colors.grey;
         break;
       default:
         statusColor = theme.colorScheme.outline;
@@ -486,7 +515,7 @@ class _TeacherAttendanceScreenState extends ConsumerState<TeacherAttendanceScree
                 border: Border.all(color: statusColor.withValues(alpha: 0.2)),
               ),
               child: Text(
-                item.attendanceStatus,
+                item.attendanceStatus.replaceAll('_', ' '),
                 style: TextStyle(
                   color: statusColor,
                   fontWeight: FontWeight.bold,

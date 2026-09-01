@@ -46,9 +46,28 @@ class FakeAcademicSetupRepository implements AuthRepository {
   Future<ApiResult<void>> requestPasswordReset({required String email}) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeAcademicSetupSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override

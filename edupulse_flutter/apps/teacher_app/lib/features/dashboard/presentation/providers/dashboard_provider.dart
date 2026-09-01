@@ -106,13 +106,9 @@ class DashboardNotifier extends Notifier<DashboardState> {
 
     result.when(
       onSuccess: (data) {
-        if (data.schedule.isEmpty) {
-          state = const DashboardEmpty();
-        } else {
-          final today = DateTime.now();
-          final defaultDay = getBackendDayOfWeek(today.weekday);
-          state = DashboardSuccess(data, defaultDay);
-        }
+        final today = DateTime.now();
+        final defaultDay = getBackendDayOfWeek(today.weekday);
+        state = DashboardSuccess(data, defaultDay);
       },
       onFailure: (failure) {
         if (failure.message.contains('active academic year')) {

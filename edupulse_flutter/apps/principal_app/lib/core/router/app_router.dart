@@ -22,6 +22,11 @@ import '../../features/staff_attendance/presentation/pages/geofence_configuratio
 import '../../features/leave_requests/presentation/pages/teacher_leave_requests_screen.dart';
 import '../../features/leave_requests/presentation/pages/teacher_leave_detail_screen.dart';
 import '../../features/leave_requests/presentation/pages/teacher_leave_history_screen.dart';
+import '../../features/communication/presentation/pages/queries_inbox_screen.dart';
+import '../../features/communication/presentation/pages/conversation_screen.dart';
+import '../../features/planner/presentation/pages/school_planner_screen.dart';
+import '../../features/academics/presentation/pages/manage_exams_screen.dart';
+import '../../features/fees/presentation/pages/outstanding_dues_detail_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -126,6 +131,36 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) {
               final id = state.pathParameters['teacherId']!;
               return TeacherLeaveHistoryScreen(teacherId: id);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.communication,
+            builder: (context, state) {
+              final studentId = state.uri.queryParameters['studentId'];
+              return QueriesInboxScreen(studentId: studentId);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.communicationDetails,
+            builder: (context, state) {
+              final id = state.pathParameters['id'] ?? '';
+              return PrincipalConversationScreen(requestId: id);
+            },
+          ),
+          GoRoute(
+            path: AppRoutes.planner,
+            builder: (context, state) => const SchoolPlannerScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.manageExams,
+            builder: (context, state) => const ManageExamsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.outstandingDetails,
+            builder: (context, state) {
+              final classId = state.uri.queryParameters['classId'];
+              final className = state.uri.queryParameters['className'] ?? 'Class';
+              return OutstandingDuesDetailScreen(classId: classId, className: className);
             },
           ),
         ],

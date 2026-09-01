@@ -13,9 +13,7 @@ final schoolOnboardingProvider = StateNotifierProvider<SchoolOnboardingNotifier,
   final notifier = SchoolOnboardingNotifier(ref);
   // Reset onboarding state if the school context is modified and we are not processing
   ref.listen<String?>(selectedSchoolIdProvider, (previous, next) {
-    if (!notifier.state.isProcessing) {
-      notifier.reset();
-    }
+    notifier.resetIfNotProcessing();
   });
   return notifier;
 });
@@ -25,6 +23,12 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
   static bool bypassApproval = false;
 
   SchoolOnboardingNotifier(this._ref) : super(OnboardingState.initial());
+
+  void resetIfNotProcessing() {
+    if (!state.isProcessing) {
+      reset();
+    }
+  }
 
   void reset() {
     state = OnboardingState.initial();
@@ -130,7 +134,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         },
         onFailure: (failure) {
           state = state.copyWith(
-            globalErrorMessage: failure.message ?? 'Failed to parse spreadsheet file.',
+            globalErrorMessage: failure.message,
           );
         },
       );
@@ -2165,7 +2169,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             schoolId: schoolId,
             tenantId: tenantId,
             entity: 'school details',
-            errorMessage: failure.message ?? 'Unknown API failure',
+            errorMessage: failure.message,
           );
         },
       );
@@ -2215,7 +2219,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               schoolId: schoolId,
               tenantId: tenantId,
               entity: 'academic years',
-              errorMessage: failure.message ?? 'Unknown API failure',
+              errorMessage: failure.message,
             );
           },
         );
@@ -2264,7 +2268,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               schoolId: schoolId,
               tenantId: tenantId,
               entity: 'classes',
-              errorMessage: failure.message ?? 'Unknown API failure',
+              errorMessage: failure.message,
             );
           },
         );
@@ -2313,7 +2317,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               schoolId: schoolId,
               tenantId: tenantId,
               entity: 'subjects',
-              errorMessage: failure.message ?? 'Unknown API failure',
+              errorMessage: failure.message,
             );
           },
         );
@@ -2367,7 +2371,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               schoolId: schoolId,
               tenantId: tenantId,
               entity: 'sections',
-              errorMessage: failure.message ?? 'Unknown API failure',
+              errorMessage: failure.message,
             );
           },
         );

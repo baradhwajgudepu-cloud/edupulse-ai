@@ -3,7 +3,44 @@ from datetime import date, time, datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.examination import ExamStatus, ExamType
+from app.models.examination import ExamStatus, ExamType, ExamTypeCategory
+
+# ==================================================
+# Exam Type Master Schemas
+# ==================================================
+class ExamTypeMasterCreate(BaseModel):
+    name: str = Field(..., max_length=100, min_length=1)
+    code: str = Field(..., max_length=50, min_length=1)
+    description: Optional[str] = None
+    category: ExamTypeCategory = ExamTypeCategory.SCHOLASTIC
+    default_weightage: float = Field(100.0, ge=0.0, le=1000.0)
+    school_id: Optional[uuid.UUID] = None
+    is_active: bool = True
+
+class ExamTypeMasterUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=100, min_length=1)
+    description: Optional[str] = None
+    category: Optional[ExamTypeCategory] = None
+    default_weightage: Optional[float] = Field(None, ge=0.0, le=1000.0)
+    is_active: Optional[bool] = None
+
+class ExamTypeMasterResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    school_id: Optional[uuid.UUID] = None
+    name: str
+    code: str
+    description: Optional[str] = None
+    category: ExamTypeCategory
+    default_weightage: float
+    is_system: bool
+    is_active: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 # ==================================================
 # Exam Template Schemas
@@ -44,7 +81,7 @@ class ExamScheduleCreate(BaseModel):
     class_id: uuid.UUID
     section_id: uuid.UUID
     subject_id: uuid.UUID
-    teacher_subject_assignment_id: uuid.UUID
+    teacher_subject_assignment_id: Optional[uuid.UUID] = None
     exam_date: date
     start_time: time
     end_time: time
@@ -66,7 +103,7 @@ class ExamScheduleResponse(BaseModel):
     class_id: uuid.UUID
     section_id: uuid.UUID
     subject_id: uuid.UUID
-    teacher_subject_assignment_id: uuid.UUID
+    teacher_subject_assignment_id: Optional[uuid.UUID] = None
     exam_date: date
     start_time: time
     end_time: time
@@ -75,6 +112,11 @@ class ExamScheduleResponse(BaseModel):
     room_number: Optional[str] = None
     is_active: bool
     version: int
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
+    class_name: Optional[str] = None
+    section_name: Optional[str] = None
+    exam_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,6 +132,7 @@ class ExaminationCreate(BaseModel):
     start_date: date
     end_date: date
     description: Optional[str] = None
+    participating_class_ids: Optional[List[uuid.UUID]] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "copied_from_template": False
     })
@@ -107,8 +150,14 @@ class ExaminationUpdate(BaseModel):
     end_date: Optional[date] = None
     description: Optional[str] = None
     status: Optional[ExamStatus] = None
+    participating_class_ids: Optional[List[uuid.UUID]] = None
     settings: Optional[Dict[str, Any]] = None
     ai_metrics: Optional[Dict[str, Any]] = None
+
+class ExamStatusTransitionRequest(BaseModel):
+    new_status: ExamStatus
+    reason: Optional[str] = Field(None, max_length=500)
+    is_administrative_override: bool = False
 
 class ExaminationWizardCreate(BaseModel):
     school_id: uuid.UUID
@@ -121,6 +170,7 @@ class ExaminationWizardCreate(BaseModel):
     target_scope: str = Field(default="ALL_CLASSES") # ALL_CLASSES, SPECIFIC_CLASSES, SPECIFIC_SECTIONS
     class_ids: Optional[List[uuid.UUID]] = None
     section_ids: Optional[List[uuid.UUID]] = None
+    participating_class_ids: Optional[List[uuid.UUID]] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "copied_from_template": False
     })
@@ -155,6 +205,7 @@ class ExaminationResponse(BaseModel):
     end_date: date
     status: ExamStatus
     description: Optional[str] = None
+    participating_class_ids: List[uuid.UUID] = []
     settings: Dict[str, Any]
     ai_metrics: Dict[str, Any]
     is_active: bool
@@ -168,3 +219,45 @@ class ExaminationResponse(BaseModel):
     schedules: List[ExamScheduleResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==================================================
+# Bulk Timetable Generation Schemas
+# ==================================================
+class BulkTimetablePreviewRequest(BaseModel):
+    school_id: uuid.UUID
+    examination_id: uuid.UUID
+    class_ids: List[uuid.UUID]
+    section_ids: Optional[List[uuid.UUID]] = None
+    subject_ids: Optional[List[uuid.UUID]] = None
+    start_date: date
+    gap_days: int = Field(1, ge=0, le=14)
+    start_time: time = Field(default=time(9, 0))
+    duration_minutes: int = Field(180, ge=30, le=360)
+    exclude_weekends: bool = True
+    max_marks: int = Field(100, ge=1)
+    pass_marks: int = Field(35, ge=1)
+
+class BulkTimetablePreviewItem(BaseModel):
+    class_id: uuid.UUID
+    class_name: str
+    section_id: uuid.UUID
+    section_name: str
+    subject_id: uuid.UUID
+    subject_name: str
+    teacher_subject_assignment_id: Optional[uuid.UUID] = None
+    exam_date: date
+    start_time: time
+    end_time: time
+    max_marks: int
+    pass_marks: int
+    room_number: Optional[str] = None
+
+class BulkTimetablePreviewResponse(BaseModel):
+    total_slots: int
+    schedules: List[BulkTimetablePreviewItem]
+
+class BulkTimetableConfirmRequest(BaseModel):
+    school_id: uuid.UUID
+    examination_id: uuid.UUID
+    schedules: List[ExamScheduleCreate]

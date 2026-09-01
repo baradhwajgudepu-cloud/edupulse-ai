@@ -1,0 +1,2 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,class_name,class_code,section_id
+John,Doe,MALE,2015-05-15,ADM_MIS,12,2026-06-01,94ab4034-ead9-4b50-835d-ba75aa490166,2b26a957-10b7-4d5a-9feb-19a94d87a6d3,MismatchClass,gr1-7a32ab,6409e3d7-dfba-449c-b25b-14232c89a3f5

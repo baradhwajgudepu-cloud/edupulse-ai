@@ -37,3 +37,4 @@ from app.models.announcement import Announcement  # noqa: F401
 from app.models.parent_login_sequence import ParentLoginSequence  # noqa: F401
 
 
+

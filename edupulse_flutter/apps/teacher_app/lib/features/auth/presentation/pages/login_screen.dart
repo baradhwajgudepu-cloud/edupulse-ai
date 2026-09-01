@@ -7,6 +7,7 @@ import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_assets/edupulse_assets.dart';
 import '../providers/auth_provider.dart';
 import '../../../../core/router/routes.dart';
+import '../../../../core/utils/email_validator.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -210,8 +211,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   return local?.translate('email_required') ??
                                       'Email is required';
                               }
-                              if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                                  .hasMatch(value.trim())) {
+                              if (!EmailValidator.validate(value)) {
                                 return local?.translate('invalid_email_format') ??
                                     'Please enter a valid email address';
                               }

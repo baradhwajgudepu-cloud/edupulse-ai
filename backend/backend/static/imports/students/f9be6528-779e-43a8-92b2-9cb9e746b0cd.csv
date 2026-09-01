@@ -1,0 +1,2 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+John,Doe,MALE,2015-05-15,ADM_NODUP,1,2026-06-01,508c4fe8-e61c-4c00-b43b-c3c9ce61a66c,d6a5d46b-9b47-4ebe-95f0-241b80d7145c,4d9b1d29-7713-48a4-be4b-d16fbfe3a32d

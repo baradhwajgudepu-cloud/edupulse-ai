@@ -1,0 +1,4 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,class_code,section_code
+E2E_First_1,E2E_Last_1,MALE,2015-05-10,E2E5D3A001,101,2026-06-01,CLASS_8,SEC_A
+E2E_First_2,E2E_Last_2,FEMALE,2015-08-12,E2E5D3A002,102,2026-06-01,CLASS_8,SEC_A
+E2E_First_3,E2E_Last_3,MALE,2015-11-20,E2E5D3A003,103,2026-06-01,CLASS_8,SEC_A

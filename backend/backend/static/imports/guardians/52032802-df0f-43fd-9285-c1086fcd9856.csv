@@ -1,0 +1,4 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email
+E2E_G_36A0ED_004,FATHER,E2E_GF4,E2E_GL4,MALE,1980-05-15,900040141,gf4_36a0ed@e2e.com
+E2E_G_36A0ED_005,MOTHER,E2E_GM5,E2E_GL5,FEMALE,1982-08-20,900050141,gm5_36a0ed@e2e.com
+E2E_G_36A0ED_006,OTHER,E2E_GG6,E2E_GL6,MALE,1978-02-10,900060141,gg6_36a0ed@e2e.com

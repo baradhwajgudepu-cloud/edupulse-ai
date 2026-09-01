@@ -27,6 +27,14 @@ import '../../features/staff_attendance/presentation/pages/staff_attendance_scre
 import '../../features/teacher_leave/presentation/pages/teacher_leave_screen.dart';
 import '../../features/teacher_leave/presentation/pages/teacher_leave_form_screen.dart';
 import '../../features/teacher_leave/presentation/pages/teacher_leave_detail_screen.dart';
+import '../../features/communication/presentation/pages/queries_inbox_screen.dart';
+import '../../features/communication/presentation/pages/conversation_screen.dart';
+import '../../features/teacher_ai/presentation/pages/class_analysis_screen.dart';
+import '../../features/teacher_ai/presentation/pages/homework_generate_screen.dart';
+import '../../features/events/presentation/pages/events_screen.dart';
+import '../../features/events/presentation/pages/event_detail_screen.dart';
+import '../../features/profile/presentation/pages/profile_screen.dart';
+import '../../features/student_directory/presentation/pages/student_directory_screen.dart';
 import 'routes.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -158,12 +166,20 @@ final routerProvider = Provider<GoRouter>((ref) {
           final subjectId = queryParams['subjectId'];
           final classId = queryParams['classId'];
           final sectionId = queryParams['sectionId'];
+          final initialTitle = queryParams['initialTitle'];
+          final initialDescription = queryParams['initialDescription'];
+          final initialEstimatedMinutes = queryParams['initialEstimatedMinutes'] != null
+              ? int.tryParse(queryParams['initialEstimatedMinutes']!)
+              : null;
           return HomeworkFormScreen(
             timetableId: timetableId,
             teacherSubjectAssignmentId: tsaId,
             subjectId: subjectId,
             classId: classId,
             sectionId: sectionId,
+            initialTitle: initialTitle,
+            initialDescription: initialDescription,
+            initialEstimatedMinutes: initialEstimatedMinutes,
           );
         },
       ),
@@ -279,6 +295,44 @@ final routerProvider = Provider<GoRouter>((ref) {
           final leaveId = state.pathParameters['id'] ?? '';
           return TeacherLeaveDetailScreen(leaveId: leaveId);
         },
+      ),
+      GoRoute(
+        path: AppRoutes.communication,
+        builder: (context, state) => const QueriesInboxScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.communicationDetails,
+        builder: (context, state) {
+          final id = state.pathParameters['id'] ?? '';
+          return TeacherConversationScreen(requestId: id);
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.classAnalysis,
+        builder: (context, state) => const ClassAnalysisScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.homeworkGenerate,
+        builder: (context, state) => const HomeworkGenerateScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.events,
+        builder: (context, state) => const EventsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.eventDetail,
+        builder: (context, state) {
+          final id = state.pathParameters['id'] ?? '';
+          return EventDetailScreen(eventId: id);
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.profile,
+        builder: (context, state) => const ProfileScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.studentDirectory,
+        builder: (context, state) => const StudentDirectoryScreen(),
       ),
     ],
   );

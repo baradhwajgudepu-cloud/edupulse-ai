@@ -1,0 +1,4 @@
+﻿ guardian_id , GUARDIAN_TYPE , first_name , last_name , gender , date_of_birth , mobile 
+G_001,FATHER,John,Lee,MALE,1980-01-01,9876543213
+,,,,,,
+  ,  ,  ,  ,  ,  ,  

@@ -1,0 +1,3 @@
+﻿academic_year_name,academic_year_code,start_date,end_date,class_name,class_code,class_level,class_capacity,section_name,section_code,section_capacity
+2026-2027-NEW-MIG,AY2026-2027-NEW-MIG-NEW-MIG,2026-06-01,2027-04-30,Class 8,CLASS_8,8,120,Section A,SEC_A,40
+AY Err,AY9999,2026-06-01,2026-05-01,Class 8,CLASS_8,8,120,Section A,SEC_A,40

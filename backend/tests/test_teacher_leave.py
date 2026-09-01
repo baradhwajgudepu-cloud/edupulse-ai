@@ -496,3 +496,61 @@ async def test_is_teacher_on_approved_leave_helper(db_session: AsyncSession, set
         data["tenant_a"].id, data["teacher1_profile"].id, leave_date - timedelta(days=1)
     )
     assert is_on_leave_false is False
+
+
+@pytest.mark.anyio
+async def test_get_by_teacher_eager_loads_and_serializes_without_missing_greenlet(db_session: AsyncSession, setup_leave_test_data):
+    data = setup_leave_test_data
+    from app.repositories.teacher_leave import TeacherLeaveRepository
+    from app.schemas.teacher_leave import TeacherLeaveResponse
+
+    # Create a leave request
+    leave_date = date.today() + timedelta(days=20)
+    db_obj = TeacherLeave(
+        id=uuid.uuid4(),
+        tenant_id=data["tenant_a"].id,
+        school_id=data["school_a1"].id,
+        teacher_id=data["teacher1_profile"].id,
+        leave_type=LeaveType.CASUAL,
+        start_date=leave_date,
+        end_date=leave_date + timedelta(days=2),
+        reason="Vacation",
+        status=LeaveStatus.PENDING
+    )
+    db_session.add(db_obj)
+    await db_session.commit()
+
+    # Save IDs first to prevent DetachedInstanceError when accessing them after expunge
+    db_obj_id = db_obj.id
+    teacher_id = data["teacher1_profile"].id
+    tenant_a_id = data["tenant_a"].id
+    tenant_b_id = data["tenant_b"].id
+
+    # Clear the session cache to emulate fresh API call context
+    db_session.expire_all()
+    db_session.expunge_all()
+
+    repo = TeacherLeaveRepository(db_session)
+    # Fetch leaves
+    leaves = await repo.get_by_teacher(teacher_id, tenant_a_id)
+    
+    # Verify filtering: correct leaves resolved
+    assert len(leaves) == 1
+    assert leaves[0].id == db_obj_id
+    
+    # Verify tenant filtering
+    leaves_tenant_b = await repo.get_by_teacher(teacher_id, tenant_b_id)
+    assert len(leaves_tenant_b) == 0
+
+    # Verify teacher filtering
+    other_teacher_leaves = await repo.get_by_teacher(uuid.uuid4(), tenant_a_id)
+    assert len(other_teacher_leaves) == 0
+
+    # Verify serialization doesn't throw MissingGreenlet
+    try:
+        serialized_data = TeacherLeaveResponse.model_validate(leaves[0])
+        assert serialized_data.id == db_obj_id
+        assert serialized_data.teacher is not None
+        assert serialized_data.teacher.id == teacher_id
+    except Exception as e:
+        pytest.fail(f"Serialization failed with: {e}")

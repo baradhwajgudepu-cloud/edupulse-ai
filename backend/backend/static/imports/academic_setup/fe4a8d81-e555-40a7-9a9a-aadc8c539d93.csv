@@ -1,0 +1,6 @@
+﻿academic_year_name,academic_year_code,start_date,end_date,class_name,class_code,class_level,class_capacity,section_name,section_code,section_capacity
+AY Err 1,AY2028,2028-06-01,2028-05-01,Class 8,CLASS_8,8,120,Section A,SEC_A,40
+AY Err 2,AY2029,2029-06-01,2030-04-30,Class 8,CLASS_8,-1,120,Section A,SEC_A,40
+AY Err 3,AY2030,2030-06-01,2031-04-30,Class 8,CLASS_8,8,-5,Section A,SEC_A,40
+AY Err 2,AY2029,2029-06-01,2030-04-30,Class 8,CLASS_8,-1,120,Section A,SEC_A,40
+AY 2026-27,AY_MIG_YEAR,2026-06-01,2027-05-30,Class 8,CLASS_8,8,120,Section A,SEC_A,40

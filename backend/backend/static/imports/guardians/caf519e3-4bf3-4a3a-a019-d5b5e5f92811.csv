@@ -1,0 +1,3 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email
+G_E01,FATHER,NewExec,Father,MALE,1980-01-01,9876543220,new.father@exec.com
+G_E02,MOTHER,NewExec,Mother,FEMALE,1982-06-15,9876543221,new.mother@exec.com

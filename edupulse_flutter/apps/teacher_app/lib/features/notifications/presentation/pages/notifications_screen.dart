@@ -66,16 +66,41 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   void _handleDeepLink(NotificationDto notification) {
-    switch (notification.type.toUpperCase()) {
+    debugPrint('Notification Action - ID: ${notification.id}, Type: ${notification.type}, RelatedType: ${notification.relatedEntityType}, RelatedID: ${notification.relatedEntityId}');
+
+    final actionType = (notification.relatedEntityType ?? notification.type).toUpperCase();
+    final entityId = notification.relatedEntityId;
+
+    switch (actionType) {
+      case 'TEACHER_LEAVE':
+      case 'LEAVE':
+      case 'LEAVE_REQUEST':
+        if (entityId != null && entityId.isNotEmpty) {
+          context.push('/teacher-leaves/$entityId');
+        } else {
+          context.push('/teacher-leaves');
+        }
+        break;
+      case 'EVENT':
+        if (entityId != null && entityId.isNotEmpty) {
+          context.push('/events/$entityId');
+        } else {
+          context.push('/events');
+        }
+        break;
+      case 'HOMEWORK':
+        if (entityId != null && entityId.isNotEmpty) {
+          context.push('/homework/detail?id=$entityId');
+        } else {
+          context.push('/homework');
+        }
+        break;
       case 'ATTENDANCE':
         context.push('/attendance');
         break;
       case 'EXAMINATION':
       case 'MARKS':
         context.push('/marks');
-        break;
-      case 'HOMEWORK':
-        context.push('/homework');
         break;
       case 'TIMETABLE':
         context.push('/my-classes');

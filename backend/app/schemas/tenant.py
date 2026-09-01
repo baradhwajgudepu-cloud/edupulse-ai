@@ -120,6 +120,8 @@ class TenantResponse(TenantBase):
     """
     Schema representing the Tenant details returned in API payloads.
     """
+    code: str = Field(..., description="Unique alphanumeric code")
+    subdomain: Optional[str] = Field(None, description="Subdomain prefix")
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime

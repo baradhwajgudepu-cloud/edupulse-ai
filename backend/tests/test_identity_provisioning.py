@@ -399,3 +399,14 @@ async def test_identity_lifecycle_management_apis(client: AsyncClient, setup_ide
     )
     assert resp_login.status_code == 200
     assert "access_token" in resp_login.json()["data"]
+
+
+@pytest.mark.anyio
+async def test_identity_me(client: AsyncClient, setup_identity_test_data, db_session: AsyncSession) -> None:
+    headers = setup_identity_test_data["headers"]
+    resp = await client.get("/api/v1/identity/me", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert "user" in data
+    assert data["user"]["email"] == "identity_admin@alpha.edu"
+    assert data["teacher"] is None

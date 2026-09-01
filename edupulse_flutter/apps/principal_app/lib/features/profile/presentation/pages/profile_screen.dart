@@ -362,9 +362,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                         ),
                         items: user.schools.map((schoolId) {
-                          // Display ID or check if it matches default fallback school name
-                          final isFallback = schoolId == '16730f87-bf8d-44e0-acf9-4b055a778b58';
-                          final label = isFallback ? 'Delhi Public School Hyderabad' : 'School: $schoolId';
+                          final label = user.schoolNames[schoolId] ?? 'School: $schoolId';
                           return DropdownMenuItem(
                             value: schoolId,
                             child: Text(label, style: const TextStyle(fontSize: 12)),

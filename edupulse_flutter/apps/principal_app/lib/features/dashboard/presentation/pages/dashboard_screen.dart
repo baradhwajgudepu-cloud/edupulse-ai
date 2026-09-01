@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:principal_app/features/auth/presentation/providers/auth_provider.dart';
 import 'package:principal_app/features/dashboard/presentation/providers/dashboard_provider.dart';
@@ -19,6 +20,15 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  String _formatCurrency(double amount) {
+    if (amount >= 100000) {
+      return '₹${(amount / 100000).toStringAsFixed(1)}L';
+    } else {
+      final formatter = NumberFormat('#,##,###');
+      return '₹${formatter.format(amount.toInt())}';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -42,8 +52,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   String getSchoolName(String schoolId) {
-    if (schoolId == '16730f87-bf8d-44e0-acf9-4b055a778b58') {
-      return 'Delhi Public School Hyderabad';
+    final authState = ref.read(authStateProvider);
+    if (authState is Authenticated) {
+      final name = authState.user.schoolNames[schoolId];
+      if (name != null && name.isNotEmpty) {
+        return name;
+      }
     }
     return 'School: $schoolId';
   }
@@ -149,6 +163,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       appBar: AppBar(
         title: const Text('School Leadership Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.forum_rounded),
+            tooltip: 'Parent Queries (Connect)',
+            onPressed: () => context.push(AppRoutes.communication),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: Consumer(
@@ -294,9 +313,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         child: _buildMetricCard(
                           context,
                           title: 'Month Fees',
-                          value: '₹${(dashboardState.data.monthCollection / 100000).toStringAsFixed(1)}L',
+                          value: _formatCurrency(dashboardState.data.monthCollection),
                           icon: Icons.calendar_month_rounded,
                           color: theme.colorScheme.primary,
+                          onTap: () => context.go(AppRoutes.fees),
                         ),
                       ),
                       SizedBox(width: spacing.sm),
@@ -304,9 +324,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                         child: _buildMetricCard(
                           context,
                           title: 'Dues Pending',
-                          value: '₹${(dashboardState.data.pendingDues / 100000).toStringAsFixed(1)}L',
+                          value: _formatCurrency(dashboardState.data.pendingDues),
                           icon: Icons.warning_amber_rounded,
                           color: Colors.red,
+                          onTap: () => context.go(AppRoutes.fees),
                         ),
                       ),
                     ],
@@ -775,6 +796,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     color: Colors.purple,
                     onTap: () => context.go(AppRoutes.reportCards),
                   ),
+                  _buildQuickActionCard(
+                    context,
+                    title: 'School Planner',
+                    subtitle: 'Calendar, Events & Alerts',
+                    icon: Icons.calendar_today_rounded,
+                    color: Colors.pink,
+                    onTap: () => context.go(AppRoutes.planner),
+                  ),
                 ],
               ),
             ],
@@ -790,6 +819,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     required String value,
     required IconData icon,
     required Color color,
+    VoidCallback? onTap,
   }) {
     final theme = Theme.of(context);
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
@@ -801,27 +831,31 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         borderRadius: BorderRadius.circular(radius.md),
         side: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
-      child: Padding(
-        padding: EdgeInsets.all(spacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: 24),
-            SizedBox(height: spacing.sm),
-            Text(
-              value,
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(radius.md),
+        child: Padding(
+          padding: EdgeInsets.all(spacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: color, size: 24),
+              SizedBox(height: spacing.sm),
+              Text(
+                value,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            SizedBox(height: spacing.xs),
-            Text(
-              title,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+              SizedBox(height: spacing.xs),
+              Text(
+                title,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

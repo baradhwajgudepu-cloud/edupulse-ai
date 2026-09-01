@@ -58,6 +58,16 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Marks Entry'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go(AppRoutes.home);
+            }
+          },
+        ),
       ),
       body: SingleChildScrollView(
         child: Padding(

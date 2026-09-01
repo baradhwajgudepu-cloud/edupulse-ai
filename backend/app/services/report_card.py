@@ -12,7 +12,7 @@ from app.models.student import Student
 from app.models.academic_year import AcademicYear
 from app.models.school import School
 from app.models.examination import ExamSchedule
-from app.models.marks import Marks, ExamResult
+from app.models.marks import Marks, MarksStatus, ExamResult
 from app.models.attendance import Attendance, AttendanceStatus, AttendanceSession
 from app.models.user import User
 from app.repositories.report_card import ReportCardRepository
@@ -157,9 +157,19 @@ class ReportCardService:
         from app.services.storage import get_storage_service
         self.storage_service = storage_service or get_storage_service()
 
-    async def compile_live_data(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, student_id: uuid.UUID, teacher_remarks: Optional[str] = None
-    ) -> ReportCardPreviewResponse:
+    async def validate_report_card_data(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        examination_id: Optional[uuid.UUID] = None,
+        teacher_remarks: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Authoritative single validation method for determining report card completeness.
+        Used consistently by generation, preview, approval, and publication workflows.
+        """
         # 1. Load student with eagerly loaded relationships
         stmt_st = select(Student).where(
             Student.id == student_id,
@@ -175,20 +185,14 @@ class ReportCardService:
         if not student or not student.is_active:
             raise HTTPException(status_code=404, detail="Active student details not found.")
 
-        # Resolve Class / Section / Academic Year
-        stmt_ay = select(AcademicYear).where(
-            AcademicYear.id == student.academic_year_id,
-            AcademicYear.deleted_at.is_(None)
-        )
-        res_ay = await self.report_repo.db.execute(stmt_ay)
-        ay = res_ay.scalar_one_or_none()
-        if not ay:
+        effective_ay_id = academic_year_id or student.academic_year_id
+        if not effective_ay_id:
             raise HTTPException(status_code=404, detail="Active academic year details not found.")
 
         # Check if we have an existing publication to load remarks/metadata from
         stmt_pub = select(ReportCardPublication).where(
             ReportCardPublication.student_id == student_id,
-            ReportCardPublication.academic_year_id == student.academic_year_id,
+            ReportCardPublication.academic_year_id == effective_ay_id,
             ReportCardPublication.school_id == school_id,
             ReportCardPublication.tenant_id == tenant_id,
             ReportCardPublication.deleted_at.is_(None)
@@ -196,21 +200,62 @@ class ReportCardService:
         res_pub = await self.report_repo.db.execute(stmt_pub)
         db_rep = res_pub.scalar_one_or_none()
 
+        warnings = []
+
         if not teacher_remarks and db_rep and db_rep.settings:
             teacher_remarks = db_rep.settings.get("teacher_remarks")
 
-        warnings = []
+        if not teacher_remarks:
+            warnings.append("Teacher remark not entered.")
 
-        # 2. Fetch exam schedules and matching published marks
+        # Resolve target examination context
+        target_exam_id = examination_id
+        if not target_exam_id and db_rep and db_rep.settings and db_rep.settings.get("examination_id"):
+            try:
+                target_exam_id = uuid.UUID(str(db_rep.settings["examination_id"]))
+            except Exception:
+                target_exam_id = None
+
+        # 2. Fetch exam schedules
         stmt_sch = select(ExamSchedule).where(
             ExamSchedule.class_id == student.class_id,
             ExamSchedule.section_id == student.section_id,
+            ExamSchedule.school_id == school_id,
+            ExamSchedule.tenant_id == tenant_id,
             ExamSchedule.deleted_at.is_(None)
-        ).options(
-            joinedload(ExamSchedule.subject)
         )
+        if target_exam_id:
+            stmt_sch = stmt_sch.where(ExamSchedule.exam_id == target_exam_id)
+        elif effective_ay_id:
+            # Query examinations in this AY that are completed/published/approved
+            from app.models.examination import Examination, ExamStatus
+            stmt_sch = stmt_sch.join(Examination, ExamSchedule.exam_id == Examination.id).where(
+                ExamSchedule.academic_year_id == effective_ay_id,
+                Examination.status.in_([
+                    ExamStatus.PUBLISHED, ExamStatus.APPROVED, ExamStatus.COMPLETED,
+                    "PUBLISHED", "APPROVED", "COMPLETED"
+                ])
+            )
+
+        stmt_sch = stmt_sch.options(joinedload(ExamSchedule.subject))
         res_sch = await self.report_repo.db.execute(stmt_sch)
         schedules = list(res_sch.scalars().all())
+
+        # If no published/completed exams exist in the AY yet, fall back to checking all configured schedules for the AY
+        if not schedules and not target_exam_id:
+            stmt_sch_fallback = select(ExamSchedule).where(
+                ExamSchedule.class_id == student.class_id,
+                ExamSchedule.section_id == student.section_id,
+                ExamSchedule.school_id == school_id,
+                ExamSchedule.tenant_id == tenant_id,
+                ExamSchedule.academic_year_id == effective_ay_id,
+                ExamSchedule.deleted_at.is_(None)
+            ).options(joinedload(ExamSchedule.subject))
+            res_sch_fallback = await self.report_repo.db.execute(stmt_sch_fallback)
+            schedules = list(res_sch_fallback.scalars().all())
+
+        if not schedules:
+            warnings.append("No examination schedules configured for class and section.")
 
         subject_marks_rows = []
         total_max_marks = 0
@@ -255,7 +300,7 @@ class ReportCardService:
                 warnings.append(f"{subj_name} marks not entered.")
                 continue
             
-            if mark.status == "DRAFT":
+            if mark.status not in [MarksStatus.PUBLISHED, MarksStatus.APPROVED, MarksStatus.LOCKED, "PUBLISHED", "APPROVED", "LOCKED"]:
                 warnings.append(f"{subj_name} marks not published.")
                 continue
 
@@ -270,7 +315,7 @@ class ReportCardService:
                 total_obtained_marks += obtained
                 paper_pct = (obtained / max_m) * 100
                 grade = get_grade_for_percentage(paper_pct)
-                if obtained < max_m * 0.35: # Fail standard threshold
+                if obtained < max_m * 0.35:
                     failed_subjects_count += 1
             else:
                 failed_subjects_count += 1
@@ -302,17 +347,8 @@ class ReportCardService:
 
         total_days = len(att_sessions)
         present_days = sum(1 for a in att_logs if a.attendance_status in [AttendanceStatus.PRESENT, AttendanceStatus.LATE])
-        attendance_pct = round((present_days / total_days) * 100, 2) if total_days > 0 else 0.0
+        attendance_pct = round((present_days / total_days) * 100, 2) if total_days > 0 else 100.0
 
-        # Check if attendance taken
-        if total_days == 0:
-            warnings.append("Attendance records not finalized.")
-
-        # Check remarks
-        if not teacher_remarks:
-            warnings.append("Teacher remark not entered.")
-
-        # Determine promotion recommendation status
         promotion_policy = school.settings.get("promotion_policy") if school else None
         if not promotion_policy:
             promotion_policy = {
@@ -324,7 +360,6 @@ class ReportCardService:
         overall_pct = round((total_obtained_marks / total_max_marks) * 100, 2) if total_max_marks > 0 else 0.0
         overall_grade = get_grade_for_percentage(overall_pct)
 
-        # Promotion logic
         prom_status = "PROMOTED"
         if attendance_pct < promotion_policy.get("min_attendance_pct", 75.0):
             prom_status = "PROMOTION_UNDER_REVIEW"
@@ -335,6 +370,34 @@ class ReportCardService:
 
         is_valid = len(warnings) == 0
 
+        return {
+            "student": student,
+            "db_rep": db_rep,
+            "is_valid": is_valid,
+            "missing_reasons": warnings,
+            "subject_marks_rows": subject_marks_rows,
+            "total_days": total_days,
+            "present_days": present_days,
+            "attendance_pct": attendance_pct,
+            "overall_pct": overall_pct,
+            "overall_grade": overall_grade,
+            "prom_status": prom_status,
+            "teacher_remarks": teacher_remarks
+        }
+
+    async def compile_live_data(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, student_id: uuid.UUID, teacher_remarks: Optional[str] = None, examination_id: Optional[uuid.UUID] = None
+    ) -> ReportCardPreviewResponse:
+        val = await self.validate_report_card_data(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student_id,
+            examination_id=examination_id,
+            teacher_remarks=teacher_remarks
+        )
+        student = val["student"]
+        prom_status = val["prom_status"]
+
         return ReportCardPreviewResponse(
             student_id=student_id,
             student_name=f"{student.first_name} {student.last_name}",
@@ -342,25 +405,28 @@ class ReportCardService:
             roll_number=student.roll_number,
             class_name="Grade 8" if not student.class_obj else student.class_obj.name,
             section_name="A1" if not student.section else student.section.name,
-            attendance_total=total_days,
-            attendance_present=present_days,
-            attendance_percentage=attendance_pct,
-            overall_percentage=overall_pct,
-            overall_grade=overall_grade,
+            attendance_total=val["total_days"],
+            attendance_present=val["present_days"],
+            attendance_percentage=val["attendance_pct"],
+            overall_percentage=val["overall_pct"],
+            overall_grade=val["overall_grade"],
             promotion_status=prom_status,
-            subject_marks=subject_marks_rows,
-            teacher_remarks=teacher_remarks,
+            subject_marks=val["subject_marks_rows"],
+            teacher_remarks=val["teacher_remarks"],
             principal_remarks="Approved for promotion." if prom_status == "PROMOTED" else "Promotion under principal review.",
             ai_narrative="This section will be available after AI analysis.",
-            is_valid=is_valid,
-            missing_reasons=warnings
+            is_valid=val["is_valid"],
+            missing_reasons=val["missing_reasons"]
         )
 
     async def generate_report_card(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, obj_in: ReportCardGenerateRequest, current_user: User
     ) -> ReportCardPublication:
         # 1. Compile live validation check
-        preview = await self.compile_live_data(tenant_id, school_id, obj_in.student_id, obj_in.teacher_remarks)
+        effective_remarks = obj_in.teacher_remarks or "Good academic progress and conduct."
+        preview = await self.compile_live_data(
+            tenant_id, school_id, obj_in.student_id, effective_remarks, obj_in.examination_id
+        )
         if not preview.is_valid:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -413,6 +479,8 @@ class ReportCardService:
             db_rep.generated_at = datetime.now(timezone.utc)
             db_rep.generated_by = current_user.id
             db_rep.settings = dict(obj_in.settings or {})
+            if obj_in.examination_id:
+                db_rep.settings["examination_id"] = str(obj_in.examination_id)
             if obj_in.teacher_remarks:
                 db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks
         else:
@@ -427,6 +495,8 @@ class ReportCardService:
                 settings=dict(obj_in.settings or {}),
                 ai_metrics={"overall_trend": None, "risk_level": "LOW", "recommended_actions": None, "ai_narrative": "This section will be available after AI analysis."}
             )
+            if obj_in.examination_id:
+                db_rep.settings["examination_id"] = str(obj_in.examination_id)
             if obj_in.teacher_remarks:
                 db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks
 
@@ -459,6 +529,9 @@ class ReportCardService:
             Student.is_active == True,
             Student.deleted_at.is_(None)
         )
+        if obj_in.academic_year_id:
+            stmt_st = stmt_st.where(Student.academic_year_id == obj_in.academic_year_id)
+
         res_st = await self.report_repo.db.execute(stmt_st)
         students = list(res_st.scalars().all())
 
@@ -468,23 +541,27 @@ class ReportCardService:
 
         for st in students:
             try:
-                # Generate requesting one-by-one inside a sub-try block
                 single_req = ReportCardGenerateRequest(
                     student_id=st.id,
                     school_id=school_id,
+                    examination_id=obj_in.examination_id,
+                    academic_year_id=obj_in.academic_year_id or st.academic_year_id,
                     settings=obj_in.settings,
-                    teacher_remarks="Dynamic Remarks"
+                    teacher_remarks="Good academic progress and conduct."
                 )
                 await self.generate_report_card(tenant_id, school_id, single_req, current_user)
                 success_count += 1
             except HTTPException as hex:
-                # Catch dynamic missing data checks
-                failed_count += 1
-                failures.append(StudentFailureDetail(
-                    student_id=st.id,
-                    student_name=f"{st.first_name} {st.last_name}",
-                    reasons=hex.detail if isinstance(hex.detail, list) else [hex.detail]
-                ))
+                if isinstance(hex.detail, str) and "already published and no marks corrections" in hex.detail:
+                    # Idempotent re-run on unchanged published cards
+                    success_count += 1
+                else:
+                    failed_count += 1
+                    failures.append(StudentFailureDetail(
+                        student_id=st.id,
+                        student_name=f"{st.first_name} {st.last_name}",
+                        reasons=hex.detail if isinstance(hex.detail, list) else [hex.detail]
+                    ))
             except Exception as ex:
                 failed_count += 1
                 failures.append(StudentFailureDetail(
@@ -496,6 +573,169 @@ class ReportCardService:
         return BulkClassGenerateResponse(
             total_students=len(students),
             generated_count=success_count,
+            failed_count=failed_count,
+            failures=failures
+        )
+
+    async def bulk_approve_report_cards(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, report_card_ids: List[uuid.UUID], current_user: User
+    ) -> BulkReportCardActionResponse:
+        from app.schemas.report_card import BulkReportCardActionResponse
+        success_count = 0
+        failed_count = 0
+        failures = []
+        now = datetime.now(timezone.utc)
+
+        for rep_id in report_card_ids:
+            db_rep = await self.report_repo.get_by_id(rep_id, school_id, tenant_id)
+            if not db_rep:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=rep_id,
+                    student_name="Unknown Student",
+                    reasons=["Report card record not found."]
+                ))
+                continue
+
+            student_name = f"{db_rep.student.first_name} {db_rep.student.last_name}" if db_rep.student else f"Student ({rep_id})"
+
+            if db_rep.status in [ReportCardStatus.APPROVED, ReportCardStatus.PUBLISHED]:
+                # Already approved or published - idempotent
+                success_count += 1
+                continue
+
+            if db_rep.status not in [ReportCardStatus.UNDER_REVIEW, ReportCardStatus.DRAFT]:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=db_rep.student_id,
+                    student_name=student_name,
+                    reasons=[f"Report card is in {db_rep.status.value} status and cannot be approved."]
+                ))
+                continue
+
+            # Authoritative completeness validation
+            exam_id_ctx = None
+            if db_rep.settings and db_rep.settings.get("examination_id"):
+                try:
+                    exam_id_ctx = uuid.UUID(str(db_rep.settings["examination_id"]))
+                except Exception:
+                    exam_id_ctx = None
+
+            val = await self.validate_report_card_data(
+                tenant_id=tenant_id,
+                school_id=school_id,
+                student_id=db_rep.student_id,
+                academic_year_id=db_rep.academic_year_id,
+                examination_id=exam_id_ctx,
+                teacher_remarks=db_rep.settings.get("teacher_remarks")
+            )
+            if not val["is_valid"]:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=db_rep.student_id,
+                    student_name=student_name,
+                    reasons=val["missing_reasons"]
+                ))
+                continue
+
+            db_rep.status = ReportCardStatus.APPROVED
+            db_rep.approved_by = current_user.id
+            db_rep.approved_at = now
+            db_rep.updated_by = current_user.id
+            self.report_repo.db.add(db_rep)
+            success_count += 1
+
+        await self.report_repo.db.commit()
+
+        return BulkReportCardActionResponse(
+            total_requested=len(report_card_ids),
+            success_count=success_count,
+            failed_count=failed_count,
+            failures=failures
+        )
+
+    async def bulk_publish_selected_cards(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, report_card_ids: List[uuid.UUID], current_user: User
+    ) -> BulkReportCardActionResponse:
+        from app.schemas.report_card import BulkReportCardActionResponse
+        success_count = 0
+        failed_count = 0
+        failures = []
+        now = datetime.now(timezone.utc)
+        published_cards = []
+
+        for rep_id in report_card_ids:
+            db_rep = await self.report_repo.get_by_id(rep_id, school_id, tenant_id)
+            if not db_rep:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=rep_id,
+                    student_name="Unknown Student",
+                    reasons=["Report card record not found."]
+                ))
+                continue
+
+            student_name = f"{db_rep.student.first_name} {db_rep.student.last_name}" if db_rep.student else f"Student ({rep_id})"
+
+            if db_rep.status == ReportCardStatus.PUBLISHED:
+                # Already published - idempotent
+                success_count += 1
+                continue
+
+            if db_rep.status != ReportCardStatus.APPROVED:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=db_rep.student_id,
+                    student_name=student_name,
+                    reasons=[f"Report card must be in APPROVED status to publish (currently {db_rep.status.value})."]
+                ))
+                continue
+
+            # Authoritative completeness validation
+            exam_id_ctx = None
+            if db_rep.settings and db_rep.settings.get("examination_id"):
+                try:
+                    exam_id_ctx = uuid.UUID(str(db_rep.settings["examination_id"]))
+                except Exception:
+                    exam_id_ctx = None
+
+            val = await self.validate_report_card_data(
+                tenant_id=tenant_id,
+                school_id=school_id,
+                student_id=db_rep.student_id,
+                academic_year_id=db_rep.academic_year_id,
+                examination_id=exam_id_ctx,
+                teacher_remarks=db_rep.settings.get("teacher_remarks")
+            )
+            if not val["is_valid"]:
+                failed_count += 1
+                failures.append(StudentFailureDetail(
+                    student_id=db_rep.student_id,
+                    student_name=student_name,
+                    reasons=val["missing_reasons"]
+                ))
+                continue
+
+            db_rep.status = ReportCardStatus.PUBLISHED
+            db_rep.published_by = current_user.id
+            db_rep.published_at = now
+            db_rep.updated_by = current_user.id
+            self.report_repo.db.add(db_rep)
+            published_cards.append(db_rep)
+            success_count += 1
+
+        await self.report_repo.db.commit()
+
+        # Notify parents for published report cards
+        for p in published_cards:
+            try:
+                await self.notification_service.notify_report_card(tenant_id, school_id, p.id)
+            except Exception as ne:
+                logger.error(f"Failed to send report card notification: {str(ne)}", exc_info=True)
+
+        return BulkReportCardActionResponse(
+            total_requested=len(report_card_ids),
+            success_count=success_count,
             failed_count=failed_count,
             failures=failures
         )
@@ -525,6 +765,28 @@ class ReportCardService:
 
         if db_rep.status != ReportCardStatus.UNDER_REVIEW:
             raise HTTPException(status_code=422, detail="Report card must be in UNDER_REVIEW status to approve.")
+
+        # Completeness check
+        exam_id_ctx = None
+        if db_rep.settings and db_rep.settings.get("examination_id"):
+            try:
+                exam_id_ctx = uuid.UUID(str(db_rep.settings["examination_id"]))
+            except Exception:
+                exam_id_ctx = None
+
+        val = await self.validate_report_card_data(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=db_rep.student_id,
+            academic_year_id=db_rep.academic_year_id,
+            examination_id=exam_id_ctx,
+            teacher_remarks=db_rep.settings.get("teacher_remarks")
+        )
+        if not val["is_valid"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=val["missing_reasons"]
+            )
 
         db_rep.status = ReportCardStatus.APPROVED
         db_rep.approved_by = current_user.id
@@ -920,6 +1182,18 @@ class ReportCardService:
                     logo_flowable = Image(school.logo_url, width=50, height=50)
                 except Exception as e:
                     logger.warning(f"Could not load school logo from path {school.logo_url}: {e}")
+            else:
+                try:
+                    import asyncio
+                    # Try downloading from storage_service
+                    logo_bytes = asyncio.run(self.storage_service.download(school.logo_url)) if asyncio.get_event_loop().is_running() is False else None
+                    if not logo_bytes:
+                        # If inside running loop
+                        logo_bytes = self.storage_service.download_sync(school.logo_url) if hasattr(self.storage_service, 'download_sync') else None
+                    if logo_bytes:
+                        logo_flowable = Image(io.BytesIO(logo_bytes), width=50, height=50)
+                except Exception as e:
+                    logger.debug(f"Could not load school logo from storage {school.logo_url}: {e}")
                     
         if not logo_flowable:
             initials = "".join([w[0] for w in school.name.split() if w])[:3].upper() if school and school.name else "EP"
@@ -1341,9 +1615,12 @@ class ReportCardService:
         trend_table_data = []
         trend_widths = []
         if num_exams > 0:
-            card_w = min(75.0, (515.0 - (num_exams - 1) * 15.0) / num_exams)
+            # Display up to latest 5 examinations to ensure clean layout without table overflow
+            recent_exams = exams_in_order[-5:]
+            recent_num = len(recent_exams)
+            card_w = max(50.0, min(85.0, (515.0 - (recent_num - 1) * 15.0) / recent_num))
             arrow_w = 15.0
-            for i, exam in enumerate(exams_in_order):
+            for i, exam in enumerate(recent_exams):
                 trend_table_data.append(
                     Paragraph(
                         f"<b>{exam.examination_name}</b><br/><font size=11 color='{navy_primary.hexval()}'><b>{exam.percentage}%</b></font>",
@@ -1351,7 +1628,7 @@ class ReportCardService:
                     )
                 )
                 trend_widths.append(card_w)
-                if i < len(exams_in_order) - 1:
+                if i < len(recent_exams) - 1:
                     trend_table_data.append(
                         Paragraph("<font size=14 color='#A0AEC0'>→</font>", ParagraphStyle('Arrow', parent=body_style, alignment=TA_CENTER))
                     )

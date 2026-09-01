@@ -1,0 +1,7 @@
+subject_code,subject_name,category,subject_type,academic_year_code,theory_marks,practical_marks,pass_marks,credit_hours,weekly_periods,display_order
+MATH101,Mathematics,CORE,THEORY_PRACTICAL,AY2025-2026,80,20,33,4,5,1
+ENG101,English Language,LANGUAGE,THEORY,AY2025-2026,100,0,33,4,5,2
+TEL101,Telugu Regional Language,LANGUAGE,THEORY,AY2025-2026,100,0,33,4,4,3
+HIN101,Hindi Second Language,LANGUAGE,THEORY,AY2025-2026,100,0,33,3,3,4
+SCI101,General Science,CORE,THEORY_PRACTICAL,AY2025-2026,70,30,33,4,5,5
+SOC101,Social Studies,CORE,THEORY,AY2025-2026,100,0,33,4,4,6

@@ -26,9 +26,12 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:8000",
         "http://localhost:11500",
-        "http://127.0.0.1:11500"
+        "http://127.0.0.1:11500",
+	"http://localhost:19064",
+	"http://127.0.0.1:19064",	
     ]
     EDUPULSE_CORS_ORIGINS: List[str] | None = None
+    CORS_ORIGIN_REGEX: str | None = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     # Security and JWT configurations
     SECRET_KEY: str = "SUPER_SECRET_KEY_FOR_LOCAL_DEV_CHANGE_IN_PRODUCTION"

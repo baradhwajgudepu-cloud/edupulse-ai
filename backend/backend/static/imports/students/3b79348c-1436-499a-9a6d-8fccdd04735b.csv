@@ -1,0 +1,4 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,middle_name,blood_group,aadhaar_number,emis_number,mobile,email,class_name,section_name,address
+Arjun,Reddy,MALE,2013-05-14,E2E5D3A001,E2E001,2026-06-05,,O+,,,9000000001,arjun.e2e@example.com,Class 8,A,Test Address 1
+Diya,Sharma,FEMALE,2013-08-21,E2E5D3A002,E2E002,2026-06-06,,A+,,,9000000002,diya.e2e@example.com,Class 8,A,Test Address 2
+Kabir,Kumar,MALE,2013-11-02,E2E5D3A003,E2E003,2026-06-07,,B+,,,9000000003,kabir.e2e@example.com,Class 8,A,Test Address 3

@@ -84,6 +84,7 @@ class StudentRepository:
         section_id: Optional[uuid.UUID] = None,
         status: Optional[StudentStatus] = None,
         search: Optional[str] = None,
+        class_section_pairs: Optional[List[tuple]] = None,
         skip: int = 0,
         limit: int = 100
     ) -> List[Student]:
@@ -105,6 +106,13 @@ class StudentRepository:
             filters.append(Student.section_id == section_id)
         if status:
             filters.append(Student.status == status)
+        if class_section_pairs:
+            pair_filters = []
+            for c_id, s_id in class_section_pairs:
+                pair_filters.append(
+                    and_(Student.class_id == c_id, Student.section_id == s_id)
+                )
+            filters.append(or_(*pair_filters))
 
         if search:
             search_clause = or_(

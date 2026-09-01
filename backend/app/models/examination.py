@@ -2,7 +2,7 @@ import uuid
 import enum
 from typing import Optional, List, Dict, Any
 from datetime import date, time, datetime
-from sqlalchemy import String, Integer, Boolean, ForeignKey, UniqueConstraint, Enum as SQLEnum, JSON, Date, Time, Index, Text
+from sqlalchemy import String, Integer, Float, Boolean, ForeignKey, UniqueConstraint, Enum as SQLEnum, JSON, Date, Time, Index, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -11,6 +11,11 @@ from app.db.mixins import BaseModelMixin
 
 class ExamStatus(str, enum.Enum):
     DRAFT = "DRAFT"
+    SCHEDULED = "SCHEDULED"
+    ONGOING = "ONGOING"
+    MARKS_ENTRY = "MARKS_ENTRY"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    APPROVED = "APPROVED"
     PUBLISHED = "PUBLISHED"
     LOCKED = "LOCKED"
     COMPLETED = "COMPLETED"
@@ -18,12 +23,63 @@ class ExamStatus(str, enum.Enum):
 
 class ExamType(str, enum.Enum):
     UNIT_TEST = "UNIT_TEST"
+    WEEKLY_TEST = "WEEKLY_TEST"
     MONTHLY = "MONTHLY"
     QUARTERLY = "QUARTERLY"
     HALF_YEARLY = "HALF_YEARLY"
     PRE_FINAL = "PRE_FINAL"
     ANNUAL = "ANNUAL"
+    FINAL = "FINAL"
+    PRACTICAL = "PRACTICAL"
+    INTERNAL_ASSESSMENT = "INTERNAL_ASSESSMENT"
     SUPPLEMENTARY = "SUPPLEMENTARY"
+    CUSTOM = "CUSTOM"
+
+class ExamTypeCategory(str, enum.Enum):
+    SCHOLASTIC = "SCHOLASTIC"
+    CO_SCHOLASTIC = "CO_SCHOLASTIC"
+    COMPETITIVE = "COMPETITIVE"
+    PRACTICAL = "PRACTICAL"
+    INTERNAL_ASSESSMENT = "INTERNAL_ASSESSMENT"
+    OTHER = "OTHER"
+
+class ExamTypeMaster(Base, BaseModelMixin):
+    """
+    SQLAlchemy model representing a customizable Exam Type entity.
+    """
+    __tablename__ = "exam_type_masters"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category: Mapped[ExamTypeCategory] = mapped_column(
+        SQLEnum(ExamTypeCategory, name="examtypecategory", create_type=False),
+        nullable=False,
+        default=ExamTypeCategory.SCHOLASTIC
+    )
+    default_weightage: Mapped[float] = mapped_column(Float, default=100.0, nullable=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    tenant = relationship("Tenant")
+    school = relationship("School")
+
+    __mapper_args__ = {
+        "version_id_col": version
+    }
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "school_id", "code", name="uq_exam_type_tenant_school_code"),
+        Index("ix_exam_type_masters_code", "code"),
+    )
 
 class ExamTemplate(Base, BaseModelMixin):
     """
@@ -106,6 +162,7 @@ class Examination(Base, BaseModelMixin):
     school = relationship("School", back_populates="examinations")
     academic_year = relationship("AcademicYear", back_populates="examinations")
     schedules = relationship("ExamSchedule", back_populates="examination", cascade="all, delete-orphan")
+    participating_classes = relationship("ExaminationClass", back_populates="examination", cascade="all, delete-orphan")
 
     __mapper_args__ = {
         "version_id_col": version
@@ -115,6 +172,32 @@ class Examination(Base, BaseModelMixin):
         Index("ix_examinations_start_date", "start_date"),
         Index("ix_examinations_end_date", "end_date"),
         Index("ix_examinations_status", "status"),
+    )
+
+class ExaminationClass(Base, BaseModelMixin):
+    """
+    SQLAlchemy model representing a participating class for an Examination.
+    """
+    __tablename__ = "examination_classes"
+
+    examination_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    examination = relationship("Examination", back_populates="participating_classes")
+    class_obj = relationship("Class")
+
+    __table_args__ = (
+        UniqueConstraint("examination_id", "class_id", name="uq_examination_participating_class"),
     )
 
 class ExamSchedule(Base, BaseModelMixin):
@@ -166,6 +249,26 @@ class ExamSchedule(Base, BaseModelMixin):
     section = relationship("Section")
     subject = relationship("Subject")
     teacher_subject_assignment = relationship("TeacherSubjectAssignment")
+
+    @property
+    def subject_name(self) -> Optional[str]:
+        return self.subject.subject_name if self.subject else None
+
+    @property
+    def subject_code(self) -> Optional[str]:
+        return self.subject.subject_code if self.subject else None
+
+    @property
+    def class_name(self) -> Optional[str]:
+        return self.class_obj.name if self.class_obj else None
+
+    @property
+    def section_name(self) -> Optional[str]:
+        return self.section.name if self.section else None
+
+    @property
+    def exam_name(self) -> Optional[str]:
+        return self.examination.exam_name if self.examination else None
 
     __mapper_args__ = {
         "version_id_col": version

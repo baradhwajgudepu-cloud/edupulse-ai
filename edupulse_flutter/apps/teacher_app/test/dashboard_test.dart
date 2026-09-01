@@ -58,6 +58,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   String? cachedSchoolId;
 
   @override
@@ -342,8 +352,17 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();
 
-    // Verify empty state is displayed
+    // Verify empty state warning is displayed in the timetable section
     expect(find.text('No timetable is currently assigned'), findsOneWidget);
+
+    // Verify Teacher header remains rendered and visible
+    expect(find.text('Sarah Connor'), findsOneWidget);
+    expect(find.textContaining('EMP-9402'), findsOneWidget);
+
+    // Verify Quick Actions grid remains rendered and visible
+    expect(find.text('Marks Entry'), findsOneWidget);
+    expect(find.text('Staff Attendance'), findsOneWidget);
+    expect(find.text('Leave Request'), findsOneWidget);
   });
 
   testWidgets('No active academic year displays academic year error message',

@@ -2,11 +2,17 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.repositories.examination import ExamTemplateRepository, ExaminationRepository, ExamScheduleRepository
+from app.repositories.examination import (
+    ExamTypeMasterRepository, ExamTemplateRepository,
+    ExaminationRepository, ExamScheduleRepository
+)
 from app.repositories.school import SchoolRepository
 from app.repositories.academic_year import AcademicYearRepository
 from app.repositories.teacher_subject_assignment import TeacherSubjectAssignmentRepository
 from app.services.examination import ExaminationService
+
+def get_exam_type_repository(db: AsyncSession = Depends(get_db)) -> ExamTypeMasterRepository:
+    return ExamTypeMasterRepository(db)
 
 def get_template_repository(db: AsyncSession = Depends(get_db)) -> ExamTemplateRepository:
     return ExamTemplateRepository(db)
@@ -19,6 +25,7 @@ def get_schedule_repository(db: AsyncSession = Depends(get_db)) -> ExamScheduleR
 
 def get_examination_service(
     db: AsyncSession = Depends(get_db),
+    type_repo: ExamTypeMasterRepository = Depends(get_exam_type_repository),
     template_repo: ExamTemplateRepository = Depends(get_template_repository),
     exam_repo: ExaminationRepository = Depends(get_examination_repository),
     schedule_repo: ExamScheduleRepository = Depends(get_schedule_repository)
@@ -28,6 +35,7 @@ def get_examination_service(
     tsa_repo = TeacherSubjectAssignmentRepository(db)
     
     return ExaminationService(
+        type_repo=type_repo,
         template_repo=template_repo,
         exam_repo=exam_repo,
         schedule_repo=schedule_repo,

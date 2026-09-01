@@ -10,6 +10,16 @@ import 'package:principal_app/features/leave_requests/presentation/providers/lea
 import 'package:principal_app/features/leave_requests/presentation/pages/teacher_leave_detail_screen.dart';
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'fake_token';
   @override

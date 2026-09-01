@@ -1,0 +1,4 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email
+E2E_G_B9D44A_004,FATHER,E2E_GF4,E2E_GL4,MALE,1980-05-15,900048506,gf4_b9d44a@e2e.com
+E2E_G_B9D44A_005,MOTHER,E2E_GM5,E2E_GL5,FEMALE,1982-08-20,900058506,gm5_b9d44a@e2e.com
+E2E_G_B9D44A_006,OTHER,E2E_GG6,E2E_GL6,MALE,1978-02-10,900068506,gg6_b9d44a@e2e.com

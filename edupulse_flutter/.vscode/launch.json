@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Admin Portal (Local Dev)",
+      "request": "launch",
+      "type": "dart",
+      "program": "apps/admin_portal/lib/main.dart",
+      "args": [
+        "--web-hostname",
+        "127.0.0.1",
+        "--web-port",
+        "11500"
+      ]
+    }
+  ]
+}

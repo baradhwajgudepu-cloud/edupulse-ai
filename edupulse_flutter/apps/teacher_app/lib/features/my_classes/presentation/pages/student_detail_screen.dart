@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_api/edupulse_api.dart';
+import 'package:teacher_app/features/communication/presentation/providers/communication_provider.dart';
+import '../../../teacher_ai/presentation/widgets/student_ai_insight_widget.dart';
 
 import '../../domain/entities/student.dart';
 import '../providers/my_classes_provider.dart';
@@ -73,6 +76,91 @@ class StudentDetailScreen extends ConsumerWidget {
     return colors[hash % colors.length];
   }
 
+  void _showContactParentDialog(BuildContext context, WidgetRef ref, StudentEntity student) {
+    final subjectController = TextEditingController();
+    final messageController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Contact Parent for ${student.fullName}'),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: subjectController,
+                      decoration: const InputDecoration(labelText: 'Subject'),
+                      validator: (val) => val == null || val.trim().isEmpty ? 'Enter subject' : null,
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: messageController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(labelText: 'Message'),
+                      validator: (val) => val == null || val.trim().isEmpty ? 'Enter message' : null,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                isSubmitting
+                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
+                    : ElevatedButton(
+                        onPressed: () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setState(() {
+                            isSubmitting = true;
+                          });
+                          
+                          final client = ref.read(communicationApiClientProvider);
+                          final result = await client.createRequest(
+                            studentId: student.id,
+                            recipientType: 'PARENT',
+                            category: 'OTHER',
+                            subject: subjectController.text,
+                            priority: 'NORMAL',
+                            message: messageController.text,
+                          );
+
+                          result.when(
+                            onSuccess: (_) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Message sent to parent successfully.')),
+                              );
+                              ref.read(teacherQueriesProvider.notifier).fetchRequests();
+                            },
+                            onFailure: (failure) {
+                              setState(() {
+                                isSubmitting = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed: ${failure.message}')),
+                              );
+                            },
+                          );
+                        },
+                        child: const Text('Send'),
+                      ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -80,13 +168,13 @@ class StudentDetailScreen extends ConsumerWidget {
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
 
     if (student != null) {
-      return _buildScaffold(student!, theme, spacing, radius);
+      return _buildScaffold(student!, theme, spacing, radius, context, ref);
     }
 
     final future = ref.watch(studentDetailProvider(studentId));
 
     return future.when(
-      data: (data) => _buildScaffold(data, theme, spacing, radius),
+      data: (data) => _buildScaffold(data, theme, spacing, radius, context, ref),
       loading: () => Scaffold(
         backgroundColor: theme.colorScheme.surface,
         appBar: AppBar(elevation: 0, backgroundColor: theme.colorScheme.surface),
@@ -126,6 +214,8 @@ class StudentDetailScreen extends ConsumerWidget {
     ThemeData theme,
     AppSpacing spacing,
     AppRadius radius,
+    BuildContext context,
+    WidgetRef ref,
   ) {
     final avatarColor = _getAvatarColor(student.fullName, theme);
     final initials = '${student.firstName.isNotEmpty ? student.firstName[0] : ''}${student.lastName.isNotEmpty ? student.lastName[0] : ''}';
@@ -137,6 +227,13 @@ class StudentDetailScreen extends ConsumerWidget {
         elevation: 0,
         backgroundColor: theme.colorScheme.surface,
         foregroundColor: theme.colorScheme.onSurface,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.contact_mail_outlined),
+            tooltip: 'Contact Parent',
+            onPressed: () => _showContactParentDialog(context, ref, student),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: EdgeInsets.all(spacing.md),
@@ -175,6 +272,9 @@ class StudentDetailScreen extends ConsumerWidget {
                 _buildInfoRow('Email Address', student.email ?? 'Not Provided', theme, spacing),
               ],
             ),
+            SizedBox(height: spacing.md),
+            // AI Insights Card
+            StudentAiInsightWidget(studentId: student.id),
           ],
         ),
       ),

@@ -94,11 +94,11 @@ class StudentsNotifier extends StateNotifier<StudentsState> {
       return;
     }
 
-    // 1. Fetch first page with large limit=1000 for discovering class and section filters
+    // 1. Fetch first page with large limit=100 for discovering class and section filters
     final discoveryResult = await _repository.getStudents(
       schoolId: schoolId,
       skip: 0,
-      limit: 1000,
+      limit: 100,
     );
 
     await discoveryResult.when(

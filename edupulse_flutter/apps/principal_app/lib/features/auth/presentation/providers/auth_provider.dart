@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import '../../../dashboard/presentation/providers/active_school_provider.dart';
 
 sealed class AuthState {
   const AuthState();
@@ -49,6 +51,13 @@ class AuthStateNotifier extends Notifier<AuthState> {
     }
 
     state = const AuthLoading();
+
+    // Restore cached tenant context first to prevent default fallback during validation
+    final cachedTenantId = await sessionManager.getTenantId();
+    if (cachedTenantId != null && cachedTenantId.isNotEmpty) {
+      ref.read(selectedTenantIdProvider.notifier).state = cachedTenantId;
+    }
+
     final validateSession = ref.read(validateSessionUseCaseProvider);
     final result = await validateSession();
 
@@ -61,11 +70,22 @@ class AuthStateNotifier extends Notifier<AuthState> {
             await sessionManager.saveSchoolId(user.schools.first);
           }
         }
+        if (user.tenantId != null) {
+          await sessionManager.saveTenantId(user.tenantId!);
+        }
+        ref.read(selectedTenantIdProvider.notifier).state = user.tenantId;
         state = Authenticated(user);
       },
       onFailure: (failure) async {
+        _logDiagnosticFailure(failure, 'async-onFailure');
+        final buildConfig = ref.read(buildConfigProvider);
+        debugPrint('[DEBUG] checkAuth validateSession FAILURE:');
+        debugPrint('  • Resolved API Base URL: ${buildConfig.apiBaseUrl}');
+        debugPrint('  • Actual Auth Endpoint: ${buildConfig.apiBaseUrl}auth/me');
+        debugPrint('  • Failure Message: ${failure.message}');
         EduLogger.w('Saved session was invalid or expired: ${failure.message}');
         await sessionManager.clearSession();
+        ref.read(selectedTenantIdProvider.notifier).state = null;
         state = const Unauthenticated();
       },
     );
@@ -76,8 +96,13 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
     // Verify connectivity first
     final buildConfig = ref.read(buildConfigProvider);
+    debugPrint('[DEBUG] AuthStateNotifier.login:');
+    debugPrint('  • Resolved API Base URL: ${buildConfig.apiBaseUrl}');
+    debugPrint('  • Actual Auth Endpoint: ${buildConfig.apiBaseUrl}auth/login');
+
     final isHealthy = await _checkBackendHealth(buildConfig.apiBaseUrl);
     if (!isHealthy) {
+      debugPrint('[DEBUG] AuthStateNotifier.login backend health check FAILED. Server is unreachable.');
       state = const AuthError('SERVER_UNREACHABLE');
       return;
     }
@@ -87,6 +112,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
     await result.when(
       onSuccess: (token) async {
+        debugPrint('[DEBUG] AuthStateNotifier.login SUCCESS');
         final sessionManager = ref.read(sessionManagerProvider);
         await sessionManager.saveSession(token);
 
@@ -99,15 +125,33 @@ class AuthStateNotifier extends Notifier<AuthState> {
             if (user.schools.isNotEmpty) {
               await sessionManager.saveSchoolId(user.schools.first);
             }
+            if (user.tenantId != null) {
+              await sessionManager.saveTenantId(user.tenantId!);
+            }
+            ref.read(selectedTenantIdProvider.notifier).state = user.tenantId;
             state = Authenticated(user);
           },
-          onFailure: (failure) {
+          onFailure: (failure) async {
+        _logDiagnosticFailure(failure, 'async-onFailure');
+            debugPrint('[DEBUG] AuthStateNotifier.login user details retrieval FAILURE:');
+            debugPrint('  • Resolved API Base URL: ${buildConfig.apiBaseUrl}');
+            debugPrint('  • Actual Auth Endpoint: ${buildConfig.apiBaseUrl}auth/me');
+            debugPrint('  • Failure Message: ${failure.message}');
+            EduLogger.e('Validate session failed with error: ${failure.message}');
+            await sessionManager.clearSession();
+            ref.read(selectedTenantIdProvider.notifier).state = null;
             state = AuthError(
                 'Failed to retrieve user details: ${failure.message}');
           },
         );
       },
       onFailure: (failure) {
+        _logDiagnosticFailure(failure, 'onFailure');
+        debugPrint('[DEBUG] AuthStateNotifier.login loginUseCase FAILURE:');
+        debugPrint('  • Resolved API Base URL: ${buildConfig.apiBaseUrl}');
+        debugPrint('  • Actual Auth Endpoint: ${buildConfig.apiBaseUrl}auth/login');
+        debugPrint('  • Failure Message: ${failure.message}');
+        EduLogger.e('Login failed with error: ${failure.message}');
         state = AuthError(failure.message);
       },
     );
@@ -122,26 +166,32 @@ class AuthStateNotifier extends Notifier<AuthState> {
         ),
       );
 
-      // Try API health check endpoint first
+      final normalizedBase = apiBaseUrl.endsWith('/')
+          ? apiBaseUrl.substring(0, apiBaseUrl.length - 1)
+          : apiBaseUrl;
+
+      // 1. Try system health endpoint
       try {
-        final response = await dio.get<dynamic>('$apiBaseUrl/system/health');
+        final response = await dio.get('$normalizedBase/system/health');
         if (response.statusCode == 200) {
           return true;
         }
       } on DioException catch (e) {
         if (e.response != null) {
+          // If we received any response, server is active and reachable
           return true;
         }
       }
 
-      // Try OpenAPI JSON endpoint as fallback
+      // 2. Fallback to openapi.json connectivity verification
       try {
-        final response = await dio.get<dynamic>('$apiBaseUrl/openapi.json');
+        final response = await dio.get('$normalizedBase/openapi.json');
         if (response.statusCode == 200) {
           return true;
         }
       } on DioException catch (e) {
         if (e.response != null) {
+          // If we received any response, server is active and reachable
           return true;
         }
       }
@@ -166,8 +216,48 @@ class AuthStateNotifier extends Notifier<AuthState> {
       EduLogger.e('Error calling remote logout endpoint: $e');
     } finally {
       await sessionManager.clearSession();
+      ref.read(selectedTenantIdProvider.notifier).state = null;
+      ref.read(activeSchoolIdProvider.notifier).state = null;
       state = const Unauthenticated();
     }
+  }
+
+  void _logDiagnosticFailure(ApiFailure failure, String context) {
+    final error = failure.originalError;
+    final buffer = StringBuffer();
+    buffer.writeln('=== AUTH FAILURE DIAGNOSTIC ($context) ===');
+    buffer.writeln('Failure Message: ${failure.message}');
+    buffer.writeln('Failure Type: ${failure.type}');
+    buffer.writeln('HTTP Status Code: ${failure.statusCode}');
+    
+    if (error != null) {
+      buffer.writeln('Original Error Type: ${error.runtimeType}');
+      buffer.writeln('Original Error Message: $error');
+      if (error is DioException) {
+        buffer.writeln('DioException Type: ${error.type}');
+        buffer.writeln('Request Path: ${error.requestOptions.path}');
+        buffer.writeln('Response Status: ${error.response?.statusCode}');
+        var dataStr = error.response?.data?.toString() ?? 'N/A';
+        if (dataStr.contains('access_token') || dataStr.contains('refresh_token')) {
+          dataStr = '[REDACTED TOKENS]';
+        }
+        buffer.writeln('Response Data: $dataStr');
+      }
+    } else {
+      buffer.writeln('No original exception object attached.');
+    }
+    
+    try {
+      if (error is Error && error.stackTrace != null) {
+        buffer.writeln('Stack Trace:\n${error.stackTrace}');
+      } else if (error is DioException && error.stackTrace != null) {
+        buffer.writeln('Stack Trace:\n${error.stackTrace}');
+      }
+    } catch (_) {}
+    
+    buffer.writeln('==========================================');
+    // ignore: avoid_print
+    print(buffer.toString());
   }
 }
 

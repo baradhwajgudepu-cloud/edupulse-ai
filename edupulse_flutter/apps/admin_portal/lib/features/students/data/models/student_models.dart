@@ -218,6 +218,7 @@ class GuardianDto {
   final String createdAt;
   final String updatedAt;
   final String? deletedAt;
+  final String? loginId;
 
   const GuardianDto({
     required this.id,
@@ -253,6 +254,7 @@ class GuardianDto {
     required this.createdAt,
     required this.updatedAt,
     this.deletedAt,
+    this.loginId,
   });
 
   factory GuardianDto.fromJson(Map<String, dynamic> json) {
@@ -290,6 +292,7 @@ class GuardianDto {
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
       deletedAt: json['deleted_at'] as String?,
+      loginId: json['login_id'] as String?,
     );
   }
 

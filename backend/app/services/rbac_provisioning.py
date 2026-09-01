@@ -79,7 +79,8 @@ ROLE_PERMISSIONS_MAP = {
         # Read-only Access for Fees, Notifications, Events & Announcements
         "event.read", "announcement.read",
         "notification.read", "notification.mark_read",
-        "fee.read"
+        "fee.read",
+        "guardian.read"
     ],
     "STUDENT": [],
     "STAFF": [

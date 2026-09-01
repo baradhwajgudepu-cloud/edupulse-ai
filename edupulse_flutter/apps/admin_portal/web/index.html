@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="EduPulse AI Admin Portal - Administrative Control Panel for managing schools, users, and onboarding.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="admin_portal">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>EduPulse AI Admin Portal</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    #edupulse-web-splash {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: #F8FAFC;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 99999;
+      overflow: hidden;
+      transition: opacity 0.5s ease-out;
+    }
+    
+    #edupulse-splash-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    #edupulse-splash-fallback {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      animation: fadeIn 0.8s ease-in;
+    }
+
+    #edupulse-splash-logo {
+      max-width: 250px;
+      height: auto;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="edupulse-web-splash">
+    <video
+      id="edupulse-splash-video"
+      autoplay
+      muted
+      playsinline
+      preload="auto">
+      <source src="assets/splash_video.mp4" type="video/mp4">
+    </video>
+    <div id="edupulse-splash-fallback">
+      <img id="edupulse-splash-logo" src="assets/edupulse_logo.png" alt="EduPulse AI Logo">
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var splash = document.getElementById('edupulse-web-splash');
+      var video = document.getElementById('edupulse-splash-video');
+      var fallback = document.getElementById('edupulse-splash-fallback');
+      
+      var isVideoFinished = false;
+      var isFlutterReady = false;
+      var removed = false;
+
+      function tryRemoveSplash() {
+        if (removed) return;
+        if (isFlutterReady && isVideoFinished) {
+          removed = true;
+          splash.style.opacity = '0';
+          setTimeout(function() {
+            if (splash && splash.parentNode) {
+              splash.parentNode.removeChild(splash);
+            }
+          }, 500);
+        }
+      }
+
+      video.addEventListener('play', function() {
+        video.style.display = 'block';
+        fallback.style.display = 'none';
+      });
+
+      video.addEventListener('ended', function() {
+        isVideoFinished = true;
+        tryRemoveSplash();
+      });
+
+      video.addEventListener('error', function() {
+        console.warn('Splash video failed to load, falling back to static logo.');
+        isVideoFinished = true;
+        video.style.display = 'none';
+        fallback.style.display = 'flex';
+        tryRemoveSplash();
+      });
+
+      setTimeout(function() {
+        if (video.paused && !isVideoFinished) {
+          console.log('Video autoplay did not start, falling back to static.');
+          isVideoFinished = true;
+          tryRemoveSplash();
+        }
+      }, 2500);
+
+      setTimeout(function() {
+        if (!removed) {
+          console.warn('Flutter initialization timeout, removing splash.');
+          isFlutterReady = true;
+          isVideoFinished = true;
+          tryRemoveSplash();
+        }
+      }, 15000);
+
+      window.removeEduPulseSplash = function() {
+        isFlutterReady = true;
+        tryRemoveSplash();
+      };
+    })();
+  </script>
+
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

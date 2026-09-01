@@ -3,7 +3,9 @@ import uuid
 import pytest
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+import app.models  # noqa: F401
 from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
@@ -28,14 +30,14 @@ async def test_engine():
     """
     engine = create_async_engine(
         TEST_DATABASE_URL,
+        poolclass=StaticPool,
         connect_args={"check_same_thread": False, "uri": True}
     )
     
     async with engine.begin() as conn:
-        # Ensure a clean database state by dropping all existing tables first
-        await conn.run_sync(Base.metadata.drop_all)
         # Create all tables defined in Base models metadata
         await conn.run_sync(Base.metadata.create_all)
+
         
         # Seed default system permissions for test runs
         from sqlalchemy import insert
@@ -216,7 +218,7 @@ async def client(db_session, request) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     
     # Bypass auth and RBAC checks for non-auth test files by mock-seeding a superuser
-    if "test_auth" not in request.node.nodeid and "test_communication" not in request.node.nodeid:
+    if "test_auth" not in request.node.nodeid and "test_communication" not in request.node.nodeid and "test_identity" not in request.node.nodeid:
         from app.api.dependencies.auth import get_current_user
         from app.models.user import User, UserStatus
         from fastapi import Request

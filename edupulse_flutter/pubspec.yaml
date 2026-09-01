@@ -1,0 +1,65 @@
+name: edupulse_workspace
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+workspace:
+  - apps/parent_app
+  - apps/admin_portal
+  - apps/teacher_app
+  - apps/principal_app
+  - packages/edupulse_core
+  - packages/edupulse_config
+  - packages/edupulse_assets
+  - packages/edupulse_models
+  - packages/edupulse_network
+  - packages/edupulse_api
+  - packages/edupulse_auth
+  - packages/edupulse_theme
+  - packages/edupulse_localization
+  - packages/edupulse_ui
+  - packages/edupulse_files
+
+dev_dependencies:
+  melos: ^8.2.2
+
+melos:
+  name: edupulse_flutter
+  repository: https://github.com/baradhwajgudepu-cloud/edupulse-ai
+  packages:
+    - apps/*
+    - packages/*
+
+  scripts:
+    analyze:
+      run: melos exec -- flutter analyze
+      description: Run flutter analyze in all packages and apps.
+
+    format:
+      run: melos exec -- dart format .
+      description: Run dart format in all packages and apps.
+
+    test:
+      run: melos exec --dir-exists="test" -- flutter test
+      description: Run flutter test in all packages and apps.
+
+    run:parent:
+      run: flutter run --target=apps/parent_app/lib/main.dart
+      description: Run Parent application locally.
+
+    run:teacher:
+      run: flutter run --target=apps/teacher_app/lib/main.dart
+      description: Run Teacher application locally.
+
+    run:principal:
+      run: flutter run --target=apps/principal_app/lib/main.dart
+      description: Run Principal application locally.
+
+    build:parent:
+      run: flutter build apk --target=apps/parent_app/lib/main.dart
+      description: Build release APK for Parent application.
+
+    build:release:
+      run: melos exec --dir-exists="lib" -- flutter build apk
+      description: Build release packages for all apps.

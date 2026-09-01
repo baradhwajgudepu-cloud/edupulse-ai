@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:go_router/go_router.dart';
 import '../providers/student_provider.dart';
 import '../../data/models/student_model.dart';
 
@@ -166,6 +167,23 @@ class StudentDetailScreen extends ConsumerWidget {
                   _buildDetailTile(Icons.phone, 'Mobile Number', student.mobile ?? 'Not provided'),
                   _buildDetailTile(Icons.email, 'Email Address', student.email ?? 'Not provided'),
                 ],
+              ),
+            ),
+            SizedBox(height: spacing.lg),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  context.push('/communication?studentId=${student?.id}');
+                },
+                icon: const Icon(Icons.forum_rounded),
+                label: const Text('View Parent Queries (Connect)'),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: spacing.md),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(radius.md),
+                  ),
+                ),
               ),
             ),
           ],

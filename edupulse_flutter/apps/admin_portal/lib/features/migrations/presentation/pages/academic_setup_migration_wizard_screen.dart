@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -307,15 +306,15 @@ class _AcademicSetupMigrationWizardScreenState extends ConsumerState<AcademicSet
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Upload Academic Setup CSV', style: theme.textTheme.headlineSmall),
+        Text('Upload Academic Setup File', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 8),
-        const Text('Pick the academic setup CSV file. Only .csv format is supported.'),
+        const Text('Supported formats: CSV, XLS, XLSX, XLSM, XLSB, ODS'),
         const SizedBox(height: 24),
         InkWell(
           onTap: () async {
             final result = await FilePicker.platform.pickFiles(
               type: FileType.custom,
-              allowedExtensions: ['csv'],
+              allowedExtensions: const ['csv', 'xlsx', 'xls', 'xlsm', 'xlsb', 'ods'],
               withData: true,
             );
             if (result != null && result.files.isNotEmpty) {
@@ -420,16 +419,38 @@ class _AcademicSetupMigrationWizardScreenState extends ConsumerState<AcademicSet
 
   Widget _buildValidationStep(AcademicSetupMigrationWizardState state, ThemeData theme) {
     final job = state.activeJob;
-    if (job == null) return const Text('No active validation job found.');
+    if (job == null) return const Text('No active job found.');
 
     final failedRowsCount = job.failedRows;
     final totalRowsCount = job.totalRows;
     final validRowsCount = totalRowsCount - failedRowsCount;
+    final sheets = job.jobMetadata['sheets'] as List<dynamic>?;
+    final selectedSheet = job.jobMetadata['selected_sheet'] as String?;
     final hasErrors = failedRowsCount > 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (sheets != null && sheets.length > 1) ...[
+          Text('Select Worksheet:', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          DropdownButton<String>(
+            value: selectedSheet,
+            items: sheets.map((s) {
+              final name = s.toString();
+              return DropdownMenuItem<String>(
+                value: name,
+                child: Text(name),
+              );
+            }).toList(),
+            onChanged: (newSheet) {
+              if (newSheet != null && newSheet != selectedSheet) {
+                ref.read(academicSetupMigrationWizardProvider.notifier).updateSelectedSheet(newSheet);
+              }
+            },
+          ),
+          const SizedBox(height: 24),
+        ],
         Text('Validation Results Summary', style: theme.textTheme.headlineSmall),
         const SizedBox(height: 16),
         Container(

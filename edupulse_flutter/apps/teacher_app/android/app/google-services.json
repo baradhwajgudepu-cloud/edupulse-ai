@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "295242569787",
+    "project_id": "edupulse-ai-17221",
+    "storage_bucket": "edupulse-ai-17221.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:295242569787:android:9a3ec6926916cc8084641e",
+        "android_client_info": {
+          "package_name": "com.edupulse.ai.parent_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD_NDAg1ZPCJcuAHeYSQF6lNYDrh4fCrEQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:295242569787:android:602bb90e7db7987884641e",
+        "android_client_info": {
+          "package_name": "com.edupulse.ai.principal_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD_NDAg1ZPCJcuAHeYSQF6lNYDrh4fCrEQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:295242569787:android:54299a9c1fd0a3e184641e",
+        "android_client_info": {
+          "package_name": "com.edupulse.ai.teacher_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD_NDAg1ZPCJcuAHeYSQF6lNYDrh4fCrEQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

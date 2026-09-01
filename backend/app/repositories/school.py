@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.school import School, SchoolBoard, SchoolStatus
 from app.schemas.school import SchoolCreate, SchoolUpdate
@@ -141,11 +141,80 @@ class SchoolRepository:
         deleted_by: Optional[uuid.UUID] = None
     ) -> School:
         """
-        Soft-deletes the school by setting the deleted_at property.
+        Atomically soft-deletes the school and all dependent entities,
+        cleans up school_users associations, and soft-deletes users
+        who belong only to this school (excluding superusers/platform admins).
         """
-        db_obj.deleted_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        db_obj.deleted_at = now
+        db_obj.status = SchoolStatus.INACTIVE
+        db_obj.is_active = False
         db_obj.updated_by = deleted_by
         self.db.add(db_obj)
+
+        school_id = db_obj.id
+
+        # 1. Cascade soft-delete all school-owned entities
+        from app.db.base import Base
+        for table_name, table in Base.metadata.tables.items():
+            cols = [c.name for c in table.columns]
+            if 'school_id' in cols and 'deleted_at' in cols and table_name != 'schools':
+                stmt = (
+                    table.update()
+                    .where(table.c.school_id == school_id, table.c.deleted_at.is_(None))
+                    .values(deleted_at=now, updated_by=deleted_by)
+                )
+                await self.db.execute(stmt)
+
+        # 2. Identify users belonging to this school and determine if they belong only to this school
+        from app.models.user import User, UserStatus
+        from app.models.role import school_users
+        from app.models.refresh_token import RefreshToken
+
+        users_in_school_stmt = (
+            select(school_users.c.user_id)
+            .where(school_users.c.school_id == school_id)
+        )
+        res_school_users = await self.db.execute(users_in_school_stmt)
+        user_ids_in_school = list(res_school_users.scalars().all())
+
+        if user_ids_in_school:
+            other_schools_stmt = (
+                select(school_users.c.user_id)
+                .join(School, School.id == school_users.c.school_id)
+                .where(
+                    school_users.c.user_id.in_(user_ids_in_school),
+                    school_users.c.school_id != school_id,
+                    School.deleted_at.is_(None)
+                )
+            )
+            res_other = await self.db.execute(other_schools_stmt)
+            users_with_other_schools = set(res_other.scalars().all())
+
+            single_school_user_ids = [
+                uid for uid in user_ids_in_school
+                if uid not in users_with_other_schools
+            ]
+
+            if single_school_user_ids:
+                # Soft-delete single-school users (excluding superusers)
+                await self.db.execute(
+                    update(User)
+                    .where(User.id.in_(single_school_user_ids), User.is_superuser == False, User.deleted_at.is_(None))
+                    .values(deleted_at=now, status=UserStatus.INACTIVE, updated_by=deleted_by)
+                )
+                # Revoke refresh tokens
+                await self.db.execute(
+                    update(RefreshToken)
+                    .where(RefreshToken.user_id.in_(single_school_user_ids), RefreshToken.deleted_at.is_(None))
+                    .values(deleted_at=now)
+                )
+
+        # 3. Clean up school_users associations for this deleted school
+        await self.db.execute(
+            school_users.delete().where(school_users.c.school_id == school_id)
+        )
+
         await self.db.commit()
         await self.db.refresh(db_obj)
         return db_obj

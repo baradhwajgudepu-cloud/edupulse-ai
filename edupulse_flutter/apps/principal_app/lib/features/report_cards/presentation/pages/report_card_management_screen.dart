@@ -14,6 +14,11 @@ class ReportCardManagementScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagementScreen> {
+  String _safeSub(String text, int len) {
+    if (text.isEmpty) return 'N/A';
+    return text.length >= len ? text.substring(0, len) : text;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -122,7 +127,7 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                       final matching = approvedCards.firstWhere((c) => c.classId == split[0] && c.sectionId == split[1]);
                       return DropdownMenuItem(
                         value: pair,
-                        child: Text('Class ${matching.classId.substring(0, 5)} - Sec ${matching.sectionId.substring(0, 5)}'),
+                        child: Text('Class ${_safeSub(matching.classId, 5)} - Sec ${_safeSub(matching.sectionId, 5)}'),
                       );
                     }).toList(),
                     onChanged: (val) {
@@ -263,7 +268,7 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           separatorBuilder: (context, index) => SizedBox(height: spacing.sm),
                           itemBuilder: (context, index) {
                             final card = state.reportCards[index];
-                            final name = studentNames[card.studentId] ?? 'Student #${card.studentId.substring(0, 6)}';
+                            final name = studentNames[card.studentId] ?? 'Student #${_safeSub(card.studentId, 6)}';
 
                             final Color statusColor = card.status == 'PUBLISHED'
                                 ? Colors.green
@@ -314,7 +319,7 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
                                         Text(
-                                          'Class ID: ${card.classId.substring(0, 8)} | Sec ID: ${card.sectionId.substring(0, 8)}',
+                                          'Class ID: ${_safeSub(card.classId, 8)} | Sec ID: ${_safeSub(card.sectionId, 8)}',
                                           style: theme.textTheme.bodySmall?.copyWith(fontSize: 10, color: Colors.black54),
                                         ),
                                         Text(

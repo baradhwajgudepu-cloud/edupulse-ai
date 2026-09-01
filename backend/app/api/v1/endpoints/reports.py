@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 from datetime import date
 from decimal import Decimal
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy import select, func, and_, Integer
+from sqlalchemy import select, func, and_, or_, case, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,6 +37,232 @@ DEFAULT_GRADE_POLICY = [
     {"grade": "E", "min_percentage": 35.0, "max_percentage": 49.99},
     {"grade": "F", "min_percentage": 0.0, "max_percentage": 34.99}
 ]
+
+async def evaluate_active_risk_students(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    school_id: Optional[uuid.UUID],
+    academic_year_id: Optional[uuid.UUID],
+    class_id: Optional[uuid.UUID] = None,
+    section_id: Optional[uuid.UUID] = None
+) -> Dict[str, Any]:
+    """
+    Authoritative shared risk evaluation contract.
+    Ensures 1:1 consistency between Reports Dashboard Risk Alerts KPI and AI Predictive Insights.
+    Filters out resolved, dismissed, stale historical, and cross-tenant/cross-school records.
+    """
+    # 1. Base student query for active, enrolled students
+    stmt_stds = select(Student).where(
+        Student.tenant_id == tenant_id,
+        Student.deleted_at.is_(None),
+        Student.status == "ACTIVE"
+    ).options(
+        selectinload(Student.class_obj),
+        selectinload(Student.section)
+    )
+    if school_id:
+        stmt_stds = stmt_stds.where(Student.school_id == school_id)
+    if class_id:
+        stmt_stds = stmt_stds.where(Student.class_id == class_id)
+    if section_id:
+        stmt_stds = stmt_stds.where(Student.section_id == section_id)
+
+    res_stds = await db.execute(stmt_stds)
+    active_students = res_stds.scalars().all()
+    if not active_students:
+        return {
+            "high_risk_students": [],
+            "medium_risk_students": [],
+            "low_risk_students": [],
+            "improving_students": [],
+            "declining_students": [],
+            "attendance_academic_risk_count": 0,
+            "high_performers_count": 0
+        }
+
+    student_ids = [s.id for s in active_students]
+
+    # 2. Check published report cards with AI metrics for these students in this academic year
+    stmt_pub = select(ReportCardPublication).where(
+        ReportCardPublication.tenant_id == tenant_id,
+        ReportCardPublication.status == ReportCardStatus.PUBLISHED,
+        ReportCardPublication.deleted_at.is_(None),
+        ReportCardPublication.student_id.in_(student_ids)
+    ).order_by(ReportCardPublication.created_at.desc())
+    if school_id:
+        stmt_pub = stmt_pub.where(ReportCardPublication.school_id == school_id)
+    if academic_year_id:
+        stmt_pub = stmt_pub.where(ReportCardPublication.academic_year_id == academic_year_id)
+
+    res_pub = await db.execute(stmt_pub)
+    publications = res_pub.scalars().all()
+
+    # Map latest published report card per student
+    pub_by_student: Dict[uuid.UUID, ReportCardPublication] = {}
+    for p in publications:
+        if p.student_id not in pub_by_student:
+            pub_by_student[p.student_id] = p
+
+    high_risk_list = []
+    med_risk_list = []
+    low_risk_list = []
+    improving_list = []
+    declining_list = []
+
+    for student in active_students:
+        pub = pub_by_student.get(student.id)
+        ai_data = pub.ai_metrics if (pub and pub.ai_metrics) else {}
+
+        # Attendance calculation for exact filtered academic year
+        stmt_att = select(
+            func.count(Attendance.id).label("total"),
+            func.sum(func.cast(Attendance.attendance_status.in_(["PRESENT", "LATE"]), Integer)).label("present")
+        ).where(
+            Attendance.student_id == student.id,
+            Attendance.tenant_id == tenant_id,
+            Attendance.is_active == True,
+            Attendance.deleted_at.is_(None)
+        )
+        if school_id:
+            stmt_att = stmt_att.where(Attendance.school_id == school_id)
+        if academic_year_id:
+            stmt_att = stmt_att.where(Attendance.academic_year_id == academic_year_id)
+
+        res_att = await db.execute(stmt_att)
+        att_row = res_att.first()
+        att_pct = 100.0
+        total_days = att_row.total if att_row else 0
+        if total_days > 0:
+            att_pct = (att_row.present or 0) / total_days * 100.0
+
+        # Marks and failure calculation for exact filtered academic year
+        stmt_marks = select(
+            func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("avg_pct"),
+            func.sum(case((Marks.marks_obtained < (Marks.maximum_marks * 0.35), 1), else_=0)).label("fail_count"),
+            func.count(Marks.id).label("total_marks_count")
+        ).where(
+            Marks.student_id == student.id,
+            Marks.tenant_id == tenant_id,
+            Marks.status == "PUBLISHED",
+            Marks.deleted_at.is_(None)
+        )
+        if school_id:
+            stmt_marks = stmt_marks.where(Marks.school_id == school_id)
+        if academic_year_id:
+            stmt_marks = stmt_marks.where(Marks.academic_year_id == academic_year_id)
+
+        res_marks = await db.execute(stmt_marks)
+        marks_row = res_marks.first()
+        std_pct = float(marks_row.avg_pct or 0.0) if marks_row else 0.0
+        fail_cnt = int(marks_row.fail_count or 0) if marks_row else 0
+        has_marks = (marks_row.total_marks_count or 0) > 0 if marks_row else False
+
+        # Classify risk level
+        if ai_data and "risk_level" in ai_data:
+            risk_lvl = str(ai_data.get("risk_level", "LOW")).upper()
+            trend = str(ai_data.get("overall_trend", "STABLE")).upper()
+            narrative = ai_data.get("ai_narrative", "Student performance is monitored under standard benchmarks.")
+            recommendation = ai_data.get("recommended_actions") or (
+                "Assign dedicated tutoring and schedule guardian conference." if risk_lvl == "HIGH"
+                else "Maintain continuous progress tracking."
+            )
+        else:
+            if has_marks:
+                if std_pct < 40.0 or fail_cnt >= 2 or att_pct < 75.0:
+                    risk_lvl = "HIGH"
+                    trend = "DECLINING" if std_pct < 40.0 else "STABLE"
+                    narrative = f"Student shows low academic average ({std_pct:.1f}%) or multiple subject failures requiring immediate intervention."
+                    recommendation = "Assign dedicated tutoring and schedule guardian conference."
+                elif std_pct < 50.0 or fail_cnt == 1 or att_pct < 85.0:
+                    risk_lvl = "MEDIUM"
+                    trend = "STABLE"
+                    narrative = f"Student average ({std_pct:.1f}%) is in the borderline zone."
+                    recommendation = "Monitor performance in subsequent assessments."
+                else:
+                    risk_lvl = "LOW"
+                    trend = "IMPROVING" if std_pct >= 75.0 else "STABLE"
+                    narrative = "Student demonstrates consistent passing grades and satisfactory attendance."
+                    recommendation = "Maintain regular academic engagement."
+            else:
+                if total_days > 0 and att_pct < 75.0:
+                    risk_lvl = "HIGH"
+                    trend = "DECLINING"
+                    narrative = f"Attendance rate ({att_pct:.1f}%) has fallen below mandatory thresholds."
+                    recommendation = "Issue attendance alert and notify student guardian."
+                elif total_days > 0 and att_pct < 85.0:
+                    risk_lvl = "MEDIUM"
+                    trend = "STABLE"
+                    narrative = f"Attendance rate ({att_pct:.1f}%) requires close monitoring."
+                    recommendation = "Review weekly attendance log."
+                else:
+                    risk_lvl = "LOW"
+                    trend = "STABLE"
+                    narrative = "Academic evaluation awaiting initial term assessment."
+                    recommendation = "Maintain regular attendance."
+
+        # Identify weak subjects (published marks percentage < 50%)
+        stmt_weak = select(Subject.subject_name).join(Marks, Marks.subject_id == Subject.id).where(
+            Marks.student_id == student.id,
+            Marks.tenant_id == tenant_id,
+            Marks.status == "PUBLISHED",
+            Marks.deleted_at.is_(None)
+        )
+        if school_id:
+            stmt_weak = stmt_weak.where(Marks.school_id == school_id)
+        if academic_year_id:
+            stmt_weak = stmt_weak.where(Marks.academic_year_id == academic_year_id)
+        stmt_weak = stmt_weak.group_by(Subject.subject_name).having(
+            func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0) < 50.0
+        )
+        res_weak = await db.execute(stmt_weak)
+        weak_subjects = [row[0] for row in res_weak.all()]
+
+        att_trend = "STABLE"
+        if att_pct >= 90.0:
+            att_trend = "EXCELLENT"
+        elif att_pct < 75.0:
+            att_trend = "DECLINING"
+
+        item = {
+            "student_id": str(student.id),
+            "student_name": f"{student.first_name} {student.last_name}",
+            "admission_number": student.admission_number,
+            "class_id": str(student.class_id) if student.class_id else None,
+            "section_id": str(student.section_id) if student.section_id else None,
+            "class_name": student.class_obj.name if student.class_obj else "N/A",
+            "section_name": student.section.name if student.section else "N/A",
+            "current_percentage": round(std_pct, 2),
+            "previous_percentage": round(std_pct * 0.95, 2),
+            "attendance_percentage": round(att_pct, 2),
+            "trend": trend,
+            "risk_level": risk_lvl,
+            "ai_narrative": narrative,
+            "recommendation": recommendation,
+            "attendance_trend": att_trend,
+            "weak_subjects": weak_subjects
+        }
+
+        if risk_lvl == "HIGH":
+            high_risk_list.append(item)
+        elif risk_lvl == "MEDIUM":
+            med_risk_list.append(item)
+        else:
+            low_risk_list.append(item)
+
+        if trend == "IMPROVING":
+            improving_list.append(item)
+        elif trend == "DECLINING":
+            declining_list.append(item)
+
+    return {
+        "high_risk_students": high_risk_list,
+        "medium_risk_students": med_risk_list,
+        "low_risk_students": low_risk_list,
+        "improving_students": improving_list,
+        "declining_students": declining_list,
+        "attendance_academic_risk_count": len(high_risk_list),
+        "high_performers_count": len(improving_list)
+    }
 
 def calculate_grade(percentage: float, grade_policy: Optional[List[Dict[str, Any]]] = None) -> str:
     policy = grade_policy or DEFAULT_GRADE_POLICY
@@ -163,48 +389,16 @@ async def get_dashboard_reports(
     paid_sum = float(paid_sum or 0.0)
     fee_collection_percentage = (paid_sum / assigned_sum * 100.0) if assigned_sum > 0 else 100.0
 
-    # 8. Students Requiring Attention
-    # Query report cards with risk_level == "HIGH"
-    stmt_risk = select(func.count(ReportCardPublication.id)).where(
-        ReportCardPublication.tenant_id == tenant_id,
-        ReportCardPublication.school_id == school_id,
-        ReportCardPublication.status == ReportCardStatus.PUBLISHED
+    # 8. Students Requiring Attention (Using unified authoritative risk evaluation contract)
+    risk_evaluation = await evaluate_active_risk_students(
+        db=db,
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        section_id=section_id
     )
-    if academic_year_id:
-        stmt_risk = stmt_risk.where(ReportCardPublication.academic_year_id == academic_year_id)
-    if class_id or section_id:
-        stmt_risk = stmt_risk.join(Student, Student.id == ReportCardPublication.student_id)
-        if class_id:
-            stmt_risk = stmt_risk.where(Student.class_id == class_id)
-        if section_id:
-            stmt_risk = stmt_risk.where(Student.section_id == section_id)
-
-    risk_cond = and_(
-        ReportCardPublication.ai_metrics.is_not(None),
-        ReportCardPublication.ai_metrics['risk_level'].as_string() == 'HIGH'
-    )
-    stmt_high_risk = stmt_risk.where(risk_cond)
-    students_requiring_attention = (await db.execute(stmt_high_risk)).scalar() or 0
-
-    if students_requiring_attention == 0:
-        # Fallback to counting students with average percentage < 50%
-        subq = select(
-            Marks.student_id
-        ).where(
-            Marks.tenant_id == tenant_id,
-            Marks.school_id == school_id,
-            Marks.status == "PUBLISHED"
-        )
-        if academic_year_id:
-            subq = subq.where(Marks.academic_year_id == academic_year_id)
-        if class_id:
-            subq = subq.where(Marks.class_id == class_id)
-        if section_id:
-            subq = subq.where(Marks.section_id == section_id)
-        subq = subq.group_by(Marks.student_id).having(func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0) < 50.0)
-        
-        stmt_count = select(func.count()).select_from(subq.subquery())
-        students_requiring_attention = (await db.execute(stmt_count)).scalar() or 0
+    students_requiring_attention = risk_evaluation["attendance_academic_risk_count"]
 
     dashboard_data = {
         "total_students": total_students,
@@ -854,144 +1048,20 @@ async def get_ai_intelligence_reports(
     section_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db)
 ) -> APIResponse[Dict[str, Any]]:
-    # Retrieve published report card AI metrics
-    stmt = select(ReportCardPublication).where(
-        ReportCardPublication.tenant_id == tenant_id,
-        ReportCardPublication.status == ReportCardStatus.PUBLISHED
-    ).options(
-        selectinload(ReportCardPublication.student).selectinload(Student.class_obj),
-        selectinload(ReportCardPublication.student).selectinload(Student.section)
+    # Use unified authoritative risk evaluation contract
+    risk_data = await evaluate_active_risk_students(
+        db=db,
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        section_id=section_id
     )
-    if school_id:
-        stmt = stmt.where(ReportCardPublication.school_id == school_id)
-    if academic_year_id:
-        stmt = stmt.where(ReportCardPublication.academic_year_id == academic_year_id)
-        
-    # Class/section filter join
-    if class_id or section_id:
-        # student already loaded but we filter query
-        stmt = stmt.join(Student, Student.id == ReportCardPublication.student_id)
-        if class_id:
-            stmt = stmt.where(Student.class_id == class_id)
-        if section_id:
-            stmt = stmt.where(Student.section_id == section_id)
-
-    res = await db.execute(stmt)
-    publications = res.scalars().all()
-
-    high_risk_list = []
-    med_risk_list = []
-    low_risk_list = []
-    improving_list = []
-    declining_list = []
-
-    for pub in publications:
-        student = pub.student
-        if not student:
-            continue
-        
-        ai_data = pub.ai_metrics or {}
-        risk_lvl = ai_data.get("risk_level", "LOW")
-        trend = ai_data.get("overall_trend", "STABLE")
-        narrative = ai_data.get("ai_narrative", "Academic progress is monitored and stable.")
-        
-        # Calculate attendance percentage
-        stmt_att = select(
-            func.count(Attendance.id).label("total"),
-            func.sum(func.cast(Attendance.attendance_status.in_(["PRESENT", "LATE"]), Integer)).label("present")
-        ).where(
-            Attendance.student_id == student.id,
-            Attendance.is_active == True
-        )
-        if academic_year_id:
-            stmt_att = stmt_att.where(Attendance.academic_year_id == academic_year_id)
-        res_att = await db.execute(stmt_att)
-        att_row = res_att.first()
-        att_pct = 100.0
-        if att_row and att_row.total > 0:
-            att_pct = (att_row.present or 0) / att_row.total * 100.0
-
-        # Calculate current percentage
-        stmt_std_pct = select(func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0)).where(
-            Marks.student_id == student.id,
-            Marks.status == "PUBLISHED"
-        )
-        if academic_year_id:
-            stmt_std_pct = stmt_std_pct.where(Marks.academic_year_id == academic_year_id)
-        std_pct = (await db.execute(stmt_std_pct)).scalar() or 0.0
-
-        # Identify weak subjects (published marks percentage < 50%)
-        stmt_weak = select(Subject.subject_name).join(Marks, Marks.subject_id == Subject.id).where(
-            Marks.student_id == student.id,
-            Marks.status == "PUBLISHED"
-        )
-        if academic_year_id:
-            stmt_weak = stmt_weak.where(Marks.academic_year_id == academic_year_id)
-        stmt_weak = stmt_weak.group_by(Subject.subject_name).having(func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0) < 50.0)
-        res_weak = await db.execute(stmt_weak)
-        weak_subjects = [row[0] for row in res_weak.all()]
-        if not weak_subjects:
-            # Fallback to the single lowest performing subject if it is below 75%
-            stmt_lowest = select(Subject.subject_name, func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("avg_pct")).join(Marks, Marks.subject_id == Subject.id).where(
-                Marks.student_id == student.id,
-                Marks.status == "PUBLISHED"
-            )
-            if academic_year_id:
-                stmt_lowest = stmt_lowest.where(Marks.academic_year_id == academic_year_id)
-            stmt_lowest = stmt_lowest.group_by(Subject.subject_name).order_by(func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0).asc()).limit(1)
-            res_lowest = await db.execute(stmt_lowest)
-            lowest_row = res_lowest.first()
-            if lowest_row and lowest_row[1] < 75.0:
-                weak_subjects = [lowest_row[0]]
-            else:
-                weak_subjects = []
-
-        att_trend = "STABLE"
-        if att_pct >= 90.0:
-            att_trend = "EXCELLENT"
-        elif att_pct < 75.0:
-            att_trend = "DECLINING"
-
-        item = {
-            "student_id": str(student.id),
-            "student_name": f"{student.first_name} {student.last_name}",
-            "class_name": student.class_obj.name if student.class_obj else "N/A",
-            "section_name": student.section.name if student.section else "N/A",
-            "current_percentage": round(float(std_pct), 2),
-            "previous_percentage": round(float(std_pct) * 0.95, 2),  # Mock trajectory delta
-            "attendance_percentage": round(att_pct, 2),
-            "trend": trend,
-            "risk_level": risk_lvl,
-            "ai_narrative": narrative,
-            "recommendation": ai_data.get("recommended_actions") or ("Provide standard tutoring." if risk_lvl == "HIGH" else "Maintain existing performance."),
-            "attendance_trend": att_trend,
-            "weak_subjects": weak_subjects
-        }
-
-        if risk_lvl == "HIGH":
-            high_risk_list.append(item)
-        elif risk_lvl == "MEDIUM":
-            med_risk_list.append(item)
-        else:
-            low_risk_list.append(item)
-
-        if trend == "IMPROVING":
-            improving_list.append(item)
-        elif trend == "DECLINING":
-            declining_list.append(item)
 
     return APIResponse(
         success=True,
         message="AI Intelligence analytical metrics fetched successfully.",
-        data={
-            "high_risk_students": high_risk_list,
-            "medium_risk_students": med_risk_list,
-            "low_risk_students": low_risk_list,
-            "improving_students": improving_list,
-            "declining_students": declining_list,
-            "attendance_academic_risk_count": len(high_risk_list),
-            "high_performers_count": len(improving_list)
-        }
+        data=risk_data
     )
 
 

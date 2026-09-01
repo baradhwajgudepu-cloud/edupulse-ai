@@ -1,0 +1,10 @@
+guardian_id,guardian_type,first_name,last_name,gender,date_of_birth,mobile,email,aadhaar_number,pan_number
+G_001,FATHER,,Doe,MALE,1980-01-01,9876543212,test@t.com,,
+G_002,INVALID_TYPE,Mary,Smith,FEMALE,1982-06-15,9876543212,test@t.com,,
+G_003,MOTHER,Jane,Smith,INVALID_GENDER,1982-06-15,9876543212,test@t.com,,
+G_004,MOTHER,Jane,Smith,FEMALE,15-06-1982,9876543212,test@t.com,,
+G_005,MOTHER,Jane,Smith,FEMALE,2099-06-15,9876543212,test@t.com,,
+G_006,MOTHER,Jane,Smith,FEMALE,1982-06-15,INVALID_PHONE,test@t.com,,
+G_007,MOTHER,Jane,Smith,FEMALE,1982-06-15,9876543212,invalid_email,,
+G_008,MOTHER,Jane,Smith,FEMALE,1982-06-15,9876543212,test@t.com,12345,
+G_009,MOTHER,Jane,Smith,FEMALE,1982-06-15,9876543212,test@t.com,,12345ABCDE

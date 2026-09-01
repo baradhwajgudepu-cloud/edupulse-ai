@@ -40,8 +40,13 @@ DEFAULT_WHATSAPP_TEMPLATES = {
 }
 
 class NotificationService:
-    def __init__(self, notification_repo: NotificationRepository) -> None:
-        self.notification_repo = notification_repo
+    def __init__(self, notification_repo: Any) -> None:
+        if isinstance(notification_repo, NotificationRepository):
+            self.notification_repo = notification_repo
+            self.db = getattr(notification_repo, 'db', notification_repo)
+        else:
+            self.db = notification_repo
+            self.notification_repo = NotificationRepository(notification_repo)
 
     async def get_multi(
         self,
@@ -927,13 +932,13 @@ class NotificationService:
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, report_card_id: uuid.UUID
     ) -> List[Notification]:
         stmt = select(ReportCardPublication).where(ReportCardPublication.id == report_card_id, ReportCardPublication.deleted_at.is_(None))
-        res = await self.notification_repo.db.execute(stmt)
+        res = await self.db.execute(stmt)
         pub = res.scalar_one_or_none()
         if not pub:
             return []
 
         stmt_st = select(Student).where(Student.id == pub.student_id, Student.deleted_at.is_(None))
-        res_st = await self.notification_repo.db.execute(stmt_st)
+        res_st = await self.db.execute(stmt_st)
         student = res_st.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Student"
 

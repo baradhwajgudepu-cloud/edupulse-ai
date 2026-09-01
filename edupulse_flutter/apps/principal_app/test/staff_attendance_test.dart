@@ -12,6 +12,16 @@ import 'package:principal_app/features/staff_attendance/presentation/pages/teach
 import 'package:principal_app/features/staff_attendance/presentation/pages/geofence_configuration_screen.dart';
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'fake_token';
   @override
@@ -309,6 +319,7 @@ void main() {
         lateCount: 1,
         halfDayCount: 0,
         onLeaveCount: 0,
+        notMarkedCount: 0,
         attendanceRate: 66.7,
         records: [
           StaffDailyAttendanceReportItem(

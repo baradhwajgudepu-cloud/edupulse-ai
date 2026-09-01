@@ -1,0 +1,6 @@
+student_admission_number,guardian_id,relationship,is_primary
+STU_TEMP,9876543202,MOTHER,false
+STU_001,95555505a99b5,OTHER,false
+STU_001,9876543202,MOTHER,false
+STU_NO_PRIMARY,9876543202,MOTHER,true
+STU_001,,MOTHER,false

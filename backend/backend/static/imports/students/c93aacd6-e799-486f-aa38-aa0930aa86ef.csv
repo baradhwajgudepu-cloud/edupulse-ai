@@ -1,0 +1,2 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+John,Doe,MALE,2015-05-15,ADM_DEST_1,15,2026-06-01,d62d83a7-87b3-496a-a1c2-5193c8df64a3,1a1f620a-7faf-4709-bfba-b09667811553,02717203-e4d7-4e8c-af35-594cbde78571

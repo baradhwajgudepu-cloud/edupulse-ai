@@ -14,7 +14,7 @@ from app.models.communication import (
 from app.models.student import Student
 from app.models.guardian import Guardian, StudentGuardian
 from app.models.teacher import Teacher
-from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
 from app.models.user import User, UserStatus
 from app.models.role import Role
 from app.repositories.communication import CommunicationRepository
@@ -161,11 +161,15 @@ class CommunicationService:
                 detail="Student record not found."
             )
 
-        # 2. Verify permission (Parent can only create for their student)
+        # 2. Verify permission (Parent can only create for their student, Teacher can only create for their taught student)
         user_role_codes = {r.code for r in current_user.roles}
         is_parent = "PARENT" in user_role_codes
+        is_teacher = "TEACHER" in user_role_codes
+        is_admin_or_principal = current_user.is_superuser or any(
+            code in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for code in user_role_codes
+        )
         
-        if is_parent:
+        if is_parent and not is_admin_or_principal:
             stmt_guard = select(StudentGuardian).join(Guardian).where(
                 StudentGuardian.student_id == student.id,
                 Guardian.user_id == current_user.id,
@@ -176,6 +180,36 @@ class CommunicationService:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied. You are not a registered guardian for this student."
+                )
+
+        if is_teacher and not is_admin_or_principal:
+            # Resolve teacher profile
+            stmt_teach = select(Teacher).where(
+                Teacher.user_id == current_user.id,
+                Teacher.tenant_id == tenant_id,
+                Teacher.deleted_at.is_(None)
+            )
+            res_teach = await self.repo.db.execute(stmt_teach)
+            teacher = res_teach.scalar_one_or_none()
+            if not teacher:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. Active teacher profile not found."
+                )
+            
+            # Verify teacher is assigned to student's class and section
+            stmt_tsa = select(TeacherSubjectAssignment).where(
+                TeacherSubjectAssignment.teacher_id == teacher.id,
+                TeacherSubjectAssignment.class_id == student.class_id,
+                TeacherSubjectAssignment.section_id == student.section_id,
+                TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+                TeacherSubjectAssignment.tenant_id == tenant_id
+            )
+            res_tsa = await self.repo.db.execute(stmt_tsa)
+            if not res_tsa.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You do not teach this student."
                 )
 
         # 3. Resolve assignee and target recipient role
@@ -314,8 +348,59 @@ class CommunicationService:
 
         # Verify participant or admin/principal access
         user_role_codes = {r.code for r in current_user.roles}
-        is_admin_or_principal = any(r in ["ADMIN", "PRINCIPAL", "SUPER_ADMIN"] for r in user_role_codes)
+        is_admin_or_principal = current_user.is_superuser or any(r in ["ADMIN", "PRINCIPAL", "SUPER_ADMIN"] for r in user_role_codes)
         
+        is_teacher = "TEACHER" in user_role_codes
+        is_parent = "PARENT" in user_role_codes
+
+        if is_teacher and not is_admin_or_principal:
+            from app.repositories.teacher import TeacherRepository
+            from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+            
+            teacher_repo = TeacherRepository(self.repo.db)
+            teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+            if not teacher:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. Active teacher profile not found."
+                )
+            
+            stmt_s = select(Student).where(Student.id == request.student_id)
+            res_s = await self.repo.db.execute(stmt_s)
+            s = res_s.scalar_one_or_none()
+            if not s:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Student associated with this request not found."
+                )
+            
+            stmt_tsa = select(TeacherSubjectAssignment).where(
+                TeacherSubjectAssignment.teacher_id == teacher.id,
+                TeacherSubjectAssignment.class_id == s.class_id,
+                TeacherSubjectAssignment.section_id == s.section_id,
+                TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+                TeacherSubjectAssignment.tenant_id == tenant_id
+            )
+            res_tsa = await self.repo.db.execute(stmt_tsa)
+            if not res_tsa.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You do not teach the student associated with this request."
+                )
+
+        if is_parent and not is_admin_or_principal:
+            stmt_guard = select(StudentGuardian).join(Guardian).where(
+                StudentGuardian.student_id == request.student_id,
+                Guardian.user_id == current_user.id,
+                StudentGuardian.tenant_id == tenant_id
+            )
+            res_guard = await self.repo.db.execute(stmt_guard)
+            if not res_guard.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You are not a registered guardian for the student associated with this request."
+                )
+
         participant = await self.repo.get_participant(request_id, current_user.id)
         if not participant and not is_admin_or_principal:
             raise HTTPException(
@@ -712,8 +797,59 @@ class CommunicationService:
 
         # Permissions check
         user_roles = [r.code for r in current_user.roles]
-        is_admin_or_principal = any(r in ["ADMIN", "PRINCIPAL", "SUPER_ADMIN"] for r in user_roles)
+        is_admin_or_principal = current_user.is_superuser or any(r in ["ADMIN", "PRINCIPAL", "SUPER_ADMIN"] for r in user_roles)
         
+        is_teacher = "TEACHER" in user_roles
+        is_parent = "PARENT" in user_roles
+
+        if is_teacher and not is_admin_or_principal:
+            from app.repositories.teacher import TeacherRepository
+            from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentStatus
+            
+            teacher_repo = TeacherRepository(self.repo.db)
+            teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+            if not teacher:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. Active teacher profile not found."
+                )
+            
+            stmt_s = select(Student).where(Student.id == request.student_id)
+            res_s = await self.repo.db.execute(stmt_s)
+            s = res_s.scalar_one_or_none()
+            if not s:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Student associated with this request not found."
+                )
+            
+            stmt_tsa = select(TeacherSubjectAssignment).where(
+                TeacherSubjectAssignment.teacher_id == teacher.id,
+                TeacherSubjectAssignment.class_id == s.class_id,
+                TeacherSubjectAssignment.section_id == s.section_id,
+                TeacherSubjectAssignment.status == AssignmentStatus.ACTIVE,
+                TeacherSubjectAssignment.tenant_id == tenant_id
+            )
+            res_tsa = await self.repo.db.execute(stmt_tsa)
+            if not res_tsa.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You do not teach the student associated with this request."
+                )
+
+        if is_parent and not is_admin_or_principal:
+            stmt_guard = select(StudentGuardian).join(Guardian).where(
+                StudentGuardian.student_id == request.student_id,
+                Guardian.user_id == current_user.id,
+                StudentGuardian.tenant_id == tenant_id
+            )
+            res_guard = await self.repo.db.execute(stmt_guard)
+            if not res_guard.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You are not a registered guardian for the student associated with this request."
+                )
+
         participant = await self.repo.get_participant(request_id, current_user.id)
         if not participant and not is_admin_or_principal:
             raise HTTPException(

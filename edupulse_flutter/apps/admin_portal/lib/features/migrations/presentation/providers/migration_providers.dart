@@ -1,10 +1,11 @@
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:admin_portal/features/migrations/data/models/migration_models.dart';
 import 'package:admin_portal/features/school_setup/presentation/providers/school_setup_providers.dart';
 import 'package:admin_portal/features/students/presentation/providers/student_providers.dart';
+import 'package:admin_portal/features/guardians/presentation/providers/guardian_providers.dart';
+
 
 // --- 1. MIGRATION JOB LIST PROVIDER ---
 class MigrationJobListState {
@@ -259,6 +260,7 @@ class StudentMigrationWizardState {
   final bool isActionInProgress;
   final String? errorMessage;
   final List<ImportJobRowDto> validationErrors;
+  final String? selectedSheet;
 
   const StudentMigrationWizardState({
     required this.currentStep,
@@ -271,6 +273,7 @@ class StudentMigrationWizardState {
     required this.isActionInProgress,
     this.errorMessage,
     required this.validationErrors,
+    this.selectedSheet,
   });
 
   StudentMigrationWizardState copyWith({
@@ -284,6 +287,7 @@ class StudentMigrationWizardState {
     bool? isActionInProgress,
     String? errorMessage,
     List<ImportJobRowDto>? validationErrors,
+    String? selectedSheet,
   }) {
     return StudentMigrationWizardState(
       currentStep: currentStep ?? this.currentStep,
@@ -296,6 +300,7 @@ class StudentMigrationWizardState {
       isActionInProgress: isActionInProgress ?? this.isActionInProgress,
       errorMessage: errorMessage,
       validationErrors: validationErrors ?? this.validationErrors,
+      selectedSheet: selectedSheet ?? this.selectedSheet,
     );
   }
 
@@ -311,11 +316,13 @@ class StudentMigrationWizardState {
 class StudentMigrationWizardController extends StateNotifier<StudentMigrationWizardState> {
   final BaseApiClient _apiClient;
   final Ref _ref;
+  int _validationRequestId = 0;
 
   StudentMigrationWizardController(this._apiClient, this._ref)
       : super(StudentMigrationWizardState.initial());
 
   void reset() {
+    _validationRequestId = 0;
     state = StudentMigrationWizardState.initial();
   }
 
@@ -360,6 +367,7 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
           selectedSchoolId: job.schoolId,
           selectedAcademicYearId: job.jobMetadata['academic_year_id'] as String?,
           fileName: job.sourceFilename,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           currentStep: targetStep,
           isActionInProgress: false,
         );
@@ -394,7 +402,17 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
       fileName: name,
       fileBytes: bytes,
       errorMessage: null,
+      selectedSheet: null,
     );
+  }
+
+  void updateSelectedSheet(String? sheetName) {
+    _validationRequestId++;
+    final currentId = _validationRequestId;
+    state = state.copyWith(selectedSheet: sheetName);
+    if (state.jobId != null) {
+      validateCsvFile(requestId: currentId);
+    }
   }
 
   void nextStep() {
@@ -450,7 +468,7 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
     );
   }
 
-  Future<bool> validateCsvFile() async {
+  Future<bool> validateCsvFile({int? requestId}) async {
     if (state.jobId == null || state.fileBytes == null || state.fileName == null) {
       state = state.copyWith(errorMessage: 'Job parameters or file payload is missing.');
       return false;
@@ -465,8 +483,10 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
       ),
     });
 
+    final sheetParam = state.selectedSheet != null ? '?sheet_name=${Uri.encodeComponent(state.selectedSheet!)}' : '';
+
     final result = await _apiClient.post(
-      '/import-jobs/${state.jobId}/validate',
+      '/import-jobs/${state.jobId}/validate$sheetParam',
       data: formData,
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
@@ -477,22 +497,25 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
     return await result.when(
       onSuccess: (job) async {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(
           activeJob: job,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           isActionInProgress: false,
         );
-        await fetchValidationErrors();
+        await fetchValidationErrors(requestId: requestId);
         return true;
       },
       onFailure: (failure) {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
         return false;
       },
     );
   }
 
-  Future<void> fetchValidationErrors() async {
+  Future<void> fetchValidationErrors({int? requestId}) async {
     if (state.jobId == null) return;
 
     final result = await _apiClient.get(
@@ -508,11 +531,13 @@ class StudentMigrationWizardController extends StateNotifier<StudentMigrationWiz
     result.when(
       onSuccess: (data) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         final errors = data.where((r) => r.status == 'failed').toList();
         state = state.copyWith(validationErrors: errors);
       },
       onFailure: (failure) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         state = state.copyWith(errorMessage: failure.message);
       },
     );
@@ -608,6 +633,7 @@ class AcademicSetupMigrationWizardState {
   final bool isActionInProgress;
   final String? errorMessage;
   final List<ImportJobRowDto> validationErrors;
+  final String? selectedSheet;
 
   const AcademicSetupMigrationWizardState({
     required this.currentStep,
@@ -620,6 +646,7 @@ class AcademicSetupMigrationWizardState {
     required this.isActionInProgress,
     this.errorMessage,
     required this.validationErrors,
+    this.selectedSheet,
   });
 
   AcademicSetupMigrationWizardState copyWith({
@@ -633,6 +660,7 @@ class AcademicSetupMigrationWizardState {
     bool? isActionInProgress,
     String? errorMessage,
     List<ImportJobRowDto>? validationErrors,
+    String? selectedSheet,
   }) {
     return AcademicSetupMigrationWizardState(
       currentStep: currentStep ?? this.currentStep,
@@ -645,6 +673,7 @@ class AcademicSetupMigrationWizardState {
       isActionInProgress: isActionInProgress ?? this.isActionInProgress,
       errorMessage: errorMessage,
       validationErrors: validationErrors ?? this.validationErrors,
+      selectedSheet: selectedSheet ?? this.selectedSheet,
     );
   }
 
@@ -660,11 +689,13 @@ class AcademicSetupMigrationWizardState {
 class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetupMigrationWizardState> {
   final BaseApiClient _apiClient;
   final Ref _ref;
+  int _validationRequestId = 0;
 
   AcademicSetupMigrationWizardController(this._apiClient, this._ref)
       : super(AcademicSetupMigrationWizardState.initial());
 
   void reset() {
+    _validationRequestId = 0;
     state = AcademicSetupMigrationWizardState.initial();
   }
 
@@ -709,6 +740,7 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
           selectedSchoolId: job.schoolId,
           selectedAcademicYearId: job.jobMetadata['academic_year_id'] as String?,
           fileName: job.sourceFilename,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           currentStep: targetStep,
           isActionInProgress: false,
         );
@@ -743,7 +775,17 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
       fileName: name,
       fileBytes: bytes,
       errorMessage: null,
+      selectedSheet: null,
     );
+  }
+
+  void updateSelectedSheet(String? sheetName) {
+    _validationRequestId++;
+    final currentId = _validationRequestId;
+    state = state.copyWith(selectedSheet: sheetName);
+    if (state.jobId != null) {
+      validateCsvFile(requestId: currentId);
+    }
   }
 
   void nextStep() {
@@ -800,7 +842,7 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
     );
   }
 
-  Future<bool> validateCsvFile() async {
+  Future<bool> validateCsvFile({int? requestId}) async {
     if (state.jobId == null || state.fileBytes == null || state.fileName == null) {
       state = state.copyWith(errorMessage: 'Job parameters or file payload is missing.');
       return false;
@@ -815,8 +857,10 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
       ),
     });
 
+    final sheetParam = state.selectedSheet != null ? '?sheet_name=${Uri.encodeComponent(state.selectedSheet!)}' : '';
+
     final result = await _apiClient.post(
-      '/import-jobs/${state.jobId}/validate',
+      '/import-jobs/${state.jobId}/validate$sheetParam',
       data: formData,
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
@@ -827,22 +871,25 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
     return await result.when(
       onSuccess: (job) async {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(
           activeJob: job,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           isActionInProgress: false,
         );
-        await fetchValidationErrors();
+        await fetchValidationErrors(requestId: requestId);
         return true;
       },
       onFailure: (failure) {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
         return false;
       },
     );
   }
 
-  Future<void> fetchValidationErrors() async {
+  Future<void> fetchValidationErrors({int? requestId}) async {
     if (state.jobId == null) return;
 
     final result = await _apiClient.get(
@@ -858,11 +905,13 @@ class AcademicSetupMigrationWizardController extends StateNotifier<AcademicSetup
     result.when(
       onSuccess: (data) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         final errors = data.where((r) => r.status == 'failed').toList();
         state = state.copyWith(validationErrors: errors);
       },
       onFailure: (failure) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         state = state.copyWith(errorMessage: failure.message);
       },
     );
@@ -958,6 +1007,7 @@ class GuardianMappingMigrationWizardState {
   final bool isActionInProgress;
   final String? errorMessage;
   final List<ImportJobRowDto> validationErrors;
+  final String? selectedSheet;
 
   const GuardianMappingMigrationWizardState({
     required this.currentStep,
@@ -969,6 +1019,7 @@ class GuardianMappingMigrationWizardState {
     required this.isActionInProgress,
     this.errorMessage,
     required this.validationErrors,
+    this.selectedSheet,
   });
 
   GuardianMappingMigrationWizardState copyWith({
@@ -981,6 +1032,7 @@ class GuardianMappingMigrationWizardState {
     bool? isActionInProgress,
     String? errorMessage,
     List<ImportJobRowDto>? validationErrors,
+    String? selectedSheet,
   }) {
     return GuardianMappingMigrationWizardState(
       currentStep: currentStep ?? this.currentStep,
@@ -992,6 +1044,7 @@ class GuardianMappingMigrationWizardState {
       isActionInProgress: isActionInProgress ?? this.isActionInProgress,
       errorMessage: errorMessage,
       validationErrors: validationErrors ?? this.validationErrors,
+      selectedSheet: selectedSheet ?? this.selectedSheet,
     );
   }
 
@@ -1007,11 +1060,13 @@ class GuardianMappingMigrationWizardState {
 class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMappingMigrationWizardState> {
   final BaseApiClient _apiClient;
   final Ref _ref;
+  int _validationRequestId = 0;
 
   GuardianMappingMigrationWizardController(this._apiClient, this._ref)
       : super(GuardianMappingMigrationWizardState.initial());
 
   void reset() {
+    _validationRequestId = 0;
     state = GuardianMappingMigrationWizardState.initial();
   }
 
@@ -1055,6 +1110,7 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
           activeJob: job,
           selectedSchoolId: job.schoolId,
           fileName: job.sourceFilename,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           currentStep: targetStep,
           isActionInProgress: false,
         );
@@ -1088,7 +1144,17 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
       fileName: name,
       fileBytes: bytes,
       errorMessage: null,
+      selectedSheet: null,
     );
+  }
+
+  void updateSelectedSheet(String? sheetName) {
+    _validationRequestId++;
+    final currentId = _validationRequestId;
+    state = state.copyWith(selectedSheet: sheetName);
+    if (state.jobId != null) {
+      validateCsvFile(requestId: currentId);
+    }
   }
 
   void nextStep() {
@@ -1142,7 +1208,7 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
     );
   }
 
-  Future<bool> validateCsvFile() async {
+  Future<bool> validateCsvFile({int? requestId}) async {
     if (state.jobId == null || state.fileBytes == null || state.fileName == null) {
       state = state.copyWith(errorMessage: 'Job parameters or file payload is missing.');
       return false;
@@ -1157,8 +1223,10 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
       ),
     });
 
+    final sheetParam = state.selectedSheet != null ? '?sheet_name=${Uri.encodeComponent(state.selectedSheet!)}' : '';
+
     final result = await _apiClient.post(
-      '/import-jobs/${state.jobId}/validate',
+      '/import-jobs/${state.jobId}/validate$sheetParam',
       data: formData,
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
@@ -1169,22 +1237,25 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
     return await result.when(
       onSuccess: (job) async {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(
           activeJob: job,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
           isActionInProgress: false,
         );
-        await fetchValidationErrors();
+        await fetchValidationErrors(requestId: requestId);
         return true;
       },
       onFailure: (failure) {
         if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
         state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
         return false;
       },
     );
   }
 
-  Future<void> fetchValidationErrors() async {
+  Future<void> fetchValidationErrors({int? requestId}) async {
     if (state.jobId == null) return;
 
     final result = await _apiClient.get(
@@ -1200,11 +1271,13 @@ class GuardianMappingMigrationWizardController extends StateNotifier<GuardianMap
     result.when(
       onSuccess: (data) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         final errors = data.where((r) => r.status == 'failed').toList();
         state = state.copyWith(validationErrors: errors);
       },
       onFailure: (failure) {
         if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
         state = state.copyWith(errorMessage: failure.message);
       },
     );
@@ -1285,4 +1358,369 @@ final guardianMappingMigrationWizardProvider = StateNotifierProvider<
   final apiClient = ref.watch(apiClientProvider);
   return GuardianMappingMigrationWizardController(apiClient, ref);
 });
+
+
+// --- 7. GUARDIAN MIGRATION CONTROLLER ---
+class GuardianMigrationWizardState {
+  final int currentStep; // 0: Context, 1: CSV, 2: Validate, 3: Review, 4: Execute, 5: Complete
+  final String? selectedSchoolId;
+  final String? fileName;
+  final Uint8List? fileBytes;
+  final String? jobId;
+  final ImportJobDto? activeJob;
+  final bool isActionInProgress;
+  final String? errorMessage;
+  final List<ImportJobRowDto> validationErrors;
+  final String? selectedSheet;
+
+  const GuardianMigrationWizardState({
+    required this.currentStep,
+    this.selectedSchoolId,
+    this.fileName,
+    this.fileBytes,
+    this.jobId,
+    this.activeJob,
+    required this.isActionInProgress,
+    this.errorMessage,
+    required this.validationErrors,
+    this.selectedSheet,
+  });
+
+  GuardianMigrationWizardState copyWith({
+    int? currentStep,
+    String? selectedSchoolId,
+    String? fileName,
+    Uint8List? fileBytes,
+    String? jobId,
+    ImportJobDto? activeJob,
+    bool? isActionInProgress,
+    String? errorMessage,
+    List<ImportJobRowDto>? validationErrors,
+    String? selectedSheet,
+  }) {
+    return GuardianMigrationWizardState(
+      currentStep: currentStep ?? this.currentStep,
+      selectedSchoolId: selectedSchoolId ?? this.selectedSchoolId,
+      fileName: fileName ?? this.fileName,
+      fileBytes: fileBytes ?? this.fileBytes,
+      jobId: jobId ?? this.jobId,
+      activeJob: activeJob ?? this.activeJob,
+      isActionInProgress: isActionInProgress ?? this.isActionInProgress,
+      errorMessage: errorMessage,
+      validationErrors: validationErrors ?? this.validationErrors,
+      selectedSheet: selectedSheet ?? this.selectedSheet,
+    );
+  }
+
+  factory GuardianMigrationWizardState.initial() {
+    return const GuardianMigrationWizardState(
+      currentStep: 0,
+      isActionInProgress: false,
+      validationErrors: [],
+    );
+  }
+}
+
+class GuardianMigrationWizardController extends StateNotifier<GuardianMigrationWizardState> {
+  final BaseApiClient _apiClient;
+  final Ref _ref;
+  int _validationRequestId = 0;
+
+  GuardianMigrationWizardController(this._apiClient, this._ref)
+      : super(GuardianMigrationWizardState.initial());
+
+  void reset() {
+    _validationRequestId = 0;
+    state = GuardianMigrationWizardState.initial();
+  }
+
+  Future<bool> preloadJob(String jobId) async {
+    state = state.copyWith(isActionInProgress: true, errorMessage: null);
+    final result = await _apiClient.get(
+      '/import-jobs/$jobId',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ImportJobDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return await result.when(
+      onSuccess: (job) async {
+        if (!mounted) return false;
+        int targetStep = 0;
+        switch (job.status) {
+          case 'DRAFT':
+            targetStep = 1;
+            break;
+          case 'VALIDATING':
+          case 'VALIDATED':
+            targetStep = 2;
+            break;
+          case 'RUNNING':
+            targetStep = 4;
+            break;
+          case 'COMPLETED':
+          case 'COMPLETED_WITH_ERRORS':
+          case 'FAILED':
+          case 'CANCELLED':
+            targetStep = 5;
+            break;
+          default:
+            targetStep = 0;
+        }
+
+        state = state.copyWith(
+          jobId: job.id,
+          activeJob: job,
+          selectedSchoolId: job.schoolId,
+          fileName: job.sourceFilename,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
+          currentStep: targetStep,
+          isActionInProgress: false,
+        );
+
+        if (job.status == 'VALIDATED' ||
+            job.status == 'COMPLETED' ||
+            job.status == 'COMPLETED_WITH_ERRORS') {
+          await fetchValidationErrors();
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        if (!mounted) return false;
+        state = state.copyWith(
+          isActionInProgress: false,
+          errorMessage: 'Failed to preload job: ${failure.message}',
+        );
+        return false;
+      },
+    );
+  }
+
+  void updateContext(String schoolId) {
+    state = state.copyWith(
+      selectedSchoolId: schoolId,
+    );
+  }
+
+  void updateSelectedFile(String name, Uint8List bytes) {
+    state = state.copyWith(
+      fileName: name,
+      fileBytes: bytes,
+      errorMessage: null,
+      selectedSheet: null,
+    );
+  }
+
+  void updateSelectedSheet(String? sheetName) {
+    _validationRequestId++;
+    final currentId = _validationRequestId;
+    state = state.copyWith(selectedSheet: sheetName);
+    if (state.jobId != null) {
+      validateCsvFile(requestId: currentId);
+    }
+  }
+
+  void nextStep() {
+    state = state.copyWith(currentStep: state.currentStep + 1);
+  }
+
+  void prevStep() {
+    if (state.currentStep > 0) {
+      state = state.copyWith(currentStep: state.currentStep - 1);
+    }
+  }
+
+  Future<bool> createImportJob() async {
+    if (state.selectedSchoolId == null || state.fileName == null) {
+      state = state.copyWith(errorMessage: 'Required context metadata is missing.');
+      return false;
+    }
+
+    state = state.copyWith(isActionInProgress: true, errorMessage: null);
+
+    final result = await _apiClient.post(
+      '/import-jobs',
+      data: {
+        'school_id': state.selectedSchoolId,
+        'import_type': 'GUARDIANS',
+        'source_filename': state.fileName,
+        'total_rows': 0,
+        'job_metadata': {},
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ImportJobDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (job) {
+        if (!mounted) return false;
+        state = state.copyWith(
+          jobId: job.id,
+          activeJob: job,
+          isActionInProgress: false,
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        if (!mounted) return false;
+        state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> validateCsvFile({int? requestId}) async {
+    if (state.jobId == null || state.fileBytes == null || state.fileName == null) {
+      state = state.copyWith(errorMessage: 'Job parameters or file payload is missing.');
+      return false;
+    }
+
+    state = state.copyWith(isActionInProgress: true, errorMessage: null);
+
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(
+        state.fileBytes!,
+        filename: state.fileName!,
+      ),
+    });
+
+    final sheetParam = state.selectedSheet != null ? '?sheet_name=${Uri.encodeComponent(state.selectedSheet!)}' : '';
+
+    final result = await _apiClient.post(
+      '/import-jobs/${state.jobId}/validate$sheetParam',
+      data: formData,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ImportJobDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return await result.when(
+      onSuccess: (job) async {
+        if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
+        state = state.copyWith(
+          activeJob: job,
+          selectedSheet: job.jobMetadata['selected_sheet'] as String?,
+          isActionInProgress: false,
+        );
+        await fetchValidationErrors(requestId: requestId);
+        return true;
+      },
+      onFailure: (failure) {
+        if (!mounted) return false;
+        if (requestId != null && requestId != _validationRequestId) return false;
+        state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<void> fetchValidationErrors({int? requestId}) async {
+    if (state.jobId == null) return;
+
+    final result = await _apiClient.get(
+      '/import-jobs/${state.jobId}/rows',
+      queryParameters: {'skip': 0, 'limit': 100},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>;
+        return list.map((e) => ImportJobRowDto.fromJson(e as Map<String, dynamic>)).toList();
+      },
+    );
+
+    result.when(
+      onSuccess: (data) {
+        if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
+        final errors = data.where((r) => r.status == 'failed').toList();
+        state = state.copyWith(validationErrors: errors);
+      },
+      onFailure: (failure) {
+        if (!mounted) return;
+        if (requestId != null && requestId != _validationRequestId) return;
+        state = state.copyWith(errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<bool> executeMigration() async {
+    if (state.jobId == null) {
+      state = state.copyWith(errorMessage: 'No active job ID found.');
+      return false;
+    }
+
+    state = state.copyWith(isActionInProgress: true, errorMessage: null);
+
+    final result = await _apiClient.post(
+      '/import-jobs/${state.jobId}/start',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ImportJobDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (job) {
+        if (!mounted) return false;
+        state = state.copyWith(
+          activeJob: job,
+          isActionInProgress: false,
+        );
+        if (state.selectedSchoolId != null) {
+          _ref.invalidate(migrationJobListProvider(state.selectedSchoolId!));
+          _ref.invalidate(guardianListProvider);
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        if (!mounted) return false;
+        state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> cancelMigration() async {
+    if (state.jobId == null) return false;
+    state = state.copyWith(isActionInProgress: true, errorMessage: null);
+
+    final result = await _apiClient.post(
+      '/import-jobs/${state.jobId}/cancel',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ImportJobDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (job) {
+        if (!mounted) return false;
+        state = state.copyWith(
+          activeJob: job,
+          isActionInProgress: false,
+        );
+        if (state.selectedSchoolId != null) {
+          _ref.invalidate(migrationJobListProvider(state.selectedSchoolId!));
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        if (!mounted) return false;
+        state = state.copyWith(isActionInProgress: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final guardianMigrationWizardProvider = StateNotifierProvider<
+    GuardianMigrationWizardController, GuardianMigrationWizardState>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return GuardianMigrationWizardController(apiClient, ref);
+});
+
 

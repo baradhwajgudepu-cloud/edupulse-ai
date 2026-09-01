@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
+import 'package:edupulse_config/edupulse_config.dart';
 
 // Import local domain objects and providers
 import 'package:principal_app/features/students/data/models/student_model.dart';
@@ -15,6 +16,16 @@ import 'package:principal_app/features/report_cards/presentation/providers/repor
 import 'package:principal_app/features/dashboard/presentation/providers/dashboard_provider.dart';
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'fake_token';
   @override
@@ -660,6 +671,35 @@ void main() {
 
       // State must not be modified by School A stale callback
       expect(container.read(dashboardStateProvider), equals(stateB));
+    });
+  });
+
+  group('9. Production UAT Configuration Detection and Tenant Context Checks', () {
+    test('BuildConfig throws StateError when production tenant ID is missing', () {
+      expect(
+        () => BuildConfig.fromEnvironment(
+          resolvedApiBaseUrl: 'https://edupulse-api-295242569787.asia-south1.run.app/api/v1',
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('BuildConfig accepts and maps production tenant ID when explicitly supplied', () {
+      final productionConfig = BuildConfig.fromEnvironment(
+        resolvedApiBaseUrl: 'https://edupulse-api-295242569787.asia-south1.run.app/api/v1',
+        resolvedTenantId: '09f2d4e7-2877-4e42-9e95-e97d52775687',
+      );
+      expect(productionConfig.isProduction, isTrue);
+      expect(productionConfig.tenantId, equals('09f2d4e7-2877-4e42-9e95-e97d52775687'));
+      expect(productionConfig.apiBaseUrl, equals('https://edupulse-api-295242569787.asia-south1.run.app/api/v1/'));
+    });
+
+    test('BuildConfig falls back to development defaults for non-production URLs', () {
+      final devConfig = BuildConfig.fromEnvironment(
+        resolvedApiBaseUrl: 'http://127.0.0.1:8000/api/v1',
+      );
+      expect(devConfig.isProduction, isFalse);
+      expect(devConfig.tenantId, equals('d09b9362-3dc8-422d-a441-160735fcea96'));
     });
   });
 }

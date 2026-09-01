@@ -50,20 +50,40 @@ async def list_guardians(
     current_user: User = Depends(require_permission("guardian.read")),
     service: GuardianService = Depends(get_guardian_service)
 ) -> APIResponse[List[GuardianResponse]]:
-    guardians = await service.guardian_repo.get_multi(
-        school_id=school_id,
-        tenant_id=tenant_id,
-        status=status_filter,
-        search=search,
-        skip=skip,
-        limit=limit
-    )
+    user_role_codes = [role.code for role in current_user.roles]
+    if "PARENT" in user_role_codes and not current_user.is_superuser:
+        # Secure Object-Level Restriction: A parent must only retrieve their own guardian profile
+        from app.models.guardian import Guardian
+        from sqlalchemy.orm import selectinload
+        from sqlalchemy import select
+        
+        stmt = select(Guardian).where(
+            Guardian.user_id == current_user.id,
+            Guardian.school_id == school_id,
+            Guardian.tenant_id == tenant_id,
+            Guardian.deleted_at.is_(None)
+        ).options(
+            selectinload(Guardian.students),
+            selectinload(Guardian.user)
+        )
+        res = await service.guardian_repo.db.execute(stmt)
+        guardians = list(res.scalars().all())
+    else:
+        guardians = await service.guardian_repo.get_multi(
+            school_id=school_id,
+            tenant_id=tenant_id,
+            status=status_filter,
+            search=search,
+            skip=skip,
+            limit=limit
+        )
     responses = [GuardianResponse.model_validate(g) for g in guardians]
     return APIResponse[List[GuardianResponse]](
         success=True,
         message="Guardians fetched successfully.",
         data=responses
     )
+
 
 @router.get(
     "/{id}",
@@ -85,6 +105,16 @@ async def get_guardian(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Guardian profile not found."
         )
+        
+    user_role_codes = [role.code for role in current_user.roles]
+    if "PARENT" in user_role_codes and not current_user.is_superuser:
+        # Secure Object-Level Restriction: Verifies matching user account link
+        if db_obj.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You do not have permission to view this guardian profile."
+            )
+            
     return APIResponse[GuardianResponse](
         success=True,
         message="Guardian details fetched successfully.",

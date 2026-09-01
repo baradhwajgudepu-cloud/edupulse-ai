@@ -294,3 +294,235 @@ async def test_school_optimistic_concurrency_control(db_session) -> None:
             await repo_b.db.commit()
             
         await repo_b.db.close()
+
+
+@pytest.mark.anyio
+async def test_school_deletion_cascade_and_user_lifecycle(client: AsyncClient, db_session: AsyncSession) -> None:
+    """
+    Validates the complete school deletion lifecycle:
+    1. Single-school user is soft-deleted when their school is deleted.
+    2. Multi-school user has their deleted school association removed, but remains active for other schools.
+    3. Superuser is preserved.
+    4. Dependent school-owned records (students, teachers, guardians) are cascade soft-deleted.
+    """
+    from app.repositories.tenant import TenantRepository
+    from app.repositories.school import SchoolRepository
+    from app.schemas.tenant import TenantCreate
+    from app.schemas.school import SchoolCreate
+    from datetime import datetime
+    from app.models.user import User, UserStatus
+    from app.models.student import Student
+    from app.models.teacher import Teacher
+    from app.models.guardian import Guardian
+    from app.core.security import hash_password
+    from sqlalchemy import select, text
+
+    # Setup Tenant
+    repo_t = TenantRepository(db_session)
+    tenant = await repo_t.create(
+        TenantCreate(
+            name="Cascade Test Trust",
+            code="cascade-trust",
+            subdomain="cascadetrust",
+            email="trust@cascade.edu.in"
+        )
+    )
+
+    repo_s = SchoolRepository(db_session)
+    # Create School A and School B
+    school_a = await repo_s.create(
+        tenant_id=tenant.id,
+        obj_in=SchoolCreate(
+            name="School A Campus",
+            code="SCH_A",
+            board="CBSE",
+            email="scha@cascade.edu.in",
+            udise_code="36210599001"
+        )
+    )
+    school_b = await repo_s.create(
+        tenant_id=tenant.id,
+        obj_in=SchoolCreate(
+            name="School B Campus",
+            code="SCH_B",
+            board="CBSE",
+            email="schb@cascade.edu.in",
+            udise_code="36210599002"
+        )
+    )
+
+    # 1. Create a user assigned only to School A
+    user_single = User(
+        email="user.single@cascade.edu.in",
+        first_name="Single",
+        last_name="User",
+        hashed_password=hash_password("Pass@123"),
+        tenant_id=tenant.id,
+        status=UserStatus.ACTIVE
+    )
+    # 2. Create a user assigned to both School A and School B
+    user_shared = User(
+        email="user.shared@cascade.edu.in",
+        first_name="Shared",
+        last_name="User",
+        hashed_password=hash_password("Pass@123"),
+        tenant_id=tenant.id,
+        status=UserStatus.ACTIVE
+    )
+    # 3. Create a Superuser
+    user_super = User(
+        email="super.admin@cascade.edu.in",
+        first_name="Super",
+        last_name="Admin",
+        hashed_password=hash_password("Pass@123"),
+        tenant_id=tenant.id,
+        is_superuser=True,
+        status=UserStatus.ACTIVE
+    )
+
+    db_session.add_all([user_single, user_shared, user_super])
+    await db_session.flush()
+
+    # Link school associations
+    from app.models.role import school_users
+    await db_session.execute(
+        school_users.insert(),
+        [
+            {'user_id': user_single.id, 'school_id': school_a.id},
+            {'user_id': user_shared.id, 'school_id': school_a.id},
+            {'user_id': user_shared.id, 'school_id': school_b.id},
+            {'user_id': user_super.id, 'school_id': school_a.id},
+        ]
+    )
+
+    # Create dependent records for School A
+    from app.models.academic_year import AcademicYear
+    from app.models.class_entity import Class
+    from app.models.section import Section
+
+    ay = AcademicYear(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        name="AY 2025-2026",
+        code="AY2025-2026",
+        start_date=datetime(2025, 6, 1).date(),
+        end_date=datetime(2026, 4, 30).date(),
+        is_current=True
+    )
+    db_session.add(ay)
+    await db_session.flush()
+
+    cls_obj = Class(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        academic_year_id=ay.id,
+        name="Class 10",
+        code="C10",
+        level=10,
+        capacity=40
+    )
+    db_session.add(cls_obj)
+    await db_session.flush()
+
+    sec_obj = Section(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        academic_year_id=ay.id,
+        class_id=cls_obj.id,
+        name="Section A",
+        code="A",
+        capacity=40
+    )
+    db_session.add(sec_obj)
+    await db_session.flush()
+
+    student = Student(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        academic_year_id=ay.id,
+        class_id=cls_obj.id,
+        section_id=sec_obj.id,
+        admission_number="ADM-CASCADE-01",
+        roll_number="01",
+        first_name="Cascade",
+        last_name="Student",
+        gender="MALE",
+        date_of_birth=datetime(2010, 1, 1).date(),
+        admission_date=datetime(2025, 6, 1).date()
+    )
+    from app.models.teacher import EmploymentType
+    teacher = Teacher(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        employee_code="EMP-CASCADE-01",
+        staff_code="STF-CASCADE-01",
+        first_name="Cascade",
+        last_name="Teacher",
+        official_email="cascadeteacher@cascade.edu.in",
+        mobile="+919876543211",
+        employment_type=EmploymentType.FULL_TIME,
+        gender="FEMALE",
+        date_of_birth=datetime(1985, 1, 1).date(),
+        joining_date=datetime(2020, 6, 1).date()
+    )
+    guardian = Guardian(
+        school_id=school_a.id,
+        tenant_id=tenant.id,
+        guardian_type="FATHER",
+        first_name="Cascade",
+        last_name="Guardian",
+        gender="MALE",
+        date_of_birth=datetime(1980, 1, 1).date(),
+        mobile="+919876543299",
+        email="cascadeguardian@cascade.edu.in"
+    )
+    db_session.add_all([student, teacher, guardian])
+    await db_session.commit()
+
+    # Now execute soft_delete on School A
+    deleted_school = await repo_s.soft_delete(school_a)
+    assert deleted_school.deleted_at is not None
+    assert deleted_school.is_active is False
+
+    # VERIFY 1: Dependent records under School A are cascade soft-deleted
+    res_student = await db_session.execute(select(Student).where(Student.id == student.id))
+    st = res_student.scalar_one()
+    await db_session.refresh(st)
+    assert st.deleted_at is not None
+
+    res_teacher = await db_session.execute(select(Teacher).where(Teacher.id == teacher.id))
+    tc = res_teacher.scalar_one()
+    await db_session.refresh(tc)
+    assert tc.deleted_at is not None
+
+    res_guardian = await db_session.execute(select(Guardian).where(Guardian.id == guardian.id))
+    gd = res_guardian.scalar_one()
+    await db_session.refresh(gd)
+    assert gd.deleted_at is not None
+
+    # VERIFY 2: Single-school user is soft-deleted
+    res_u_single = await db_session.execute(select(User).where(User.id == user_single.id))
+    u_single_db = res_u_single.scalar_one()
+    await db_session.refresh(u_single_db)
+    assert u_single_db.deleted_at is not None
+    assert u_single_db.status == UserStatus.INACTIVE
+
+    # VERIFY 3: Shared multi-school user remains active with School A unlinked and School B retained
+    res_u_shared = await db_session.execute(select(User).where(User.id == user_shared.id))
+    u_shared_db = res_u_shared.scalar_one()
+    await db_session.refresh(u_shared_db)
+    assert u_shared_db.deleted_at is None
+    assert u_shared_db.status == UserStatus.ACTIVE
+
+    su_shared_links = (await db_session.execute(
+        select(school_users.c.school_id).where(school_users.c.user_id == user_shared.id)
+    )).scalars().all()
+    assert len(su_shared_links) == 1
+    assert su_shared_links[0] == school_b.id
+
+    # VERIFY 4: Superuser is preserved
+    res_u_super = await db_session.execute(select(User).where(User.id == user_super.id))
+    u_super_db = res_u_super.scalar_one()
+    await db_session.refresh(u_super_db)
+    assert u_super_db.deleted_at is None
+

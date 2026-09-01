@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
+import 'package:edupulse_network/edupulse_network.dart';
 import '../../../../core/providers/bootstrap_provider.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
@@ -40,7 +41,28 @@ class AppInitializationNotifier
     }
 
     final validateSession = ref.read(validateSessionUseCaseProvider);
-    final result = await validateSession();
+    
+    ApiResult<UserEntity> result;
+    try {
+      result = await validateSession().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => const ApiResult.failure(
+          ApiFailure(
+            message: 'Session validation timed out.',
+            type: ApiFailureType.network,
+            statusCode: 408,
+          ),
+        ),
+      );
+    } catch (e) {
+      result = ApiResult.failure(
+        ApiFailure(
+          message: 'Session validation failed: ${e.toString()}',
+          type: ApiFailureType.unknown,
+          statusCode: 500,
+        ),
+      );
+    }
 
     await result.when(
       onSuccess: (user) async {
@@ -59,7 +81,7 @@ class AppInitializationNotifier
       },
       onFailure: (failure) async {
         EduLogger.w(
-            'Saved authentication session token has expired: ${failure.message}');
+            'Saved authentication session token has expired or validation failed: ${failure.message}');
         await sessionManager.clearSession();
         state = SplashNavigationTarget.login;
       },

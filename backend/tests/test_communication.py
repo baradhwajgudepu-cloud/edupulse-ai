@@ -529,3 +529,132 @@ async def test_communication_ai_insights(client: AsyncClient, setup_communicatio
         assert insights_data["escalation_risk"] == "Low"
         assert len(insights_data["reply_suggestions"]) == 2
         mock_generate_json.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_communication_negative_relationships(client: AsyncClient, setup_communication_test_data, db_session: AsyncSession) -> None:
+    headers_parent = setup_communication_test_data["headers_parent"]
+    headers_teacher = setup_communication_test_data["headers_teacher"]
+    headers_parent_b = setup_communication_test_data["headers_parent_b"]
+    tenant_a = setup_communication_test_data["tenant_a"]
+    school_a = setup_communication_test_data["school_a"]
+    ay_a = setup_communication_test_data["ay_a"]
+    
+    from app.repositories.class_entity import ClassRepository
+    from app.repositories.section import SectionRepository
+    from app.repositories.student import StudentRepository
+    from app.schemas.class_entity import ClassCreate
+    from app.schemas.section import SectionCreate
+    from app.schemas.student import StudentCreate
+    
+    repo_c = ClassRepository(db_session)
+    repo_sec = SectionRepository(db_session)
+    repo_std = StudentRepository(db_session)
+    
+    class_other = await repo_c.create(tenant_a.id, ClassCreate(school_id=school_a.id, academic_year_id=ay_a.id, name="Class 9", code="C9", level=9, category=ClassCategory.PRIMARY, capacity=30))
+    await db_session.flush()
+    sec_other = await repo_sec.create(tenant_a.id, SectionCreate(school_id=school_a.id, academic_year_id=ay_a.id, class_id=class_other.id, name="Sec C", code="SC", capacity=30))
+    await db_session.commit()
+    
+    student_other = await repo_std.create(tenant_a.id, StudentCreate(
+        school_id=school_a.id, academic_year_id=ay_a.id, class_id=class_other.id, section_id=sec_other.id,
+        admission_number="ADM-999", roll_number="R-99", first_name="Unauthorized", last_name="Student",
+        gender=StudentGender.MALE, date_of_birth=date(2012, 5, 10), admission_date=date(2026, 6, 1)
+    ))
+    await db_session.commit()
+    
+    # A. Teacher tries to create a thread for student_other (should fail with 403)
+    payload_teach = {
+        "student_id": str(student_other.id),
+        "recipient_type": "PARENT",
+        "category": "GENERAL",
+        "subject": "Unauthorized access test",
+        "priority": "NORMAL",
+        "message": "Teacher trying to message parent of student they do not teach."
+    }
+    resp_teach = await client.post("/api/v1/communication/requests", json=payload_teach, headers=headers_teacher)
+    assert resp_teach.status_code == 403
+    
+    # B. Parent tries to create a thread for student_other (should fail with 403 as they are not the guardian of student_other)
+    payload_parent = {
+        "student_id": str(student_other.id),
+        "recipient_type": "TEACHER",
+        "category": "GENERAL",
+        "subject": "Unauthorized parent message",
+        "priority": "NORMAL",
+        "message": "Parent trying to message about another child."
+    }
+    resp_parent = await client.post("/api/v1/communication/requests", json=payload_parent, headers=headers_parent)
+    assert resp_parent.status_code == 403
+
+    # C. Create a valid request for student_a by parent_a
+    student_a_id = str(setup_communication_test_data["student_a"].id)
+    payload_valid = {
+        "student_id": student_a_id,
+        "recipient_type": "TEACHER",
+        "category": "GENERAL",
+        "subject": "Valid request",
+        "priority": "NORMAL",
+        "message": "Hello class teacher."
+    }
+    resp_valid = await client.post("/api/v1/communication/requests", json=payload_valid, headers=headers_parent)
+    assert resp_valid.status_code == 201
+    request_id = resp_valid.json()["data"]["id"]
+
+    # D. Cross-tenant access check: Parent B from Tenant B tries to get details of Parent A's request
+    resp_cross_tenant = await client.get(f"/api/v1/communication/requests/{request_id}", headers=headers_parent_b)
+    assert resp_cross_tenant.status_code == 404
+
+    # E. Create another teacher who does NOT teach student_a
+    from app.schemas.auth import UserCreate
+    role_teacher_stmt = select(Role).where(Role.tenant_id == tenant_a.id, Role.code == "TEACHER")
+    role_teacher = (await db_session.execute(role_teacher_stmt)).scalar_one()
+    
+    user_repo = UserRepository(db_session)
+    role_repo = RoleRepository(db_session)
+    perm_repo = PermissionRepository(db_session)
+    refresh_repo = RefreshTokenRepository(db_session)
+    auth_service = AuthService(user_repo, role_repo, perm_repo, refresh_repo, SchoolRepository(db_session))
+    
+    user_t2 = await auth_service.create_user(
+        tenant_a.id,
+        UserCreate(
+            email="teacher2@school.edu",
+            password="Password123!",
+            first_name="T",
+            last_name="Two",
+            role_ids=[role_teacher.id],
+            school_ids=[school_a.id]
+        )
+    )
+    from app.models.teacher import Teacher, EmploymentType
+    teacher_model2 = Teacher(
+        tenant_id=tenant_a.id,
+        school_id=school_a.id,
+        user_id=user_t2.id,
+        employee_code="EMP_T2",
+        staff_code="STF_T2",
+        first_name="T",
+        last_name="Two",
+        gender=StudentGender.FEMALE,
+        date_of_birth=date(1985, 1, 1),
+        mobile="9876543222",
+        official_email="teacher2@school.edu",
+        joining_date=date(2021, 1, 1),
+        employment_type=EmploymentType.FULL_TIME,
+        status="ACTIVE",
+        is_active=True
+    )
+    db_session.add(teacher_model2)
+    await db_session.commit()
+    
+    tokens_t2 = await auth_service.create_tokens(user_t2)
+    headers_t2 = {"Authorization": f"Bearer {tokens_t2.access_token}", "X-Tenant-ID": str(tenant_a.id)}
+    
+    # F. Teacher 2 (who does not teach student_a) tries to view the request_id (should return 403)
+    resp_t2_view = await client.get(f"/api/v1/communication/requests/{request_id}", headers=headers_t2)
+    assert resp_t2_view.status_code == 403
+    
+    # G. Teacher 2 tries to reply to the request_id (should return 403)
+    resp_t2_reply = await client.post(f"/api/v1/communication/requests/{request_id}/messages", json={"message": "Unauthorized reply"}, headers=headers_t2)
+    assert resp_t2_reply.status_code == 403

@@ -1,0 +1,10 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id,aadhaar_number
+,Doe,MALE,2015-05-15,ADM1,2,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,INVALID_G,2015-05-15,ADM2,3,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,MALE,2015/05/15,ADM3,4,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,MALE,2015-05-15,ADM_DUPCSV,5,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+Jane,Doe,FEMALE,2016-04-12,ADM_DUPCSV,6,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,MALE,2015-05-15,ADM_ACTIVE,7,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,MALE,2015-05-15,ADM_DELETED,8,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,
+John,Doe,MALE,2015-05-15,ADM7,9,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,123456789012
+John,Doe,MALE,2015-05-15,ADM8,10,2026-06-01,70e000bc-ef5e-4c22-862b-08ecbe81fcf9,8399a5dd-1e95-4d8b-b536-6ec5044f4ec8,7752dd84-bc39-451c-b612-5cb22eebdd6a,

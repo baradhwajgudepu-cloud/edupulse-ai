@@ -217,6 +217,16 @@ class _TeacherLeaveRequestsScreenState extends ConsumerState<TeacherLeaveRequest
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/dashboard');
+            }
+          },
+        ),
         title: const Text('Teacher Leave Requests'),
         actions: [
           IconButton(

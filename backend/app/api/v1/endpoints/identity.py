@@ -292,3 +292,39 @@ async def get_provision_status(
         message="Provision status retrieved successfully.",
         data=status_data
     )
+
+
+from app.api.dependencies.auth import get_current_user
+from app.schemas.identity import IdentityMeResponse
+from app.repositories.teacher import TeacherRepository
+from app.schemas.teacher import TeacherResponse
+
+@router.get(
+    "/me",
+    response_model=APIResponse[IdentityMeResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get current user identity details"
+)
+async def get_identity_me(
+    current_user: User = Depends(get_current_user),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_db)
+) -> APIResponse[IdentityMeResponse]:
+    """
+    Retrieves the identity details for the authenticated user session (including Teacher details if applicable).
+    """
+    teacher_repo = TeacherRepository(db)
+    teacher = await teacher_repo.get_by_user_id(current_user.id, tenant_id)
+    
+    teacher_data = None
+    if teacher:
+        teacher_data = TeacherResponse.model_validate(teacher)
+        
+    return APIResponse(
+        success=True,
+        message="Identity profile retrieved successfully.",
+        data=IdentityMeResponse(
+            user=UserResponse.model_validate(current_user),
+            teacher=teacher_data
+        )
+    )

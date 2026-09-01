@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_core/edupulse_core.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
 
 class FeesAnalyticsData {
   final double todayCollection;
@@ -142,4 +143,78 @@ class FeesNotifier extends StateNotifier<FeesState> {
 final feesStateProvider = StateNotifierProvider<FeesNotifier, FeesState>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   return FeesNotifier(apiClient);
+});
+
+class OutstandingFeesState {
+  final bool isLoading;
+  final List<dynamic> records;
+  final String? errorMessage;
+
+  OutstandingFeesState({
+    this.isLoading = false,
+    this.records = const [],
+    this.errorMessage,
+  });
+
+  OutstandingFeesState copyWith({
+    bool? isLoading,
+    List<dynamic>? records,
+    String? errorMessage,
+  }) {
+    return OutstandingFeesState(
+      isLoading: isLoading ?? this.isLoading,
+      records: records ?? this.records,
+      errorMessage: errorMessage ?? this.errorMessage,
+    );
+  }
+}
+
+class OutstandingFeesNotifier extends StateNotifier<OutstandingFeesState> {
+  final BaseApiClient _apiClient;
+  final SessionManager _sessionManager;
+
+  OutstandingFeesNotifier(this._apiClient, this._sessionManager) : super(OutstandingFeesState());
+
+  Future<void> fetchReport({String? classId}) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) {
+      state = state.copyWith(isLoading: false, errorMessage: 'No active school context found.');
+      return;
+    }
+
+    final queryParams = <String, dynamic>{
+      'school_id': schoolId,
+    };
+    if (classId != null && classId.isNotEmpty) {
+      queryParams['class_id'] = classId;
+    }
+
+    final result = await _apiClient.get<List<dynamic>>(
+      '/fees/reports/outstanding',
+      queryParameters: queryParams,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return payload['data'] as List<dynamic>? ?? [];
+      },
+    );
+
+    result.when(
+      onSuccess: (data) {
+        state = state.copyWith(isLoading: false, records: data);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+}
+
+final outstandingFeesProvider = StateNotifierProvider.family<OutstandingFeesNotifier, OutstandingFeesState, String?>((ref, classId) {
+  final apiClient = ref.watch(apiClientProvider);
+  final sessionManager = ref.watch(sessionManagerProvider);
+  final notifier = OutstandingFeesNotifier(apiClient, sessionManager);
+  notifier.fetchReport(classId: classId);
+  return notifier;
 });

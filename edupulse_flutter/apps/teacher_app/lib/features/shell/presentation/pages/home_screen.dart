@@ -116,6 +116,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       appBar: AppBar(
         title: Text(local?.translate('app_title') ?? 'EduPulse AI'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle_outlined),
+            tooltip: 'Profile',
+            onPressed: () => context.push(AppRoutes.profile),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8.0),
             child: Consumer(
@@ -237,6 +242,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _buildQuickActionsGrid(theme, spacing, radius, local),
           SizedBox(height: spacing.lg),
 
+          // 2.5 AI Section
+          _buildAiSection(theme, spacing, radius, local),
+          SizedBox(height: spacing.lg),
+
           // 3. Timetable Section
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -258,7 +267,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           SizedBox(height: spacing.md),
 
           // 4. Schedule list
-          if (dailySchedule.isEmpty)
+          if (data.schedule.isEmpty)
+            _buildEmptyTimetableState(theme, spacing, radius, local)
+          else if (dailySchedule.isEmpty)
             _buildNoClassesForDayCard(theme, spacing, radius)
           else
             ListView.separated(
@@ -413,6 +424,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'icon': Icons.event_note_rounded,
         'color': Colors.indigo,
       },
+      {
+        'label': 'Connect',
+        'desc': 'Parent communication queries',
+        'icon': Icons.forum_rounded,
+        'color': Colors.teal,
+      },
+      {
+        'label': 'Profile',
+        'desc': 'Identity & subjects info',
+        'icon': Icons.account_circle_rounded,
+        'color': Colors.blueGrey,
+      },
     ];
 
     return GridView.builder(
@@ -453,6 +476,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 context.push(AppRoutes.staffAttendance);
               } else if (label == 'Leave Request') {
                 context.push(AppRoutes.teacherLeaveList);
+              } else if (label == 'Connect') {
+                context.push(AppRoutes.communication);
+              } else if (label == 'Profile') {
+                context.push(AppRoutes.profile);
               } else if (label == (local?.translate('attendance') ?? 'Attendance')) {
                 _handleAttendanceTap();
               } else {
@@ -494,6 +521,116 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildAiSection(
+    ThemeData theme,
+    AppSpacing spacing,
+    AppRadius radius,
+    EduLocalization? local,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Card(
+          elevation: 0,
+          color: theme.colorScheme.primary.withOpacity(0.05),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radius.md),
+            side: BorderSide(color: theme.colorScheme.primary.withOpacity(0.2), width: 1.5),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(spacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, color: theme.colorScheme.primary, size: 20),
+                    SizedBox(width: spacing.sm),
+                    Text(
+                      'EduPulse AI Assistant',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: spacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => context.push('/class-analysis'),
+                        child: Container(
+                          padding: EdgeInsets.all(spacing.sm),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surface,
+                            borderRadius: BorderRadius.circular(radius.sm),
+                            border: Border.all(color: theme.colorScheme.outlineVariant),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.analytics_outlined, color: Colors.deepPurple, size: 24),
+                              SizedBox(height: spacing.xs),
+                              const Text(
+                                'Class Analysis',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              ),
+                              SizedBox(height: spacing.xs / 2),
+                              Text(
+                                'Analyze performance trends',
+                                style: theme.textTheme.bodySmall?.copyWith(fontSize: 9),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: spacing.sm),
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => context.push('/homework-generate'),
+                        child: Container(
+                          padding: EdgeInsets.all(spacing.sm),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surface,
+                            borderRadius: BorderRadius.circular(radius.sm),
+                            border: Border.all(color: theme.colorScheme.outlineVariant),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.auto_awesome_outlined, color: Colors.purple, size: 24),
+                              SizedBox(height: spacing.xs),
+                              const Text(
+                                'AI Homework',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              ),
+                              SizedBox(height: spacing.xs / 2),
+                              Text(
+                                'Generate questions & tasks',
+                                style: theme.textTheme.bodySmall?.copyWith(fontSize: 9),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

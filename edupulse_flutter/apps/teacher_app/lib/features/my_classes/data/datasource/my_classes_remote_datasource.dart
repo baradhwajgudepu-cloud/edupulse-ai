@@ -131,4 +131,24 @@ class MyClassesRemoteDatasource {
       },
     );
   }
+
+  Future<ApiResult<List<StudentDto>>> getTeacherStudents({
+    required String schoolId,
+    required String academicYearId,
+  }) {
+    return _apiClient.get(
+      '/students',
+      queryParameters: {
+        'school_id': schoolId,
+        'academic_year_id': academicYearId,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>;
+        return list
+            .map((item) => StudentDto.fromJson(item as Map<String, dynamic>))
+            .toList();
+      },
+    );
+  }
 }

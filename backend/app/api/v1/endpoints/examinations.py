@@ -8,10 +8,12 @@ from app.api.dependencies.examination import get_examination_service
 from app.api.dependencies.auth import require_permission
 from app.services.examination import ExaminationService
 from app.schemas.examination import (
+    ExamTypeMasterCreate, ExamTypeMasterUpdate, ExamTypeMasterResponse,
     ExamTemplateCreate, ExamTemplateResponse,
-    ExaminationCreate, ExaminationUpdate,
+    ExaminationCreate, ExaminationUpdate, ExamStatusTransitionRequest,
     ExaminationWizardCreate, ExaminationCopyRequest,
-    ExaminationResponse, ExamScheduleResponse
+    ExaminationResponse, ExamScheduleCreate, ExamScheduleUpdate, ExamScheduleResponse,
+    BulkTimetablePreviewRequest, BulkTimetablePreviewResponse, BulkTimetableConfirmRequest
 )
 from app.models.user import User
 from app.schemas.response import APIResponse
@@ -49,8 +51,6 @@ async def verify_school_access(user: User, school_id: uuid.UUID, db: AsyncSessio
     if user.is_superuser:
         return
 
-    # Parents are not registered in the school_users table (reserved for staff/teachers)
-    # but are authorized to access school resources scoped to their children.
     user_role_codes = [role.code for role in user.roles]
     if "PARENT" in user_role_codes:
         return
@@ -66,6 +66,121 @@ async def verify_school_access(user: User, school_id: uuid.UUID, db: AsyncSessio
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. You do not have permissions for this school."
         )
+
+# ==================================================
+# Exam Types Endpoints
+# ==================================================
+@router.get(
+    "/types",
+    response_model=APIResponse[List[ExamTypeMasterResponse]],
+    status_code=status.HTTP_200_OK,
+    summary="List all exam types for school / tenant"
+)
+async def list_exam_types(
+    school_id: Optional[uuid.UUID] = Query(None, description="Optional target school ID"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.read")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[List[ExamTypeMasterResponse]]:
+    if school_id:
+        await verify_school_access(current_user, school_id, service.exam_repo.db)
+    items = await service.list_exam_types(tenant_id, school_id, skip, limit)
+    return APIResponse[List[ExamTypeMasterResponse]](
+        success=True,
+        message="Exam types listed successfully.",
+        data=[ExamTypeMasterResponse.model_validate(t) for t in items]
+    )
+
+@router.post(
+    "/types",
+    response_model=APIResponse[ExamTypeMasterResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a custom exam type"
+)
+async def create_exam_type(
+    obj_in: ExamTypeMasterCreate,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.create")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamTypeMasterResponse]:
+    if obj_in.school_id:
+        await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
+    db_obj = await service.create_exam_type(tenant_id, obj_in, current_user)
+    return APIResponse[ExamTypeMasterResponse](
+        success=True,
+        message="Exam type created successfully.",
+        data=ExamTypeMasterResponse.model_validate(db_obj)
+    )
+
+@router.get(
+    "/types/{id}",
+    response_model=APIResponse[ExamTypeMasterResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get single exam type details"
+)
+async def get_exam_type(
+    id: uuid.UUID,
+    school_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.read")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamTypeMasterResponse]:
+    if school_id:
+        await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.get_exam_type(tenant_id, school_id, id)
+    return APIResponse[ExamTypeMasterResponse](
+        success=True,
+        message="Exam type fetched successfully.",
+        data=ExamTypeMasterResponse.model_validate(db_obj)
+    )
+
+@router.put(
+    "/types/{id}",
+    response_model=APIResponse[ExamTypeMasterResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Update custom exam type"
+)
+async def update_exam_type(
+    id: uuid.UUID,
+    obj_in: ExamTypeMasterUpdate,
+    school_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.update")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamTypeMasterResponse]:
+    if school_id:
+        await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.update_exam_type(tenant_id, school_id, id, obj_in, current_user)
+    return APIResponse[ExamTypeMasterResponse](
+        success=True,
+        message="Exam type updated successfully.",
+        data=ExamTypeMasterResponse.model_validate(db_obj)
+    )
+
+@router.delete(
+    "/types/{id}",
+    response_model=APIResponse[ExamTypeMasterResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Delete custom exam type"
+)
+async def delete_exam_type(
+    id: uuid.UUID,
+    school_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.delete")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamTypeMasterResponse]:
+    if school_id:
+        await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.delete_exam_type(tenant_id, school_id, id, current_user)
+    return APIResponse[ExamTypeMasterResponse](
+        success=True,
+        message="Exam type deleted successfully.",
+        data=ExamTypeMasterResponse.model_validate(db_obj)
+    )
+
 
 # ==================================================
 # Template Endpoints
@@ -112,6 +227,183 @@ async def list_templates(
         success=True,
         message="Examination templates listed successfully.",
         data=[ExamTemplateResponse.model_validate(t) for t in db_objs]
+    )
+
+
+# ==================================================
+# Timetable & Schedule Endpoints
+# ==================================================
+@router.get(
+    "/schedules",
+    response_model=APIResponse[List[ExamScheduleResponse]],
+    status_code=status.HTTP_200_OK,
+    summary="List examination timetable schedules"
+)
+async def list_schedules(
+    school_id: uuid.UUID = Query(...),
+    exam_id: Optional[uuid.UUID] = Query(None),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=500),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.read")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[List[ExamScheduleResponse]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    items = await service.list_schedules(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        class_id=class_id,
+        section_id=section_id,
+        start_date=start_date,
+        end_date=end_date,
+        skip=skip,
+        limit=limit
+    )
+    return APIResponse[List[ExamScheduleResponse]](
+        success=True,
+        message="Examination schedules fetched successfully.",
+        data=[ExamScheduleResponse.model_validate(s) for s in items]
+    )
+
+@router.get(
+    "/{exam_id}/schedules",
+    response_model=APIResponse[List[ExamScheduleResponse]],
+    status_code=status.HTTP_200_OK,
+    summary="List schedules for a specific examination"
+)
+async def list_exam_schedules(
+    exam_id: uuid.UUID,
+    school_id: uuid.UUID = Query(...),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.read")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[List[ExamScheduleResponse]]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    items = await service.list_schedules(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        class_id=class_id,
+        section_id=section_id,
+        skip=0,
+        limit=500
+    )
+    return APIResponse[List[ExamScheduleResponse]](
+        success=True,
+        message="Examination schedules fetched successfully.",
+        data=[ExamScheduleResponse.model_validate(s) for s in items]
+    )
+
+@router.post(
+    "/schedules",
+    response_model=APIResponse[ExamScheduleResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a single exam schedule slot"
+)
+async def create_schedule(
+    obj_in: ExamScheduleCreate,
+    school_id: uuid.UUID = Query(...),
+    exam_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.create")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamScheduleResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.create_schedule(tenant_id, school_id, exam_id, obj_in, current_user)
+    return APIResponse[ExamScheduleResponse](
+        success=True,
+        message="Examination schedule slot created successfully.",
+        data=ExamScheduleResponse.model_validate(db_obj)
+    )
+
+@router.put(
+    "/schedules/{id}",
+    response_model=APIResponse[ExamScheduleResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Update exam schedule slot"
+)
+async def update_schedule(
+    id: uuid.UUID,
+    obj_in: ExamScheduleUpdate,
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.update")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExamScheduleResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.update_schedule(tenant_id, school_id, id, obj_in, current_user)
+    return APIResponse[ExamScheduleResponse](
+        success=True,
+        message="Examination schedule slot updated successfully.",
+        data=ExamScheduleResponse.model_validate(db_obj)
+    )
+
+@router.delete(
+    "/schedules/{id}",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+    summary="Delete exam schedule slot"
+)
+async def delete_schedule(
+    id: uuid.UUID,
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.delete")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[dict]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    await service.delete_schedule(tenant_id, school_id, id, current_user)
+    return APIResponse[dict](
+        success=True,
+        message="Examination schedule slot deleted successfully.",
+        data={"id": str(id)}
+    )
+
+@router.post(
+    "/schedules/bulk-preview",
+    response_model=APIResponse[BulkTimetablePreviewResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Preview auto-generated timetable without persisting"
+)
+async def preview_bulk_timetable(
+    obj_in: BulkTimetablePreviewRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.create")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[BulkTimetablePreviewResponse]:
+    await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
+    preview = await service.preview_bulk_timetable(tenant_id, obj_in.school_id, obj_in)
+    return APIResponse[BulkTimetablePreviewResponse](
+        success=True,
+        message="Bulk timetable preview generated successfully.",
+        data=preview
+    )
+
+@router.post(
+    "/schedules/bulk-confirm",
+    response_model=APIResponse[List[ExamScheduleResponse]],
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirm and persist auto-generated timetable schedules"
+)
+async def confirm_bulk_timetable(
+    obj_in: BulkTimetableConfirmRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.create")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[List[ExamScheduleResponse]]:
+    await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
+    schedules = await service.confirm_bulk_timetable(tenant_id, obj_in.school_id, obj_in, current_user)
+    return APIResponse[List[ExamScheduleResponse]](
+        success=True,
+        message="Bulk timetable confirmed and saved successfully.",
+        data=[ExamScheduleResponse.model_validate(s) for s in schedules]
     )
 
 
@@ -163,10 +455,12 @@ async def save_wizard(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
     db_obj = await service.create_examination_wizard(tenant_id, obj_in.school_id, obj_in, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination and all child schedules created successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )
 
 
@@ -188,10 +482,36 @@ async def copy_examination(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.copy_examination(tenant_id, school_id, obj_in, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination duplicated and schedules shifted successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
+    )
+
+@router.put(
+    "/{id}/status",
+    response_model=APIResponse[ExaminationResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Transition examination lifecycle status with validation"
+)
+async def transition_examination_status(
+    id: uuid.UUID,
+    req: ExamStatusTransitionRequest,
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("exam.update")),
+    service: ExaminationService = Depends(get_examination_service)
+) -> APIResponse[ExaminationResponse]:
+    await verify_school_access(current_user, school_id, service.exam_repo.db)
+    db_obj = await service.transition_exam_status(tenant_id, school_id, id, req, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
+    return APIResponse[ExaminationResponse](
+        success=True,
+        message=f"Examination status successfully changed to {req.new_status.value}.",
+        data=resp
     )
 
 @router.post(
@@ -209,10 +529,12 @@ async def publish_examination(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.publish_examination(tenant_id, school_id, id, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination published successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )
 
 
@@ -257,10 +579,12 @@ async def create_exam(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, obj_in.school_id, service.exam_repo.db)
     db_obj = await service.create_examination(tenant_id, obj_in.school_id, obj_in, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination master created successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )
 
 @router.get(
@@ -283,10 +607,12 @@ async def get_exam(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Examination not found."
         )
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination details fetched successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )
 
 @router.get(
@@ -298,6 +624,7 @@ async def get_exam(
 async def list_exams(
     school_id: uuid.UUID = Query(...),
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    class_id: Optional[uuid.UUID] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -310,14 +637,20 @@ async def list_exams(
         school_id=school_id,
         tenant_id=tenant_id,
         academic_year_id=academic_year_id,
+        class_id=class_id,
         search=search,
         skip=skip,
         limit=limit
     )
+    result = []
+    for e in db_objs:
+        item = ExaminationResponse.model_validate(e)
+        item.participating_class_ids = [pc.class_id for pc in e.participating_classes] if e.participating_classes else []
+        result.append(item)
     return APIResponse[List[ExaminationResponse]](
         success=True,
         message="Examinations listed successfully.",
-        data=[ExaminationResponse.model_validate(e) for e in db_objs]
+        data=result
     )
 
 @router.put(
@@ -336,10 +669,12 @@ async def update_exam(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.update_examination(tenant_id, school_id, id, obj_in, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination updated successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )
 
 @router.delete(
@@ -357,8 +692,10 @@ async def delete_exam(
 ) -> APIResponse[ExaminationResponse]:
     await verify_school_access(current_user, school_id, service.exam_repo.db)
     db_obj = await service.delete_examination(tenant_id, school_id, id, current_user)
+    resp = ExaminationResponse.model_validate(db_obj)
+    resp.participating_class_ids = [pc.class_id for pc in db_obj.participating_classes] if db_obj.participating_classes else []
     return APIResponse[ExaminationResponse](
         success=True,
         message="Examination deleted successfully.",
-        data=ExaminationResponse.model_validate(db_obj)
+        data=resp
     )

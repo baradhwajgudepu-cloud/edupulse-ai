@@ -24,4 +24,12 @@ class AppRoutes {
   static const String teacherLeaveList = '/teacher-leaves';
   static const String teacherLeaveCreate = '/teacher-leaves/create';
   static const String teacherLeaveDetail = '/teacher-leaves/:id';
+  static const String communication = '/communication';
+  static const String communicationDetails = '/communication/details/:id';
+  static const String classAnalysis = '/class-analysis';
+  static const String homeworkGenerate = '/homework-generate';
+  static const String events = '/events';
+  static const String eventDetail = '/events/:id';
+  static const String profile = '/profile';
+  static const String studentDirectory = '/student-directory';
 }

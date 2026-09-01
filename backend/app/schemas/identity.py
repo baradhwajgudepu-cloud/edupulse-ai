@@ -20,3 +20,13 @@ class IdentityResetPasswordResponse(BaseModel):
     temporary_password: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+from app.schemas.auth import UserResponse
+from app.schemas.teacher import TeacherResponse
+
+class IdentityMeResponse(BaseModel):
+    user: UserResponse
+    teacher: Optional[TeacherResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)

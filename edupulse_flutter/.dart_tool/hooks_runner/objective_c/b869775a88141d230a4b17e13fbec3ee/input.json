@@ -1,0 +1,29 @@
+{
+  "assets": {},
+  "config": {
+    "build_asset_types": [
+      "code_assets/code"
+    ],
+    "extensions": {
+      "code_assets": {
+        "android": {
+          "target_ndk_api": 24
+        },
+        "c_compiler": {
+          "ar": "D:\\Android\\Sdk\\ndk\\28.2.13676358\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\llvm-ar.exe",
+          "cc": "D:\\Android\\Sdk\\ndk\\28.2.13676358\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe",
+          "ld": "D:\\Android\\Sdk\\ndk\\28.2.13676358\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\ld.lld.exe"
+        },
+        "link_mode_preference": "dynamic",
+        "target_architecture": "arm64",
+        "target_os": "android"
+      }
+    },
+    "linking_enabled": false
+  },
+  "out_dir_shared": "D:\\EDU_PULSE_AI\\edupulse_flutter\\.dart_tool\\hooks_runner\\shared\\objective_c\\build\\",
+  "out_file": "D:\\EDU_PULSE_AI\\edupulse_flutter\\.dart_tool\\hooks_runner\\objective_c\\b869775a88141d230a4b17e13fbec3ee\\output.json",
+  "package_name": "objective_c",
+  "package_root": "C:\\Users\\darad\\AppData\\Local\\Pub\\Cache\\hosted\\pub.dev\\objective_c-9.5.0\\",
+  "user_defines": {}
+}

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../../attendance/presentation/pages/attendance_screen.dart';
 import '../../../academics/presentation/pages/academics_screen.dart';
 import '../../../homework/presentation/pages/homework_list_screen.dart';
@@ -12,6 +13,16 @@ class AnalyticsDashboardScreen extends StatelessWidget {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go('/dashboard');
+              }
+            },
+          ),
           title: const Text('Academic & Operational Analytics'),
           bottom: const TabBar(
             tabs: [

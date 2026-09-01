@@ -1,0 +1,3 @@
+first_name,last_name,gender,date_of_birth,admission_number,roll_number,admission_date,academic_year_id,class_id,section_id
+John,Doe,MALE,2015-05-15,ADM_M1,1,2026-06-01,178d8666-9f06-46c6-b5e6-58ed40991fdc,3e03e1bc-8c7f-4d3c-aaba-220f9b53a7c7,2e762cf0-45ac-4ddf-8ae6-0f788a4d0725
+Jane,Doe,FEMALE,2016-04-12,ADM_M2,2,2026-06-01,178d8666-9f06-46c6-b5e6-58ed40991fdc,3e03e1bc-8c7f-4d3c-aaba-220f9b53a7c7,2e762cf0-45ac-4ddf-8ae6-0f788a4d0725

@@ -20,12 +20,18 @@ final academicRepositoryProvider = Provider<AcademicRepository>((ref) {
 class AcademicState {
   final List<Examination> examinations;
   final Map<String, MarksSummary> scheduleSummaries;
+  final List<Map<String, dynamic>> classes;
+  final List<Map<String, dynamic>> sections;
+  final List<Map<String, dynamic>> academicYears;
   final bool isLoading;
   final String? errorMessage;
 
   AcademicState({
     required this.examinations,
     required this.scheduleSummaries,
+    this.classes = const [],
+    this.sections = const [],
+    this.academicYears = const [],
     this.isLoading = false,
     this.errorMessage,
   });
@@ -33,6 +39,9 @@ class AcademicState {
   AcademicState copyWith({
     List<Examination>? examinations,
     Map<String, MarksSummary>? scheduleSummaries,
+    List<Map<String, dynamic>>? classes,
+    List<Map<String, dynamic>>? sections,
+    List<Map<String, dynamic>>? academicYears,
     bool? isLoading,
     String? errorMessage,
     bool clearError = false,
@@ -40,6 +49,9 @@ class AcademicState {
     return AcademicState(
       examinations: examinations ?? this.examinations,
       scheduleSummaries: scheduleSummaries ?? this.scheduleSummaries,
+      classes: classes ?? this.classes,
+      sections: sections ?? this.sections,
+      academicYears: academicYears ?? this.academicYears,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     );
@@ -51,7 +63,7 @@ class AcademicNotifier extends StateNotifier<AcademicState> {
   final SessionManager _sessionManager;
 
   AcademicNotifier(this._repository, this._sessionManager)
-      : super(AcademicState(examinations: [], scheduleSummaries: {}));
+      : super(AcademicState(examinations: [], scheduleSummaries: {}, classes: [], sections: [], academicYears: []));
 
   Future<void> fetchExaminations({bool isRefresh = false}) async {
     if (!isRefresh) {
@@ -76,6 +88,61 @@ class AcademicNotifier extends StateNotifier<AcademicState> {
     );
   }
 
+  Future<void> fetchClassesAndSections() async {
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) return;
+
+    final classResult = await _repository.getClasses(schoolId: schoolId);
+    final sectionResult = await _repository.getSections(schoolId: schoolId);
+    final ayResult = await _repository.getAcademicYears(schoolId: schoolId);
+
+    List<Map<String, dynamic>> loadedClasses = [];
+    List<Map<String, dynamic>> loadedSections = [];
+    List<Map<String, dynamic>> loadedAYs = [];
+
+    classResult.when(
+      onSuccess: (list) => loadedClasses = list,
+      onFailure: (failure) {},
+    );
+
+    sectionResult.when(
+      onSuccess: (list) => loadedSections = list,
+      onFailure: (failure) {},
+    );
+
+    ayResult.when(
+      onSuccess: (list) => loadedAYs = list,
+      onFailure: (failure) {},
+    );
+
+    state = state.copyWith(
+      classes: loadedClasses,
+      sections: loadedSections,
+      academicYears: loadedAYs,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getSuggestedSchedules({
+    required List<String> classIds,
+    required String startDate,
+    required String endDate,
+  }) async {
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) return [];
+
+    final result = await _repository.getSuggestedSchedules(
+      schoolId: schoolId,
+      classIds: classIds,
+      startDate: startDate,
+      endDate: endDate,
+    );
+
+    return result.when(
+      onSuccess: (list) => list,
+      onFailure: (failure) => [],
+    );
+  }
+
   Future<void> fetchSummaryForSchedule(String scheduleId) async {
     if (state.scheduleSummaries.containsKey(scheduleId)) return; // Already cached
 
@@ -96,6 +163,65 @@ class AcademicNotifier extends StateNotifier<AcademicState> {
         newMap[scheduleId] = MarksSummary.empty();
         state = state.copyWith(scheduleSummaries: newMap);
       },
+    );
+  }
+
+  Future<bool> createExamination({
+    required String examName,
+    required String examType,
+    required String startDate,
+    required String endDate,
+    String? description,
+  }) async {
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) return false;
+
+    final result = await _repository.createExamination(
+      schoolId: schoolId,
+      examName: examName,
+      examType: examType,
+      startDate: startDate,
+      endDate: endDate,
+      description: description,
+    );
+
+    return result.when(
+      onSuccess: (exam) {
+        fetchExaminations(isRefresh: true);
+        return true;
+      },
+      onFailure: (failure) => false,
+    );
+  }
+
+  Future<bool> createExaminationWizard({
+    required Map<String, dynamic> payload,
+  }) async {
+    final result = await _repository.createExaminationWizard(payload: payload);
+    return result.when(
+      onSuccess: (exam) {
+        fetchExaminations(isRefresh: true);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> publishExamination(String id) async {
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) return false;
+
+    final result = await _repository.publishExamination(id: id, schoolId: schoolId);
+
+    return result.when(
+      onSuccess: (exam) {
+        fetchExaminations(isRefresh: true);
+        return true;
+      },
+      onFailure: (failure) => false,
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -113,6 +114,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   final bool _shouldHaveSession;
   String? cachedSchoolId;
 
@@ -233,6 +244,17 @@ class FakeDashboardRepository implements DashboardRepository {
         ],
       ),
     );
+  }
+}
+
+class HangsAuthRepository extends FakeAuthRepository {
+  final completer = Completer<ApiResult<UserEntity>>();
+
+  HangsAuthRepository() : super();
+
+  @override
+  Future<ApiResult<UserEntity>> getCurrentUser() {
+    return completer.future;
   }
 }
 
@@ -534,6 +556,88 @@ void main() {
     await tester.pumpAndSettle();
 
     // Routes back to Login screen
+    expect(find.text('Login'), findsOneWidget);
+  });
+
+  testWidgets('App with hanging session validation routes to Login after 3s timeout',
+      (WidgetTester tester) async {
+    final repository = HangsAuthRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          isTestingProvider.overrideWithValue(true),
+          bootstrapResultProvider.overrideWithValue(
+            BootstrapResult(success: true),
+          ),
+          authRepositoryProvider.overrideWithValue(
+            repository,
+          ),
+          sessionManagerProvider.overrideWithValue(
+            FakeSessionManager(hasSession: true),
+          ),
+        ],
+        child: const EduPulseApp(),
+      ),
+    );
+
+    // Initial render
+    await tester.pump();
+
+    // Pump past the 1.5s splash animation delay (total 2.0s), but before 3s timeout
+    await tester.pump(const Duration(seconds: 2));
+    
+    // Verify it is still on splash screen (does not show Login page yet)
+    expect(find.text('Login'), findsNothing);
+
+    // Pump past the 3-second timeout limit (total 4.0s)
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // Verify it timed out and routed to Login screen
+    expect(find.text('Login'), findsOneWidget);
+
+    // Complete the completer to release resources and prevent pending timer/future errors
+    repository.completer.complete(
+      const ApiResult.failure(
+        ApiFailure(
+          message: 'Timeout resolved',
+          type: ApiFailureType.unknown,
+          statusCode: 500,
+        ),
+      ),
+    );
+  });
+
+  testWidgets('Static splash screen renders logo and routes to Login upon initialization finish',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          isTestingProvider.overrideWithValue(true),
+          bootstrapResultProvider.overrideWithValue(
+            BootstrapResult(success: true),
+          ),
+          authRepositoryProvider.overrideWithValue(
+            FakeAuthRepository(userRoles: const ['TEACHER']),
+          ),
+          sessionManagerProvider.overrideWithValue(
+            FakeSessionManager(hasSession: false),
+          ),
+        ],
+        child: const EduPulseApp(),
+      ),
+    );
+
+    // Initial render - should show splash screen with centered logo
+    await tester.pump();
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('Login'), findsNothing);
+
+    // Pump past the 1.5s splash check delay (total 2s)
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // Verify it navigated to the Login screen directly
     expect(find.text('Login'), findsOneWidget);
   });
 }

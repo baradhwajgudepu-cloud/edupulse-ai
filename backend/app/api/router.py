@@ -106,9 +106,11 @@ from app.api.v1.endpoints import communication
 api_router.include_router(communication.router, prefix="/communication", tags=["communication"])
 
 # Include events, announcements, calendar feed, and action-items endpoints
-from app.api.v1.endpoints import events, announcements, calendar, action_items
+from app.api.v1.endpoints import events, announcements, calendar, action_items, ai_intelligence
 api_router.include_router(events.router, prefix="/events", tags=["events"])
 api_router.include_router(announcements.router, prefix="/announcements", tags=["announcements"])
 api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(action_items.router, prefix="/principal", tags=["principal"])
+api_router.include_router(ai_intelligence.router, prefix="/ai-intelligence", tags=["ai-intelligence"])
+
 

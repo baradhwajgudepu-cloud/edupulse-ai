@@ -63,6 +63,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 class FakeSessionManager implements SessionManager {
+  String? cachedTenantId;
+
+  @override
+  Future<String?> getTenantId() async => cachedTenantId;
+
+  @override
+  Future<void> saveTenantId(String tenantId) async {
+    cachedTenantId = tenantId;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'access';
 
@@ -172,15 +182,11 @@ class FakeMyClassesRepository implements MyClassesRepository {
   }
 
   @override
-  Future<ApiResult<StudentEntity>> getStudentDetails({
+  Future<ApiResult<List<StudentEntity>>> getTeacherStudents({
     required String schoolId,
-    required String studentId,
+    required String academicYearId,
   }) async {
-    return ApiResult.failure(ApiFailure(
-      message: 'Not implemented',
-      type: ApiFailureType.unknown,
-      statusCode: 500,
-    ));
+    return const ApiResult.success([]);
   }
 }
 

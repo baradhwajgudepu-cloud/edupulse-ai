@@ -14,7 +14,8 @@ from app.services.storage import get_storage_service, StorageService
 from app.schemas.report_card import (
     ReportCardGenerateRequest, ReportCardClassGenerateRequest,
     ReportCardResponse, ReportCardPreviewResponse,
-    BulkClassGenerateResponse, VerificationResponse,
+    BulkClassGenerateResponse, BulkReportCardActionRequest,
+    BulkReportCardActionResponse, VerificationResponse,
     StudentAcademicHistoryResponse
 )
 from app.models.user import User
@@ -177,6 +178,7 @@ async def bulk_generate_class(
 async def preview_report_card(
     student_id: uuid.UUID,
     school_id: uuid.UUID = Query(...),
+    examination_id: Optional[uuid.UUID] = Query(None),
     teacher_remarks: Optional[str] = Query(None),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("report_card.read")),
@@ -188,7 +190,7 @@ async def preview_report_card(
         raise HTTPException(status_code=404, detail="Student not found.")
     await verify_student_access(current_user, student_id, student.section_id, service.report_repo.db)
 
-    preview = await service.compile_live_data(tenant_id, school_id, student_id, teacher_remarks)
+    preview = await service.compile_live_data(tenant_id, school_id, student_id, teacher_remarks, examination_id)
     return APIResponse[ReportCardPreviewResponse](
         success=True,
         message="Report card preview loaded successfully.",
@@ -239,6 +241,46 @@ async def approve_report_card(
         success=True,
         message="Report card approved successfully.",
         data=ReportCardResponse.model_validate(db_obj)
+    )
+
+@router.post(
+    "/bulk-approve",
+    response_model=APIResponse[BulkReportCardActionResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Bulk approve selected report cards"
+)
+async def bulk_approve_report_cards(
+    obj_in: BulkReportCardActionRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("report_card.publish")),
+    service: ReportCardService = Depends(get_report_card_service)
+) -> APIResponse[BulkReportCardActionResponse]:
+    await verify_school_access(current_user, obj_in.school_id, service.report_repo.db)
+    result = await service.bulk_approve_report_cards(tenant_id, obj_in.school_id, obj_in.report_card_ids, current_user)
+    return APIResponse[BulkReportCardActionResponse](
+        success=True,
+        message="Bulk approval operation completed.",
+        data=result
+    )
+
+@router.post(
+    "/bulk-publish",
+    response_model=APIResponse[BulkReportCardActionResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Bulk publish selected report cards"
+)
+async def bulk_publish_selected_cards(
+    obj_in: BulkReportCardActionRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("report_card.publish")),
+    service: ReportCardService = Depends(get_report_card_service)
+) -> APIResponse[BulkReportCardActionResponse]:
+    await verify_school_access(current_user, obj_in.school_id, service.report_repo.db)
+    result = await service.bulk_publish_selected_cards(tenant_id, obj_in.school_id, obj_in.report_card_ids, current_user)
+    return APIResponse[BulkReportCardActionResponse](
+        success=True,
+        message="Bulk publish operation completed.",
+        data=result
     )
 
 @router.post(

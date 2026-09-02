@@ -25,6 +25,14 @@ class SessionManager {
     return _tokenStorage.getTenantId();
   }
 
+  Future<String?> getTenantName() async {
+    return _tokenStorage.getTenantName();
+  }
+
+  Future<String?> getSchoolName() async {
+    return _tokenStorage.getSchoolName();
+  }
+
   Future<void> saveTenantId(String tenantId) async {
     await _tokenStorage.saveTenantId(tenantId);
     EduLogger.i('Tenant ID successfully cached.');
@@ -33,6 +41,16 @@ class SessionManager {
   Future<void> saveSchoolId(String schoolId) async {
     await _tokenStorage.saveSchoolId(schoolId);
     EduLogger.i('School ID successfully cached.');
+  }
+
+  Future<void> saveTenantName(String tenantName) async {
+    await _tokenStorage.saveTenantName(tenantName);
+    EduLogger.i('Tenant Name successfully cached.');
+  }
+
+  Future<void> saveSchoolName(String schoolName) async {
+    await _tokenStorage.saveSchoolName(schoolName);
+    EduLogger.i('School Name successfully cached.');
   }
 
   Future<void> saveSession(SessionToken token) async {

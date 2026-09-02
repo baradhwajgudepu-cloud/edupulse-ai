@@ -5,6 +5,8 @@ class TokenStorage {
   static const String _refreshTokenKey = 'auth_refresh_token';
   static const String _schoolIdKey = 'auth_school_id';
   static const String _tenantIdKey = 'auth_tenant_id';
+  static const String _tenantNameKey = 'auth_tenant_name';
+  static const String _schoolNameKey = 'auth_school_name';
 
   final FlutterSecureStorage _secureStorage;
 
@@ -52,6 +54,14 @@ class TokenStorage {
     return null;
   }
 
+  Future<String?> getTenantName() async {
+    return _secureStorage.read(key: _tenantNameKey);
+  }
+
+  Future<String?> getSchoolName() async {
+    return _secureStorage.read(key: _schoolNameKey);
+  }
+
   Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
@@ -69,10 +79,20 @@ class TokenStorage {
     await _secureStorage.write(key: _schoolIdKey, value: schoolId);
   }
 
+  Future<void> saveTenantName(String tenantName) async {
+    await _secureStorage.write(key: _tenantNameKey, value: tenantName);
+  }
+
+  Future<void> saveSchoolName(String schoolName) async {
+    await _secureStorage.write(key: _schoolNameKey, value: schoolName);
+  }
+
   Future<void> clearTokens() async {
     await _secureStorage.delete(key: _accessTokenKey);
     await _secureStorage.delete(key: _refreshTokenKey);
     await _secureStorage.delete(key: _schoolIdKey);
     await _secureStorage.delete(key: _tenantIdKey);
+    await _secureStorage.delete(key: _tenantNameKey);
+    await _secureStorage.delete(key: _schoolNameKey);
   }
 }

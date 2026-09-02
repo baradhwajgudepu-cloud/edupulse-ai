@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import '../providers/settings_provider.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
@@ -14,6 +15,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
+  bool _isUploadingLogo = false;
   
   // Controllers
   late TextEditingController _nameController;
@@ -240,6 +242,99 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _handleUploadLogo(String schoolId) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
+      withData: true,
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.first;
+    if (file.bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to read selected image bytes.'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Image file exceeds the 5MB maximum size limit.'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isUploadingLogo = true);
+    final newUrl = await ref.read(settingsNotifierProvider.notifier).uploadSchoolLogo(
+      schoolId: schoolId,
+      fileBytes: file.bytes!,
+      fileName: file.name,
+    );
+    setState(() => _isUploadingLogo = false);
+
+    if (mounted) {
+      if (newUrl != null) {
+        setState(() {
+          _logoUrlController.text = newUrl;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('School branding logo uploaded successfully.')),
+        );
+      } else {
+        final err = ref.read(settingsNotifierProvider).error;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logo upload failed: $err'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleDeleteLogo(String schoolId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove School Logo'),
+        content: const Text('Are you sure you want to remove the current school logo?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isUploadingLogo = true);
+    final success = await ref.read(settingsNotifierProvider.notifier).deleteSchoolLogo(schoolId: schoolId);
+    setState(() => _isUploadingLogo = false);
+
+    if (mounted) {
+      if (success) {
+        setState(() {
+          _logoUrlController.text = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('School logo removed successfully.')),
+        );
+      } else {
+        final err = ref.read(settingsNotifierProvider).error;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove logo: $err'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _handleSaveNotifSettings() async {
     final defaultChannels = <String>[];
     if (_tenantInApp) defaultChannels.add('IN_APP');
@@ -354,54 +449,201 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           child: Padding(
                             padding: EdgeInsets.all(spacing.md),
                             child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // --- School Logo Section ---
+                                Text('School Logo & Branding', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final isNarrow = constraints.maxWidth < 480;
+                                    final hasLogo = _logoUrlController.text.trim().isNotEmpty;
+
+                                    final previewWidget = Container(
+                                      width: 100,
+                                      height: 100,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade100,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: Colors.grey.shade300),
+                                      ),
+                                      clipBehavior: Clip.antiAlias,
+                                      child: hasLogo
+                                          ? (_logoUrlController.text.trim().startsWith('http')
+                                              ? Image.network(
+                                                  _logoUrlController.text.trim(),
+                                                  fit: BoxFit.contain,
+                                                  errorBuilder: (ctx, err, stack) => const Center(
+                                                    child: Icon(Icons.broken_image, color: Colors.grey, size: 36),
+                                                  ),
+                                                )
+                                              : Center(
+                                                  child: Icon(Icons.school, size: 48, color: theme.colorScheme.primary),
+                                                ))
+                                          : const Center(
+                                              child: Icon(Icons.image_outlined, size: 40, color: Colors.grey),
+                                            ),
+                                    );
+
+                                    final actionsWidget = Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          hasLogo ? 'Current Logo Active' : 'No Logo Uploaded',
+                                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Accepted formats: PNG, JPG, JPEG, WebP (Max 5MB)',
+                                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            ElevatedButton.icon(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: theme.colorScheme.primary,
+                                                foregroundColor: theme.colorScheme.onPrimary,
+                                              ),
+                                              onPressed: _isUploadingLogo ? null : () => _handleUploadLogo(school.id),
+                                              icon: _isUploadingLogo
+                                                  ? const SizedBox(
+                                                      width: 14,
+                                                      height: 14,
+                                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                                    )
+                                                  : const Icon(Icons.upload_file, size: 16),
+                                              label: Text(_isUploadingLogo
+                                                  ? 'Uploading...'
+                                                  : (hasLogo ? 'Replace Logo' : 'Upload Logo')),
+                                            ),
+                                            if (hasLogo)
+                                              OutlinedButton.icon(
+                                                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                                                onPressed: _isUploadingLogo ? null : () => _handleDeleteLogo(school.id),
+                                                icon: const Icon(Icons.delete_outline, size: 16),
+                                                label: const Text('Remove Logo'),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    );
+
+                                    if (isNarrow) {
+                                      return Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Center(child: previewWidget),
+                                          const SizedBox(height: 12),
+                                          actionsWidget,
+                                        ],
+                                      );
+                                    } else {
+                                      return Row(
+                                        crossAxisAlignment: CrossAxisAlignment.center,
+                                        children: [
+                                          previewWidget,
+                                          const SizedBox(width: 16),
+                                          Expanded(child: actionsWidget),
+                                        ],
+                                      );
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 16),
+                                const Divider(),
+                                const SizedBox(height: 12),
+
+                                // --- Profile Fields ---
                                 TextFormField(
                                   controller: _nameController,
                                   decoration: const InputDecoration(labelText: 'School Name *'),
                                   validator: (val) => val == null || val.isEmpty ? 'Required' : null,
                                 ),
                                 const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextFormField(
-                                        controller: _codeController,
-                                        decoration: const InputDecoration(labelText: 'School Code *'),
-                                        validator: (val) => val == null || val.isEmpty ? 'Required' : null,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: TextFormField(
-                                        controller: _boardController,
-                                        decoration: const InputDecoration(labelText: 'Affiliation Board *'),
-                                        validator: (val) => val == null || val.isEmpty ? 'Required' : null,
-                                      ),
-                                    ),
-                                  ],
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    if (constraints.maxWidth < 600) {
+                                      return Column(
+                                        children: [
+                                          TextFormField(
+                                            controller: _codeController,
+                                            decoration: const InputDecoration(labelText: 'School Code *'),
+                                            validator: (val) => val == null || val.isEmpty ? 'Required' : null,
+                                          ),
+                                          const SizedBox(height: 12),
+                                          TextFormField(
+                                            controller: _boardController,
+                                            decoration: const InputDecoration(labelText: 'Affiliation Board *'),
+                                            validator: (val) => val == null || val.isEmpty ? 'Required' : null,
+                                          ),
+                                        ],
+                                      );
+                                    }
+                                    return Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _codeController,
+                                            decoration: const InputDecoration(labelText: 'School Code *'),
+                                            validator: (val) => val == null || val.isEmpty ? 'Required' : null,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _boardController,
+                                            decoration: const InputDecoration(labelText: 'Affiliation Board *'),
+                                            validator: (val) => val == null || val.isEmpty ? 'Required' : null,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                                 const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextFormField(
-                                        controller: _phoneController,
-                                        decoration: const InputDecoration(labelText: 'Contact Phone'),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: TextFormField(
-                                        controller: _websiteController,
-                                        decoration: const InputDecoration(labelText: 'Official Website'),
-                                      ),
-                                    ),
-                                  ],
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    if (constraints.maxWidth < 600) {
+                                      return Column(
+                                        children: [
+                                          TextFormField(
+                                            controller: _phoneController,
+                                            decoration: const InputDecoration(labelText: 'Contact Phone'),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          TextFormField(
+                                            controller: _websiteController,
+                                            decoration: const InputDecoration(labelText: 'Official Website'),
+                                          ),
+                                        ],
+                                      );
+                                    }
+                                    return Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _phoneController,
+                                            decoration: const InputDecoration(labelText: 'Contact Phone'),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _websiteController,
+                                            decoration: const InputDecoration(labelText: 'Official Website'),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                                 const SizedBox(height: 12),
                                 TextFormField(
                                   controller: _logoUrlController,
-                                  decoration: const InputDecoration(labelText: 'Branding Logo URL'),
+                                  decoration: const InputDecoration(labelText: 'Branding Logo URL / Storage Path'),
                                 ),
                               ],
                             ),

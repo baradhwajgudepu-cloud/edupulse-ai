@@ -63,14 +63,23 @@ void main() {
               return match.first.tenantId;
             }
           }
-          
-          // 2. If no school is selected, fall back to selectedTenantIdProvider
+
+          // 2. Check selected tenant from UI (e.g. Super Admin dropdown)
           final selectedTenantId = ref.watch(selectedTenantIdProvider);
           if (selectedTenantId != null && selectedTenantId.isNotEmpty) {
             return selectedTenantId;
           }
+
+          // 3. Check authenticated user's tenantId
+          final authState = ref.watch(authStateProvider);
+          if (authState is Authenticated) {
+            final userTenantId = authState.user.tenantId;
+            if (userTenantId != null && userTenantId.isNotEmpty) {
+              return userTenantId;
+            }
+          }
           
-          // 3. Fallback to build config tenant ID
+          // 4. Fallback to build config tenant ID
           final config = ref.watch(buildConfigProvider);
           return config.tenantId;
         }),

@@ -253,12 +253,15 @@ final resultsDashboardStatsProvider = Provider.autoDispose<ResultsDashboardStats
 final studentResultDetailProvider = FutureProvider.autoDispose.family<ReportCardPreviewDto, String>((ref, studentId) async {
   final schoolId = ref.watch(selectedSchoolIdProvider);
   if (schoolId == null) throw Exception('No school context selected');
+  final filters = ref.watch(resultsFiltersProvider);
 
   final apiClient = ref.watch(apiClientProvider);
   final result = await apiClient.get(
     '/report-cards/preview/$studentId',
     queryParameters: {
       'school_id': schoolId,
+      if (filters.examinationId != null && filters.examinationId!.isNotEmpty)
+        'examination_id': filters.examinationId,
     },
     mapper: (json) {
       final payload = json as Map<String, dynamic>;
@@ -319,12 +322,14 @@ class ReportCardOperationsState {
   final String? error;
   final String? successMessage;
   final BulkClassGenerateResponseDto? bulkGenerateResult;
+  final BulkReportCardActionResponseDto? bulkActionResult;
 
   const ReportCardOperationsState({
     required this.isLoading,
     this.error,
     this.successMessage,
     this.bulkGenerateResult,
+    this.bulkActionResult,
   });
 
   ReportCardOperationsState copyWith({
@@ -332,12 +337,14 @@ class ReportCardOperationsState {
     String? error,
     String? successMessage,
     BulkClassGenerateResponseDto? bulkGenerateResult,
+    BulkReportCardActionResponseDto? bulkActionResult,
   }) {
     return ReportCardOperationsState(
       isLoading: isLoading ?? this.isLoading,
       error: error,
       successMessage: successMessage,
       bulkGenerateResult: bulkGenerateResult,
+      bulkActionResult: bulkActionResult,
     );
   }
 }
@@ -353,6 +360,8 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
     required String studentId,
     required String schoolId,
     String? remarks,
+    String? academicYearId,
+    String? examinationId,
   }) async {
     state = state.copyWith(isLoading: true);
     final result = await _apiClient.post(
@@ -360,6 +369,8 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
       data: {
         'student_id': studentId,
         'school_id': schoolId,
+        if (academicYearId != null && academicYearId.isNotEmpty) 'academic_year_id': academicYearId,
+        if (examinationId != null && examinationId.isNotEmpty) 'examination_id': examinationId,
         'settings': {
           'generated_from_live_data': true,
           'show_attendance': true,
@@ -373,6 +384,7 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
     return result.when(
       onSuccess: (_) {
         _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
         state = state.copyWith(isLoading: false, successMessage: 'Report card generated successfully.');
         return true;
       },
@@ -387,6 +399,8 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
     required String classId,
     required String sectionId,
     required String schoolId,
+    String? academicYearId,
+    String? examinationId,
   }) async {
     state = state.copyWith(isLoading: true);
     final result = await _apiClient.post(
@@ -395,6 +409,8 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
         'class_id': classId,
         'section_id': sectionId,
         'school_id': schoolId,
+        if (academicYearId != null && academicYearId.isNotEmpty) 'academic_year_id': academicYearId,
+        if (examinationId != null && examinationId.isNotEmpty) 'examination_id': examinationId,
       },
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
@@ -405,10 +421,83 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
     return result.when(
       onSuccess: (data) {
         _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
         state = state.copyWith(
           isLoading: false,
-          successMessage: 'Bulk generation completed.',
+          successMessage: 'Bulk generation completed: ${data.generatedCount} generated.',
           bulkGenerateResult: data,
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> bulkApprove({
+    required List<String> reportCardIds,
+    required String schoolId,
+  }) async {
+    if (reportCardIds.isEmpty) return false;
+    state = state.copyWith(isLoading: true);
+    final result = await _apiClient.post(
+      '/report-cards/bulk-approve',
+      data: {
+        'report_card_ids': reportCardIds,
+        'school_id': schoolId,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return BulkReportCardActionResponseDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (data) {
+        _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
+        state = state.copyWith(
+          isLoading: false,
+          successMessage: '${data.successCount} report cards approved successfully.',
+          bulkActionResult: data,
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> bulkPublish({
+    required List<String> reportCardIds,
+    required String schoolId,
+  }) async {
+    if (reportCardIds.isEmpty) return false;
+    state = state.copyWith(isLoading: true);
+    final result = await _apiClient.post(
+      '/report-cards/bulk-publish',
+      data: {
+        'report_card_ids': reportCardIds,
+        'school_id': schoolId,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return BulkReportCardActionResponseDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (data) {
+        _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
+        state = state.copyWith(
+          isLoading: false,
+          successMessage: '${data.successCount} report cards published successfully.',
+          bulkActionResult: data,
         );
         return true;
       },

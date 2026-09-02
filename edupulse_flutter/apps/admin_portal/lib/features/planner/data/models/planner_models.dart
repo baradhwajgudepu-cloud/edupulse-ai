@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 // --- EVENTS ---
 enum EventAudience {
   all,

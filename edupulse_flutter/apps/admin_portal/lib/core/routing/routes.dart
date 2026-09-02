@@ -28,6 +28,9 @@ class AppRoutes {
   static const String feesOutstanding = '/fees/outstanding';
 
   static const String results = '/results';
+  static const String examTypes = '/results/exam-types';
+  static const String examinations = '/results/examinations';
+  static const String marksManagement = '/results/marks-management';
   static const String studentResultDetail = '/results/students/:studentId';
   static const String reportCards = '/results/report-cards';
   static const String reportCardDetail = '/results/report-cards/:studentId';
@@ -65,6 +68,9 @@ class AppRoutes {
   static const String plannerCirculars = '/planner/circulars';
   static const String plannerExams = '/planner/exams';
   static const String plannerSchedule = '/planner/schedule';
+
+  // AI School Intelligence
+  static const String aiIntelligence = '/ai-intelligence';
 }
 
 

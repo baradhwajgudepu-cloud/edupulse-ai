@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 enum ConcessionType {
   FIXED,
   PERCENTAGE;

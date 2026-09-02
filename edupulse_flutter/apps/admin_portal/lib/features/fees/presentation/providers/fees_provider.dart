@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 import '../../data/models/fee_models.dart';
+import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../students/data/models/student_models.dart';
 
 // --- 1. FEE TYPES PROVIDER ---
@@ -684,7 +686,7 @@ class OutstandingReportNotifier extends StateNotifier<OutstandingReportState> {
       '/fees/reports/outstanding',
       queryParameters: {
         'school_id': _schoolId,
-        if (_classId != null && _classId.isNotEmpty) 'class_id': _classId,
+        if (_classId != null && _classId!.isNotEmpty) 'class_id': _classId,
         'only_defaulters': _onlyDefaulters.toString(),
       },
       mapper: (json) {

@@ -101,6 +101,7 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
         ref.read(academicYearsProvider(next).notifier).fetchYears();
         ref.read(classesProvider(next).notifier).fetchClasses();
         ref.read(sectionsProvider(next).notifier).fetchSections();
+        ref.read(studentListProvider.notifier).fetchStudents();
       }
     });
 

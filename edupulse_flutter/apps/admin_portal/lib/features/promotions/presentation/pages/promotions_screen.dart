@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
+import '../../../../core/routing/routes.dart';
 
 class PromotionsScreen extends ConsumerStatefulWidget {
   const PromotionsScreen({super.key});

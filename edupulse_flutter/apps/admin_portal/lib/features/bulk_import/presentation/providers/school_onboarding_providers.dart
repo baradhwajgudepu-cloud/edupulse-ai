@@ -1,19 +1,23 @@
 import 'dart:typed_data';
 import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../data/models/school_onboarding_models.dart';
 import '../../data/models/school_onboarding_validators.dart';
+import '../../data/models/synthetic_onboarding_data_generator.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../students/presentation/providers/student_providers.dart';
+import '../../../guardians/presentation/providers/guardian_providers.dart';
+import '../../../teachers/presentation/providers/teachers_providers.dart';
+import '../../../users/presentation/providers/user_provider.dart';
 
 final schoolOnboardingProvider = StateNotifierProvider<SchoolOnboardingNotifier, OnboardingState>((ref) {
   final notifier = SchoolOnboardingNotifier(ref);
   // Reset onboarding state if the school context is modified and we are not processing
   ref.listen<String?>(selectedSchoolIdProvider, (previous, next) {
-    notifier.resetIfNotProcessing();
+    notifier.onSchoolContextChanged();
   });
   return notifier;
 });
@@ -24,7 +28,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   SchoolOnboardingNotifier(this._ref) : super(OnboardingState.initial());
 
-  void resetIfNotProcessing() {
+  void onSchoolContextChanged() {
     if (!state.isProcessing) {
       reset();
     }
@@ -32,6 +36,22 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   void reset() {
     state = OnboardingState.initial();
+  }
+
+  void setTenantMode({
+    required bool createNewTenant,
+    String? newTenantName,
+    String? newTenantCode,
+    String? newTenantEmail,
+    String? selectedTenantId,
+  }) {
+    state = state.copyWith(
+      createNewTenant: createNewTenant,
+      newTenantName: newTenantName ?? state.newTenantName,
+      newTenantCode: newTenantCode ?? state.newTenantCode,
+      newTenantEmail: newTenantEmail ?? state.newTenantEmail,
+      selectedTenantId: selectedTenantId ?? state.selectedTenantId,
+    );
   }
 
   void setStep(OnboardingStep step) {
@@ -106,6 +126,22 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           final parsedData = data;
           final sheetsList = List<String>.from(parsedData['sheets'] ?? const <String>[]);
           final activeSheet = parsedData['selected_sheet'] as String?;
+
+          // Auto-detect and switch to matching sheet if a multi-sheet workbook was uploaded without specific sheetName
+          if (sheetName == null && sheetsList.length > 1 && activeSheet != null) {
+            final activeStep = SchoolOnboardingValidators.matchStepFromSheetName(activeSheet);
+            if (activeStep != step) {
+              final matchingSheet = sheetsList.cast<String?>().firstWhere(
+                (s) => s != null && SchoolOnboardingValidators.matchStepFromSheetName(s) == step,
+                orElse: () => null,
+              );
+              if (matchingSheet != null && matchingSheet != activeSheet) {
+                selectSpreadsheetFile(step, fileName, bytes, sheetName: matchingSheet);
+                return;
+              }
+            }
+          }
+
           // Read full parsed rows for complete validation and execution
           final fullRawRows = (parsedData['rows'] as List<dynamic>?) ?? (parsedData['preview_rows'] as List<dynamic>?) ?? const [];
 
@@ -146,6 +182,50 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     }
   }
 
+  /// Automatically parses and populates all matching sheets from a multi-sheet workbook.
+  Future<void> loadEntireWorkbook(String fileName, Uint8List bytes) async {
+    state = state.copyWith(isProcessing: true);
+    try {
+      final apiClient = _ref.read(apiClientProvider);
+      final formData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(bytes, filename: fileName),
+      });
+
+      final result = await apiClient.post<Map<String, dynamic>>(
+        '/import-jobs/parse',
+        data: formData,
+        mapper: (json) {
+          final payload = json as Map<String, dynamic>;
+          return (payload['data'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+        },
+      );
+
+      state = state.copyWith(isProcessing: false);
+
+      await result.when(
+        onSuccess: (data) async {
+          final sheetsList = List<String>.from(data['sheets'] ?? const <String>[]);
+          for (final sheet in sheetsList) {
+            final step = SchoolOnboardingValidators.matchStepFromSheetName(sheet);
+            if (step != null) {
+              await selectSpreadsheetFile(step, fileName, bytes, sheetName: sheet);
+            }
+          }
+        },
+        onFailure: (failure) async {
+          state = state.copyWith(
+            globalErrorMessage: failure.message,
+          );
+        },
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isProcessing: false,
+        globalErrorMessage: 'Failed to load workbook: ${e.toString()}',
+      );
+    }
+  }
+
   void loadCsvFile(OnboardingStep step, String fileName, String content) {
     final csvRows = SchoolOnboardingValidators.parseCsv(content);
     final sheetData = SchoolOnboardingValidators.validateSheet(step, fileName, csvRows);
@@ -175,121 +255,57 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   // Populate pre-configured synthetic data for demo/tests
   void loadSyntheticFixture() {
-    // Generate Deterministic UUID formats
-    const ayCode = 'AY2026';
-    const classCode = 'CLASS08';
-    const sectionCode = 'SEC_A';
-    const subCode = 'SUB_MATH';
-    const tCode = 'T001';
-    const gCode = 'PAR001';
-    const student1 = 'ADM001';
-    const student2 = 'ADM002';
+    // Determine active school context if available
+    final selectedSchoolId = _ref.read(selectedSchoolIdProvider);
+    final schoolsState = _ref.read(schoolsListProvider);
+    final activeSchool = schoolsState.schools.isEmpty
+        ? null
+        : schoolsState.schools.firstWhere(
+            (s) => s.id == selectedSchoolId,
+            orElse: () => schoolsState.schools.first,
+          );
 
-    // 1. School
-    loadCsvFile(
-      OnboardingStep.school,
-      'school.csv',
-      'school_code,school_name,board,school_type,address,city,state,postal_code,phone,email,website,status\n'
-      'DPSH,Delhi Public School Hyderabad,CBSE,HIGH_SCHOOL,Gachibowli,Hyderabad,Telangana,500032,9876543210,contact@dpsh.in,www.dpsh.in,ACTIVE',
+    final schoolCode = (activeSchool?.code.isNotEmpty == true)
+        ? activeSchool!.code
+        : (state.resolvedSchools.isNotEmpty ? state.resolvedSchools.keys.first : 'DPSH');
+    final schoolName = (activeSchool?.name.isNotEmpty == true) ? activeSchool!.name : 'Delhi Public School Hyderabad';
+    final schoolEmail = (activeSchool?.email.isNotEmpty == true) ? activeSchool!.email : 'principal@dpsh.in';
+    final board = (activeSchool?.board.isNotEmpty == true) ? activeSchool!.board : 'CBSE';
+
+    final csvMap = SyntheticOnboardingDataGenerator.generateAllCsvs(
+      schoolCode: schoolCode,
+      schoolName: schoolName,
+      schoolEmail: schoolEmail,
+      board: board,
     );
 
-    // 2. Academic Years
-    loadCsvFile(
-      OnboardingStep.academicYears,
-      'academic_years.csv',
-      'school_code,academic_year_code,academic_year_name,start_date,end_date,status,is_current\n'
-      'DPSH,$ayCode,2026-27,2026-06-01,2027-03-31,ACTIVE,true',
-    );
+    final fileNames = {
+      OnboardingStep.school: 'school.csv',
+      OnboardingStep.academicYears: 'academic_years.csv',
+      OnboardingStep.classes: 'classes.csv',
+      OnboardingStep.sections: 'sections.csv',
+      OnboardingStep.subjects: 'subjects.csv',
+      OnboardingStep.teachers: 'teachers.csv',
+      OnboardingStep.guardians: 'guardians.csv',
+      OnboardingStep.students: 'students.csv',
+      OnboardingStep.relationships: 'student_guardians.csv',
+      OnboardingStep.teacherAssignments: 'teacher_assignments.csv',
+      OnboardingStep.timetable: 'timetable.csv',
+      OnboardingStep.syllabus: 'syllabus.csv',
+      OnboardingStep.exams: 'exams.csv',
+    };
 
-    // 3. Classes
-    loadCsvFile(
-      OnboardingStep.classes,
-      'classes.csv',
-      'academic_year_code,class_code,display_label,level,grade_category,specialization_stream,max_capacity,promotion_order_index,status\n'
-      '$ayCode,$classCode,Class 8,8,MIDDLE,General,40,8,ACTIVE',
-    );
+    for (final entry in csvMap.entries) {
+      final step = entry.key;
+      final content = entry.value;
+      final fileName = fileNames[step] ?? '${step.name}.csv';
+      loadCsvFile(step, fileName, content);
 
-    // 4. Sections
-    loadCsvFile(
-      OnboardingStep.sections,
-      'sections.csv',
-      'class_code,section_code,section_name,capacity,room_number,display_sort_order,status\n'
-      '$classCode,$sectionCode,Section A,40,Room 101,1,ACTIVE',
-    );
-
-    // 5. Subjects
-    loadCsvFile(
-      OnboardingStep.subjects,
-      'subjects.csv',
-      'subject_code,subject_name,category,subject_type,credit_hours,weekly_periods,theory_marks,practical_marks,pass_marks,display_order,academic_year_code\n'
-      '$subCode,Mathematics,CORE,THEORY_PRACTICAL,4,4,80,20,35,1,$ayCode',
-    );
-
-    // 6. Teachers
-    loadCsvFile(
-      OnboardingStep.teachers,
-      'teachers.csv',
-      'teacher_code,first_name,middle_name,last_name,gender,date_of_birth,mobile,email,employee_code,designation,joining_date,status,employment_type\n'
-      '$tCode,Priya,,Sharma,FEMALE,1985-04-12,9876543211,priya@dpsh.in,EMP001,PGT Maths,2020-06-01,ACTIVE,FULL_TIME',
-    );
-
-    // 7. Guardians
-    loadCsvFile(
-      OnboardingStep.guardians,
-      'guardians.csv',
-      'guardian_code,first_name,middle_name,last_name,gender,date_of_birth,mobile,email,guardian_type,address,city,state,status\n'
-      '$gCode,Ramesh,,Kumar,MALE,1980-05-15,9876543212,ramesh@gmail.com,FATHER,Madhapur,Hyderabad,Telangana,ACTIVE',
-    );
-
-    // 8. Students
-    loadCsvFile(
-      OnboardingStep.students,
-      'students.csv',
-      'admission_number,first_name,middle_name,last_name,gender,date_of_birth,blood_group,aadhaar_number,emis_number,mobile,email,photo_url,admission_date,roll_number,academic_year_code,class_code,section_code,address_line,city,state,status\n'
-      '$student1,Aarav,,Kumar,MALE,2014-05-12,A+,123456789012,EMIS001,9876543213,aarav@gmail.com,,2026-06-01,1,$ayCode,$classCode,$sectionCode,Madhapur,Hyderabad,Telangana,ACTIVE\n'
-      '$student2,Ananya,,Kumar,FEMALE,2014-05-12,A+,123456789013,EMIS002,9876543214,ananya@gmail.com,,2026-06-01,2,$ayCode,$classCode,$sectionCode,Madhapur,Hyderabad,Telangana,ACTIVE',
-    );
-
-    // 9. Student-Guardian Relationships
-    loadCsvFile(
-      OnboardingStep.relationships,
-      'student_guardians.csv',
-      'admission_number,guardian_code,relationship,is_primary,authorized_for_pickup,receives_notifications\n'
-      '$student1,$gCode,FATHER,true,true,true\n'
-      '$student2,$gCode,FATHER,true,true,true',
-    );
-
-    // 10. Teacher Assignments
-    loadCsvFile(
-      OnboardingStep.teacherAssignments,
-      'teacher_assignments.csv',
-      'teacher_code,subject_code,class_code,section_code,academic_year_code,assignment_type,weekly_periods,effective_from\n'
-      '$tCode,$subCode,$classCode,$sectionCode,$ayCode,PRIMARY,6,2026-06-01',
-    );
-
-    // 11. Timetable
-    loadCsvFile(
-      OnboardingStep.timetable,
-      'timetable.csv',
-      'academic_year_code,day_of_week,period_number,start_time,end_time,class_code,section_code,subject_code,teacher_code,room_number,period_type\n'
-      '$ayCode,MONDAY,1,09:00:00,09:45:00,$classCode,$sectionCode,$subCode,$tCode,Room 101,REGULAR',
-    );
-
-    // 12. Syllabus
-    loadCsvFile(
-      OnboardingStep.syllabus,
-      'syllabus.csv',
-      'academic_year_code,class_code,subject_code,syllabus_code,unit_name,chapter_name,topic_name,description,sequence_order\n'
-      '$ayCode,$classCode,$subCode,SYLL_MATH_08,Unit 1,Rational Numbers,Operations,Rational operations description,1',
-    );
-
-    // 13. Exams
-    loadCsvFile(
-      OnboardingStep.exams,
-      'exams.csv',
-      'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
-      '$ayCode,EXAM_MID,Mid Term Examination,HALF_YEARLY,$classCode,$subCode,2026-10-15,80,180',
-    );
+      final expected = SyntheticOnboardingDataGenerator.expectedCounts[step] ?? 0;
+      final parsedCount = state.sheets[step]?.rows.length ?? 0;
+      // ignore: avoid_print
+      print('[SYNTHETIC DATA]\nModule: ${step.label}\nExpected rows: $expected\nGenerated rows: $expected\nParsed rows: $parsedCount');
+    }
   }
 
   Future<void> executeOnboarding(String schoolId, BaseApiClient apiClient) async {
@@ -355,6 +371,106 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     String targetSchoolId = incomingSchoolId;
 
     try {
+      // 1. Resolve or Create Tenant Context
+      String? activeTenantId;
+      String? activeTenantName;
+
+      if (state.createNewTenant) {
+        final tName = (state.newTenantName != null && state.newTenantName!.trim().isNotEmpty)
+            ? state.newTenantName!.trim()
+            : 'Telangana Educational Society';
+        final rawCode = (state.newTenantCode != null && state.newTenantCode!.trim().isNotEmpty)
+            ? state.newTenantCode!.trim()
+            : 'ts-edu';
+        final tCode = rawCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\-]'), '-');
+        final tEmail = (state.newTenantEmail != null && state.newTenantEmail!.trim().isNotEmpty)
+            ? state.newTenantEmail!.trim()
+            : 'admin@telanganaedu.org';
+        final subdomain = tCode;
+
+        final tenantResult = await apiClient.post(
+          '/tenants',
+          data: {
+            'name': tName,
+            'code': tCode,
+            'subdomain': subdomain,
+            'email': tEmail,
+            'is_active': true,
+            'status': 'ACTIVE',
+          },
+          mapper: (json) {
+            final payload = json as Map<String, dynamic>;
+            return payload['data'] as Map<String, dynamic>;
+          },
+        );
+
+        if (tenantResult is Success<Map<String, dynamic>>) {
+          activeTenantId = tenantResult.data['id'] as String;
+          activeTenantName = (tenantResult.data['name'] as String?) ?? tName;
+        } else {
+          final failure = (tenantResult as Failure<Map<String, dynamic>>).failure;
+          if (failure.statusCode == 409) {
+            final listRes = await apiClient.get<List<dynamic>>(
+              '/tenants?limit=100',
+              mapper: (json) {
+                final payload = json as Map<String, dynamic>;
+                return (payload['data'] as List<dynamic>?) ?? const [];
+              },
+            );
+            listRes.when(
+              onSuccess: (list) {
+                for (final item in list) {
+                  final map = item as Map<String, dynamic>;
+                  if (map['code'] == tCode) {
+                    activeTenantId = map['id'] as String;
+                    activeTenantName = (map['name'] as String?) ?? tName;
+                    break;
+                  }
+                }
+              },
+              onFailure: (_) {},
+            );
+          }
+          if (activeTenantId == null) {
+            state = state.copyWith(
+              isProcessing: false,
+              globalErrorMessage: 'Failed to create or resolve organization/tenant: ${failure.message}',
+              approvalStatus: OnboardingApprovalStatus.failed,
+            );
+            return;
+          }
+        }
+      } else {
+        activeTenantId = state.selectedTenantId ??
+            _ref.read(selectedTenantIdProvider) ??
+            _ref.read(activeTenantIdProvider);
+      }
+
+      final finalTenantId = activeTenantId;
+      if (finalTenantId == null || finalTenantId.isEmpty) {
+        state = state.copyWith(
+          isProcessing: false,
+          globalErrorMessage: 'No active organization/tenant context found. Operation stopped.',
+          approvalStatus: OnboardingApprovalStatus.failed,
+        );
+        return;
+      }
+
+      _ref.read(selectedTenantIdProvider.notifier).state = finalTenantId;
+      try {
+        final sessionManager = _ref.read(sessionManagerProvider);
+        await sessionManager.saveTenantId(finalTenantId);
+        final tName = activeTenantName;
+        if (tName != null && tName.isNotEmpty) {
+          await sessionManager.saveTenantName(tName);
+        }
+      } catch (_) {}
+
+      state = state.copyWith(
+        resolvedTenantId: finalTenantId,
+        resolvedTenantName: activeTenantName,
+      );
+
       await _prepopulateResolutionMaps(
         incomingSchoolId.isNotEmpty ? incomingSchoolId : initialSchoolId,
         apiClient,
@@ -362,9 +478,9 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
       for (final step in importOrder) {
         if (state.isCancelled || !state.isProcessing) return;
-        // If school changed during active loop run, stop immediately
+        // If school was changed externally during active loop run, stop immediately
         final currentSelected = (_ref.read(selectedSchoolIdProvider) ?? '').trim();
-        if (targetSchoolId.isNotEmpty && currentSelected != targetSchoolId) {
+        if (initialSchoolId.isNotEmpty && currentSelected.isNotEmpty && currentSelected != initialSchoolId && currentSelected != targetSchoolId) {
           state = state.copyWith(
             isProcessing: false,
             globalErrorMessage: 'Active school context modified during execution. Import stopped.',
@@ -432,9 +548,11 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               final newlyCreatedId = res.resolvedId;
               if (newlyCreatedId != null && newlyCreatedId.isNotEmpty) {
                 targetSchoolId = newlyCreatedId;
+                final sName = res.displayName ?? state.resolvedSchoolName ?? 'New School Campus';
                 try {
                   final sessionManager = _ref.read(sessionManagerProvider);
                   await sessionManager.saveSchoolId(newlyCreatedId);
+                  await sessionManager.saveSchoolName(sName);
                 } catch (_) {}
                 _ref.read(selectedSchoolIdProvider.notifier).state = newlyCreatedId;
                 _ref.read(schoolsListProvider.notifier).fetchSchools();
@@ -453,6 +571,9 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               }
             }
           } else if (res.status == OnboardingRowStatus.failed) {
+            final tenantId = _ref.read(activeTenantIdProvider) ?? '';
+            // ignore: avoid_print
+            print('[IMPORT]\nModule: ${step.label}\nRow: ${i + 1}/${sheet.rows.length}\nTenant ID: $tenantId\nSchool ID: $activeSchoolId\nStatus: FAILED\nReason: ${res.apiErrorMessage ?? res.dependencyFailureReason ?? "Unknown"}');
             state = state.copyWith(sheets: updatedSheets, failureCount: state.failureCount + 1, currentProgressRow: i + 1);
           } else {
             state = state.copyWith(sheets: updatedSheets, skipCount: state.skipCount + 1, currentProgressRow: i + 1);
@@ -487,6 +608,42 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
   }
 
   Future<OnboardingParsedRow> _processRow(OnboardingStep step, OnboardingParsedRow row, String schoolId, BaseApiClient apiClient) async {
+    final activeTenantId = _ref.read(activeTenantIdProvider) ?? state.resolvedTenantId ?? '';
+    final activeTenantName = state.resolvedTenantName ?? 'Active Organization';
+    final activeSchoolName = state.resolvedSchoolName ?? 'Active School';
+
+    // ignore: avoid_print
+    print('[IMPORT CONTEXT]\n'
+        'tenant_id=$activeTenantId\n'
+        'tenant_name=$activeTenantName\n'
+        'school_id=$schoolId\n'
+        'school_name=$activeSchoolName\n'
+        'module=${step.label}');
+
+    if (activeTenantId.isEmpty && step != OnboardingStep.school) {
+      return _handleFailure(
+        const ApiFailure(
+          message: 'Active organization/tenant context required for import.',
+          type: ApiFailureType.validation,
+          statusCode: 400,
+        ),
+        row,
+        endpoint: '/onboarding-context',
+      );
+    }
+
+    if (schoolId.isEmpty && step != OnboardingStep.school) {
+      return _handleFailure(
+        const ApiFailure(
+          message: 'Active school campus context required for import.',
+          type: ApiFailureType.validation,
+          statusCode: 400,
+        ),
+        row,
+        endpoint: '/onboarding-context',
+      );
+    }
+
     // If school step was present and failed completely, prevent subsequent steps
     final schoolSheet = state.sheets[OnboardingStep.school];
     final schoolFailed = schoolSheet != null && schoolSheet.rows.isNotEmpty && state.resolvedSchools.isEmpty;
@@ -496,20 +653,27 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
     switch (step) {
       case OnboardingStep.school:
-        final code = row.data['school_code'] ?? '';
+        final code = (row.data['school_code'] ?? row.data['code'] ?? '').trim();
+        final cleanPhone = SchoolOnboardingValidators.normalizePhoneNumber(row.data['phone']);
+        final cleanPostal = SchoolOnboardingValidators.normalizePostalCode(row.data['postal_code']);
+        final email = (row.data['email'] ?? 'contact@school.edu').trim();
+        final schoolName = (row.data['school_name'] ?? row.data['name'] ?? '').trim();
+        final board = (row.data['board'] ?? 'CBSE').trim().toUpperCase();
+        final schoolType = (row.data['school_type'] ?? 'HIGH_SCHOOL').trim().toUpperCase();
+
         final result = await apiClient.post(
           '/schools',
           data: {
-            'name': row.data['school_name'],
+            'name': schoolName,
             'code': code,
-            'board': (row.data['board'] ?? 'CBSE').toUpperCase(),
-            'school_type': (row.data['school_type'] ?? 'HIGH_SCHOOL').toUpperCase(),
-            'email': row.data['email'] ?? 'contact@school.edu',
-            'phone': row.data['phone'],
-            'address': row.data['address'],
-            'city': row.data['city'],
-            'state': row.data['state'],
-            'postal_code': row.data['postal_code'],
+            'board': board,
+            'school_type': schoolType,
+            'email': email,
+            if (cleanPhone.isNotEmpty) 'phone': cleanPhone,
+            if (row.data['address'] != null && row.data['address']!.trim().isNotEmpty) 'address': row.data['address']!.trim(),
+            if (row.data['city'] != null && row.data['city']!.trim().isNotEmpty) 'city': row.data['city']!.trim(),
+            if (row.data['state'] != null && row.data['state']!.trim().isNotEmpty) 'state': row.data['state']!.trim(),
+            if (cleanPostal.isNotEmpty) 'postal_code': cleanPostal,
             'is_active': true,
             'status': 'ACTIVE',
           },
@@ -520,8 +684,16 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         );
         if (result is Success<Map<String, dynamic>>) {
           final uuid = result.data['id'] as String;
-          state = state.copyWith(resolvedSchools: Map.from(state.resolvedSchools)..[code] = uuid);
-          return row.copyWith(status: OnboardingRowStatus.success, resolvedId: uuid);
+          final sName = (result.data['name'] as String?) ?? schoolName;
+          state = state.copyWith(
+            resolvedSchools: Map.from(state.resolvedSchools)..[code] = uuid,
+            resolvedSchoolName: sName,
+          );
+          return row.copyWith(
+            status: OnboardingRowStatus.success,
+            resolvedId: uuid,
+            displayName: sName,
+          );
         } else {
           final failure = (result as Failure<Map<String, dynamic>>).failure;
           if (failure.statusCode == 409) {
@@ -694,7 +866,18 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       case OnboardingStep.sections:
         final classCode = row.data['class_code'] ?? '';
         final sectionCode = row.data['section_code'] ?? '';
-        final ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
+        var ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
+
+        if (ayCode.isEmpty) {
+          final parentClassRow = _findParentRow(OnboardingStep.classes, 'class_code', classCode);
+          if (parentClassRow != null) {
+            ayCode = (parentClassRow.data['academic_year_code'] ?? '').trim().toUpperCase();
+          }
+        }
+
+        if (ayCode.isEmpty && state.resolvedAcademicYears.length == 1) {
+          ayCode = state.resolvedAcademicYears.keys.first;
+        }
 
         if (ayCode.isEmpty) {
           return row.copyWith(
@@ -842,22 +1025,25 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         }
 
       case OnboardingStep.teachers:
-        final code = row.data['teacher_code'] ?? '';
+        final code = (row.data['teacher_code'] ?? row.data['staff_code'] ?? '').trim();
+        final cleanMobile = SchoolOnboardingValidators.normalizePhoneNumber(row.data['mobile']);
+        final officialEmail = (row.data['email'] ?? row.data['official_email'] ?? '').trim();
+
         final result = await apiClient.post(
           '/teachers',
           data: {
-            'first_name': row.data['first_name'],
-            'middle_name': row.data['middle_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'mobile': row.data['mobile'],
-            'official_email': row.data['email'] ?? row.data['official_email'],
-            'employee_code': row.data['employee_code'] ?? row.data['teacher_code'] ?? code,
-            'staff_code': row.data['staff_code'] ?? row.data['teacher_code'] ?? code,
-            'employment_type': (row.data['employment_type'] ?? '').toUpperCase(),
-            'designation': row.data['designation'] ?? 'TGT',
-            'joining_date': row.data['joining_date'] ?? '2026-06-01',
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            if (cleanMobile.isNotEmpty) 'mobile': cleanMobile,
+            'official_email': officialEmail,
+            'employee_code': (row.data['employee_code'] ?? row.data['teacher_code'] ?? code).trim(),
+            'staff_code': (row.data['staff_code'] ?? row.data['teacher_code'] ?? code).trim(),
+            'employment_type': (row.data['employment_type'] ?? 'FULL_TIME').trim().toUpperCase(),
+            'designation': (row.data['designation'] ?? 'TGT').trim(),
+            'joining_date': (row.data['joining_date'] ?? '2026-06-01').trim(),
             'school_id': schoolId,
           },
           mapper: (json) {
@@ -902,22 +1088,42 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               );
             }
           }
+          if (failure.originalError is DioException) {
+            final dErr = failure.originalError as DioException;
+            // ignore: avoid_print
+            print('[TEACHER API FAILURE]\n'
+                'Row: ${row.rowIndex}\n'
+                'Teacher Code: $code\n'
+                'Request URL: ${dErr.requestOptions.uri}\n'
+                'HTTP Method: ${dErr.requestOptions.method}\n'
+                'Base URL: ${dErr.requestOptions.baseUrl}\n'
+                'Dio Exception Type: ${dErr.type}\n'
+                'Dio Exception Message: ${dErr.message}\n'
+                'HTTP Status Code: ${dErr.response?.statusCode ?? failure.statusCode}\n'
+                'Response Body: ${dErr.response?.data}\n'
+                'Underlying Exception: ${dErr.error}\n'
+                'Stack Trace summary: ${dErr.stackTrace.toString().split('\n').take(3).join(' | ')}');
+          }
           return _handleFailure(failure, row, endpoint: '/teachers');
         }
 
       case OnboardingStep.guardians:
-        final code = row.data['guardian_code'] ?? '';
+        final code = (row.data['guardian_code'] ?? '').trim();
         if (state.resolvedGuardians.containsKey(code)) return row.copyWith(status: OnboardingRowStatus.success, resolvedId: state.resolvedGuardians[code]!);
+        final cleanMobile = SchoolOnboardingValidators.normalizePhoneNumber(row.data['mobile']);
+        final email = (row.data['email'] ?? '').trim();
+
         final result = await apiClient.post(
           '/guardians',
           data: {
-            'first_name': row.data['first_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'mobile': row.data['mobile'] ?? '9999999999',
-            'email': row.data['email'],
-            'guardian_type': (row.data['guardian_type'] ?? 'FATHER').toUpperCase(),
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            'mobile': cleanMobile.isNotEmpty ? cleanMobile : '9999999999',
+            if (email.isNotEmpty) 'email': email,
+            'guardian_type': (row.data['guardian_type'] ?? 'FATHER').trim().toUpperCase(),
             'school_id': schoolId,
             'is_active': true,
           },
@@ -967,10 +1173,10 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         }
 
       case OnboardingStep.students:
-        final adm = row.data['admission_number'] ?? '';
+        final adm = (row.data['admission_number'] ?? '').trim();
         final ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
-        final classCode = row.data['class_code'] ?? '';
-        final secCode = row.data['section_code'] ?? '';
+        final classCode = (row.data['class_code'] ?? '').trim();
+        final secCode = (row.data['section_code'] ?? '').trim();
         final ayId = state.resolvedAcademicYears[ayCode];
         if (ayId == null) return _createDependencySkipRow(row, OnboardingStep.academicYears, 'academic_year_code', ayCode, 'academic year');
         final classId = state.resolvedClasses[classCode];
@@ -980,12 +1186,13 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         final result = await apiClient.post(
           '/students',
           data: {
-            'first_name': row.data['first_name'],
-            'last_name': row.data['last_name'],
-            'gender': (row.data['gender'] ?? 'MALE').toUpperCase(),
-            'date_of_birth': row.data['date_of_birth'],
-            'roll_number': row.data['roll_number'],
-            'admission_date': row.data['admission_date'],
+            'first_name': row.data['first_name']?.trim(),
+            if (row.data['middle_name'] != null && row.data['middle_name']!.trim().isNotEmpty) 'middle_name': row.data['middle_name']!.trim(),
+            'last_name': row.data['last_name']?.trim(),
+            'gender': (row.data['gender'] ?? 'MALE').trim().toUpperCase(),
+            'date_of_birth': row.data['date_of_birth']?.trim(),
+            'roll_number': row.data['roll_number']?.trim(),
+            'admission_date': row.data['admission_date']?.trim(),
             'admission_number': adm,
             'academic_year_id': ayId,
             'class_id': classId,
@@ -1429,7 +1636,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       case OnboardingStep.academicYears:
         final code = (rowData['academic_year_code'] ?? '').trim().toUpperCase();
         if (code.isEmpty) return null;
-        print('[_resolveExistingId] Academic Years lookup for code="$code" in schoolId="$schoolId"');
+        EduLogger.d('[_resolveExistingId] Academic Years lookup for code="$code" in schoolId="$schoolId"');
         int skip = 0;
         const int limit = 100;
         while (true) {
@@ -1442,11 +1649,11 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           );
           final list = listResult.when(
             onSuccess: (data) {
-              print('[_resolveExistingId] GET academic-years returned ${data.length} items');
+              EduLogger.d('[_resolveExistingId] GET academic-years returned ${data.length} items');
               return data;
             },
             onFailure: (failure) {
-              print('[_resolveExistingId] GET academic-years failed: ${failure.message} (status: ${failure.statusCode})');
+              EduLogger.d('[_resolveExistingId] GET academic-years failed: ${failure.message} (status: ${failure.statusCode})');
               return const [];
             },
           );
@@ -1454,9 +1661,9 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           for (final item in list) {
             final itemCode = (item['code'] ?? '').toString().trim().toUpperCase();
             final itemId = item['id'] as String?;
-            print('[_resolveExistingId] Checking item: code="$itemCode", id="$itemId"');
+            EduLogger.d('[_resolveExistingId] Checking item: code="$itemCode", id="$itemId"');
             if (itemCode == code) {
-              print('[_resolveExistingId] Found match! Returning $itemId');
+              EduLogger.d('[_resolveExistingId] Found match! Returning $itemId');
               return itemId;
             }
           }
@@ -1591,8 +1798,9 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         return null;
 
       case OnboardingStep.guardians:
-        final code = rowData['guardian_code'] ?? '';
-        if (code.isEmpty) return null;
+        final cleanMobile = SchoolOnboardingValidators.normalizePhoneNumber(rowData['mobile']);
+        final email = (rowData['email'] ?? '').trim().toLowerCase();
+        if (cleanMobile.isEmpty && email.isEmpty) return null;
         int skip = 0;
         const int limit = 100;
         while (true) {
@@ -1609,7 +1817,10 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           );
           if (list.isEmpty) break;
           for (final item in list) {
-            if (item['mobile'] == rowData['mobile'] || item['email'] == rowData['email']) {
+            final itemMob = SchoolOnboardingValidators.normalizePhoneNumber(item['mobile']);
+            final itemEmail = (item['email'] ?? '').toString().trim().toLowerCase();
+            if ((cleanMobile.isNotEmpty && itemMob.isNotEmpty && itemMob == cleanMobile) ||
+                (email.isNotEmpty && itemEmail.isNotEmpty && itemEmail == email)) {
               return item['id'] as String;
             }
           }
@@ -1900,6 +2111,35 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       }
     }
 
+    final taSheet = updatedSheets[OnboardingStep.teacherAssignments];
+    final Map<String, int> assignmentLimits = {};
+    if (taSheet != null && taSheet.rows.isNotEmpty) {
+      for (final r in taSheet.rows) {
+        final tCode = (r.data['teacher_code'] ?? '').trim().toUpperCase();
+        final sCode = (r.data['subject_code'] ?? '').trim().toUpperCase();
+        final cCode = (r.data['class_code'] ?? '').trim().toUpperCase();
+        final secCode = (r.data['section_code'] ?? '').trim().toUpperCase();
+        final ayCode = (r.data['academic_year_code'] ?? '').trim().toUpperCase();
+        final wp = int.tryParse(r.data['weekly_periods'] ?? '') ?? 0;
+        final key = '$tCode|$sCode|$cCode|$secCode|$ayCode';
+        assignmentLimits[key] = wp;
+      }
+    }
+
+    final ttSheet = updatedSheets[OnboardingStep.timetable];
+    final Map<String, int> timetableCounts = {};
+    if (ttSheet != null && ttSheet.rows.isNotEmpty) {
+      for (final r in ttSheet.rows) {
+        final tCode = (r.data['teacher_code'] ?? '').trim().toUpperCase();
+        final sCode = (r.data['subject_code'] ?? '').trim().toUpperCase();
+        final cCode = (r.data['class_code'] ?? '').trim().toUpperCase();
+        final secCode = (r.data['section_code'] ?? '').trim().toUpperCase();
+        final ayCode = (r.data['academic_year_code'] ?? '').trim().toUpperCase();
+        final key = '$tCode|$sCode|$cCode|$secCode|$ayCode';
+        timetableCounts[key] = (timetableCounts[key] ?? 0) + 1;
+      }
+    }
+
     for (final step in updatedSheets.keys) {
       final sheet = updatedSheets[step]!;
       if (sheet.rows.isEmpty) continue;
@@ -1912,7 +2152,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         final currentRefs = List<String>.from(row.unresolvedReferences);
         
         final originalLength = currentRefs.length;
-        currentRefs.removeWhere((ref) => ref.contains('does not resolve to a school row') || ref.contains('does not resolve to an academic year row'));
+        currentRefs.removeWhere((ref) => ref.contains('does not resolve to a school row') || ref.contains('does not resolve to an academic year row') || ref.contains('Workload limit reached:'));
 
         if (step == OnboardingStep.academicYears) {
           final schoolCode = row.data['school_code'] ?? '';
@@ -1933,6 +2173,20 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           }
         }
 
+        if (step == OnboardingStep.timetable) {
+          final tCode = (row.data['teacher_code'] ?? '').trim().toUpperCase();
+          final sCode = (row.data['subject_code'] ?? '').trim().toUpperCase();
+          final cCode = (row.data['class_code'] ?? '').trim().toUpperCase();
+          final secCode = (row.data['section_code'] ?? '').trim().toUpperCase();
+          final ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
+          final key = '$tCode|$sCode|$cCode|$secCode|$ayCode';
+          final limit = assignmentLimits[key];
+          final scheduledCount = timetableCounts[key] ?? 0;
+          if (limit != null && limit > 0 && scheduledCount > limit) {
+            currentRefs.add('Workload limit reached: assignment $sCode for teacher $tCode in $cCode-$secCode has $scheduledCount scheduled periods which exceeds the limit of $limit weekly periods.');
+          }
+        }
+
         if (currentRefs.length != originalLength ||
             !currentRefs.every((r) => row.unresolvedReferences.contains(r))) {
           updatedRows[i] = row.copyWith(unresolvedReferences: currentRefs);
@@ -1950,9 +2204,15 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   void _invalidateRelevantProviders(String schoolId) {
     _ref.invalidate(studentListProvider);
-    _ref.invalidate(classesProvider(schoolId));
-    _ref.invalidate(sectionsProvider(schoolId));
-    _ref.invalidate(subjectsProvider(schoolId));
+    _ref.invalidate(guardianListProvider);
+    _ref.invalidate(teachersListProvider);
+    _ref.invalidate(usersListProvider);
+    if (schoolId.isNotEmpty) {
+      _ref.invalidate(academicYearsProvider(schoolId));
+      _ref.invalidate(classesProvider(schoolId));
+      _ref.invalidate(sectionsProvider(schoolId));
+      _ref.invalidate(subjectsProvider(schoolId));
+    }
   }
 
   Map<String, String> _getRowCodeAndName(OnboardingStep step, Map<String, String> data) {
@@ -2005,7 +2265,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         break;
       case OnboardingStep.syllabus:
         code = data['subject_code'] ?? '';
-        name = data['topic_title'] ?? '';
+        name = data['topic_name'] ?? data['topic_title'] ?? data['chapter_name'] ?? '';
         break;
       case OnboardingStep.exams:
         code = data['exam_code'] ?? '';
@@ -2020,12 +2280,12 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
   OnboardingParsedRow? _findParentRow(OnboardingStep parentStep, String keyField, String keyValue) {
     final sheet = state.sheets[parentStep];
     if (sheet == null) {
-      print('[_findParentRow] Sheet ${parentStep.name} is null');
+      EduLogger.d('[_findParentRow] Sheet ${parentStep.name} is null');
       return null;
     }
-    print('[_findParentRow] Searching in ${parentStep.name} for $keyField = "$keyValue"');
+    EduLogger.d('[_findParentRow] Searching in ${parentStep.name} for $keyField = "$keyValue"');
     for (final row in sheet.rows) {
-      print('[_findParentRow] Row keys: ${row.data.keys.toList()} | Row value for $keyField: "${row.data[keyField]}"');
+      EduLogger.d('[_findParentRow] Row keys: ${row.data.keys.toList()} | Row value for $keyField: "${row.data[keyField]}"');
       // Normalize values for safe comparison
       final rowVal = (row.data[keyField] ?? '').trim().toUpperCase();
       final searchVal = keyValue.trim().toUpperCase();
@@ -2063,7 +2323,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       status: OnboardingRowStatus.skipped,
       dependencyFailureReason: failureReason,
       parentError: parentErrorDetail,
-      apiErrorMessage: '$failureReason ${parentErrorDetail}',
+      apiErrorMessage: '$failureReason $parentErrorDetail',
     );
   }
 
@@ -2103,7 +2363,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       status: OnboardingRowStatus.skipped,
       dependencyFailureReason: failureReason,
       parentError: parentErrorDetail,
-      apiErrorMessage: '$failureReason ${parentErrorDetail}',
+      apiErrorMessage: '$failureReason $parentErrorDetail',
     );
   }
 

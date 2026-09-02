@@ -33,6 +33,14 @@ class FakeTestSessionManager implements SessionManager {
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'School 1';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
+  Future<String?> getTenantName() async => 'Tenant 1';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class FakeReportCardApiClient extends BaseApiClient {

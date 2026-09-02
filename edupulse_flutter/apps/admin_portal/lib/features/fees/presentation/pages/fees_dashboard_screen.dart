@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'package:admin_portal/core/routing/routes.dart';
+import 'package:edupulse_theme/edupulse_theme.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../school_setup/data/models/school_setup_models.dart';
 import '../providers/fees_provider.dart';
 import '../../data/models/fee_models.dart';
 
@@ -47,6 +49,7 @@ class _FeesDashboardScreenState extends ConsumerState<FeesDashboardScreen> with 
   @override
   Widget build(BuildContext context) {
     final schoolId = ref.watch(selectedSchoolIdProvider);
+    final theme = Theme.of(context);
 
     // Watch school context changes and reload
     ref.listen<String?>(selectedSchoolIdProvider, (previous, next) {

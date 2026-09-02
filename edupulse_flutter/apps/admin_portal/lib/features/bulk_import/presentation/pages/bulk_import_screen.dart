@@ -2178,6 +2178,37 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
     }
   }
 
+  bool _hasBlockingErrors(BulkImportState state) {
+    if (state.rows.any((r) => r.status == ImportRowStatus.error)) return true;
+
+    if (state.selectedType == ImportType.students) {
+      final schoolId = ref.read(selectedSchoolIdProvider);
+      if (schoolId != null) {
+        final sectionsState = ref.read(sectionsProvider(schoolId));
+        if (!sectionsState.isLoading && sectionsState.sections.isNotEmpty) {
+          final Map<String, int> incomingCounts = {};
+          for (final row in state.rows) {
+            if (row.status != ImportRowStatus.success) {
+              final secId = row.data['section_id'];
+              if (secId != null && secId.isNotEmpty) {
+                incomingCounts[secId] = (incomingCounts[secId] ?? 0) + 1;
+              }
+            }
+          }
+
+          for (final sec in sectionsState.sections) {
+            final existing = state.existingSectionCounts[sec.id] ?? 0;
+            final incoming = incomingCounts[sec.id] ?? 0;
+            if (existing + incoming > sec.capacity) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   List<_TemplateField> _getTemplateFields(ImportType type) {
     switch (type) {
       case ImportType.students:
@@ -2709,6 +2740,8 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
       }
     }
 
+    final RegExp uuidRegex = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+
     return csvClasses.entries.map((entry) {
       final val = entry.value;
       final ayId = val['ayId']!;
@@ -2928,6 +2961,7 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
   }
 
   Widget _buildDetailedExecutionLogsPanel(BuildContext context, BulkImportState state) {
+    final theme = Theme.of(context);
     final List<Widget> logItems = [];
 
     final schoolId = ref.read(selectedSchoolIdProvider);

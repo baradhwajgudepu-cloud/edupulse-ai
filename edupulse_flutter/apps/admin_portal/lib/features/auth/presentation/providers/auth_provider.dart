@@ -231,7 +231,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
     try {
       if (error is Error && error.stackTrace != null) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
-      } else if (error is DioException) {
+      } else if (error is DioException && error.stackTrace != null) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
       }
     } catch (_) {}

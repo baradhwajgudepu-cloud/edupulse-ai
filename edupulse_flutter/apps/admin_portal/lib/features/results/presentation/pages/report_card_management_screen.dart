@@ -1,11 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:admin_portal/core/routing/routes.dart';
 import 'package:admin_portal/features/school_setup/presentation/providers/school_setup_providers.dart';
 import 'package:admin_portal/features/school_setup/data/models/school_setup_models.dart';
 import 'package:admin_portal/features/students/data/models/student_models.dart';
 import 'package:admin_portal/features/results/data/models/results_models.dart';
 import 'package:admin_portal/features/results/presentation/providers/results_providers.dart';
+
+enum ReportCardLifecycleFilter {
+  all('All Students'),
+  notGenerated('Not Generated'),
+  draft('Draft'),
+  underReview('Under Review'),
+  approved('Approved'),
+  published('Published'),
+  locked('Locked');
+
+  final String label;
+  const ReportCardLifecycleFilter(this.label);
+}
 
 class ReportCardManagementScreen extends ConsumerStatefulWidget {
   const ReportCardManagementScreen({super.key});
@@ -17,6 +31,24 @@ class ReportCardManagementScreen extends ConsumerStatefulWidget {
 class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagementScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  ReportCardLifecycleFilter _activeFilter = ReportCardLifecycleFilter.all;
+  final Set<String> _selectedStudentIds = {};
+
+  void _clearSelection() {
+    setState(() {
+      _selectedStudentIds.clear();
+    });
+  }
+
+  Widget _buildCountMetric(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 2),
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+      ],
+    );
+  }
 
   @override
   void initState() {
@@ -47,52 +79,307 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
     required String value,
     required IconData icon,
     required Color color,
+    required ReportCardLifecycleFilter filterKey,
+    required bool isSelected,
+    required VoidCallback onTap,
   }) {
     final theme = Theme.of(context);
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: Card(
+        elevation: isSelected ? 3 : 0,
+        color: isSelected ? color.withValues(alpha: 0.08) : theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(
+            color: isSelected ? color : theme.colorScheme.outlineVariant,
+            width: isSelected ? 2.0 : 1.0,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          hoverColor: color.withValues(alpha: 0.05),
+          splashColor: color.withValues(alpha: 0.15),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Stack(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: isSelected ? 0.2 : 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(icon, color: color, size: 24),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              color: isSelected ? color : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            value,
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: isSelected ? color : theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (isSelected)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'ACTIVE',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                ],
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  void _showNotGeneratedDiagnosticsDialog(StudentDto s, String className, String secName) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => Consumer(
+        builder: (context, ref, _) {
+          final detailAsync = ref.watch(studentResultDetailProvider(s.id));
+
+          return AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.assignment_late_outlined, color: Colors.deepOrange),
+                const SizedBox(width: 8),
+                Text('Report Card Status – ${s.firstName} ${s.lastName}'),
+              ],
+            ),
+            content: SizedBox(
+              width: 580,
+              child: detailAsync.when(
+                data: (preview) {
+                  final missingList = preview.missingReasons;
+                  final hasMarks = preview.subjectMarks.isNotEmpty;
+
+                  return SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Student info banner
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Roll No: ${s.rollNumber}  |  Adm No: ${s.admissionNumber}',
+                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                    ),
+                                  ),
+                                  _buildStatusBadge('NOT GENERATED'),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Class: $className  •  Section: $secName',
+                                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        if (missingList.isNotEmpty) ...[
+                          const Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, color: Colors.deepOrange, size: 18),
+                              SizedBox(width: 6),
+                              Text(
+                                'Missing Examination Data:',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.deepOrange),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'The report card cannot be compiled until marks are entered and published for all subjects.',
+                            style: TextStyle(fontSize: 12, color: Colors.black87),
+                          ),
+                          const SizedBox(height: 10),
+                          ...missingList.map((reason) {
+                            return Card(
+                              elevation: 0,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              color: Colors.orange.shade50.withAlpha(100),
+                              shape: RoundedRectangleBorder(
+                                side: BorderSide(color: Colors.orange.shade200),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.error_outline, color: Colors.deepOrange, size: 20),
+                                title: Text(reason, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                trailing: TextButton.icon(
+                                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                                  icon: const Icon(Icons.edit_note, size: 16),
+                                  label: const Text('Fix in Marks →', style: TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    Navigator.pop(dialogCtx);
+                                    context.push(AppRoutes.marksManagement);
+                                  },
+                                ),
+                              ),
+                            );
+                          }),
+                        ] else if (!hasMarks) ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.amber.shade300),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.info_outline, color: Colors.amber, size: 20),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'No examination marks recorded yet for this student. Please enter and publish marks in Marks Management.',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ] else ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.green.shade300),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'All examination marks are published and ready for report card generation!',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  );
+                },
+                loading: () => const SizedBox(
+                  height: 120,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (err, _) => Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red, size: 28),
+                      const SizedBox(height: 8),
+                      Text('Unable to fetch eligibility: $err', style: const TextStyle(fontSize: 12, color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogCtx),
+                child: const Text('Close'),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.table_chart, size: 16),
+                label: const Text('Marks Management'),
+                onPressed: () {
+                  Navigator.pop(dialogCtx);
+                  context.push(AppRoutes.marksManagement);
+                },
+              ),
+              FilledButton.icon(
+                icon: const Icon(Icons.flash_on, size: 16),
+                label: const Text('Generate Report Card'),
+                onPressed: () async {
+                  Navigator.pop(dialogCtx);
+                  final schoolId = ref.read(selectedSchoolIdProvider);
+                  if (schoolId != null) {
+                    final res = await ref.read(reportCardOperationsProvider.notifier).generateSingle(
+                          studentId: s.id,
+                          schoolId: schoolId,
+                        );
+                    if (res) {
+                      _showActionFeedback('Report card generated successfully.');
+                    } else {
+                      final state = ref.read(reportCardOperationsProvider);
+                      _showActionFeedback(state.error ?? 'Generation failed', isError: true);
+                    }
+                  }
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _handleStudentClick(StudentDto s, ReportCardDto card, String className, String secName) {
+    if (card.id.isNotEmpty && card.status.toUpperCase() != 'NOT GENERATED') {
+      context.push('/results/report-cards/${s.id}');
+    } else {
+      _showNotGeneratedDiagnosticsDialog(s, className, secName);
+    }
   }
 
   Widget _buildStatusBadge(String status) {
@@ -154,7 +441,156 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
     );
   }
 
+  void _showBulkActionResultDialog(
+    String title,
+    dynamic result, {
+    String? academicYearId,
+    String? classId,
+    String? sectionId,
+  }) {
+    final int totalCount = (result is BulkClassGenerateResponseDto)
+        ? result.totalStudents
+        : (result is BulkReportCardActionResponseDto ? result.totalRequested : 0);
+    final int successCount = (result is BulkClassGenerateResponseDto)
+        ? result.generatedCount
+        : (result is BulkReportCardActionResponseDto ? result.successCount : 0);
+    final int failedCount = (result is BulkClassGenerateResponseDto)
+        ? result.failedCount
+        : (result is BulkReportCardActionResponseDto ? result.failedCount : 0);
+    final List<StudentFailureDetailDto> failures = (result is BulkClassGenerateResponseDto)
+        ? result.failures
+        : (result is BulkReportCardActionResponseDto ? result.failures : []);
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.assessment_outlined, color: Colors.indigo),
+            const SizedBox(width: 8),
+            Text(title),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: failedCount > 0 ? Colors.amber.shade50 : Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: failedCount > 0 ? Colors.amber.shade300 : Colors.green.shade300,
+                    ),
+                  ),
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceAround,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      _buildCountMetric('Total Checked', '$totalCount', Colors.blueGrey),
+                      _buildCountMetric('Successfully Generated: $successCount', '$successCount', Colors.green),
+                      _buildCountMetric('Failed: $failedCount', '$failedCount', failedCount > 0 ? Colors.red : Colors.grey),
+                    ],
+                  ),
+                ),
+                if (failures.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.deepOrange, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Actionable Failure Details (${failures.length} Students):',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ...failures.map((f) {
+                    return Card(
+                      elevation: 0,
+                      margin: const EdgeInsets.only(bottom: 8.0),
+                      color: Colors.red.shade50.withAlpha(120),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        side: BorderSide(color: Colors.red.shade200),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.person_outline, size: 16, color: Colors.black87),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    '${f.studentName}: ${f.reasons.join(", ")}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    foregroundColor: Colors.indigo,
+                                  ),
+                                  icon: const Icon(Icons.edit_note, size: 16),
+                                  label: const Text('Fix in Marks →', style: TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    Navigator.pop(dialogCtx);
+                                    final params = <String>[];
+                                    if (academicYearId != null) params.add('academicYearId=$academicYearId');
+                                    if (classId != null) params.add('classId=$classId');
+                                    if (sectionId != null) params.add('sectionId=$sectionId');
+                                    final query = params.isNotEmpty ? '?${params.join("&")}' : '';
+                                    context.push('${AppRoutes.marksManagement}$query');
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 4,
+                              children: f.reasons.map((reason) {
+                                return Chip(
+                                  avatar: const Icon(Icons.warning_amber, size: 13, color: Colors.red),
+                                  label: Text(reason, style: const TextStyle(fontSize: 11, color: Colors.red)),
+                                  backgroundColor: Colors.white,
+                                  visualDensity: VisualDensity.compact,
+                                  side: BorderSide(color: Colors.red.shade200),
+                                );
+                              }).toList(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleBulkGenerate(String classId, String sectionId, String schoolId) async {
+    final filters = ref.read(resultsFiltersProvider);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -183,54 +619,154 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
       classId: classId,
       sectionId: sectionId,
       schoolId: schoolId,
+      academicYearId: filters.academicYearId,
     );
 
     if (success) {
       final state = ref.read(reportCardOperationsProvider);
       final result = state.bulkGenerateResult;
+      _clearSelection();
       if (result != null) {
         if (!mounted) return;
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Bulk Generation Result'),
-            content: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Total Students Checked: ${result.totalStudents}'),
-                  Text('Successfully Generated: ${result.generatedCount}'),
-                  Text('Failed: ${result.failedCount}'),
-                  if (result.failures.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Failure Details:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const Divider(),
-                    ...result.failures.map((f) => Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Text(
-                            '• ${f.studentName}: ${f.reasons.join(", ")}',
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        )),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
+        _showBulkActionResultDialog(
+          'Bulk Generation Result',
+          result,
+          academicYearId: filters.academicYearId,
+          classId: classId,
+          sectionId: sectionId,
         );
       }
     } else {
       final state = ref.read(reportCardOperationsProvider);
       _showActionFeedback(state.error ?? 'Bulk generation failed', isError: true);
+    }
+  }
+
+  Future<void> _handleBulkApproveSelected(List<ReportCardDto> cards, String schoolId) async {
+    final selectedCards = cards.where((c) => _selectedStudentIds.contains(c.studentId) && c.id.isNotEmpty).toList();
+    if (selectedCards.isEmpty) {
+      _showActionFeedback('No generated report cards selected for approval.', isError: true);
+      return;
+    }
+
+    final underReviewCards = selectedCards.where((c) => c.status.toUpperCase() == 'UNDER_REVIEW').toList();
+    final count = underReviewCards.isNotEmpty ? underReviewCards.length : selectedCards.length;
+    final cardIds = (underReviewCards.isNotEmpty ? underReviewCards : selectedCards).map((c) => c.id).toList();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Approve Report Cards?'),
+        content: Text(
+          'You are about to approve $count report card${count == 1 ? "" : "s"}.\n\n'
+          'This action will mark them as approved and ready for publishing.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Approve $count Card${count == 1 ? "" : "s"}'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final filters = ref.read(resultsFiltersProvider);
+    final notifier = ref.read(reportCardOperationsProvider.notifier);
+    final success = await notifier.bulkApprove(
+      reportCardIds: cardIds,
+      schoolId: schoolId,
+    );
+
+    if (success) {
+      final state = ref.read(reportCardOperationsProvider);
+      final result = state.bulkActionResult;
+      _clearSelection();
+      if (result != null && result.failedCount > 0) {
+        if (!mounted) return;
+        _showBulkActionResultDialog(
+          'Bulk Approval Result',
+          result,
+          academicYearId: filters.academicYearId,
+          classId: filters.classId,
+          sectionId: filters.sectionId,
+        );
+      } else {
+        _showActionFeedback('$count report cards approved successfully.');
+      }
+    } else {
+      final state = ref.read(reportCardOperationsProvider);
+      _showActionFeedback(state.error ?? 'Bulk approval failed.', isError: true);
+    }
+  }
+
+  Future<void> _handleBulkPublishSelected(List<ReportCardDto> cards, String schoolId) async {
+    final selectedCards = cards.where((c) => _selectedStudentIds.contains(c.studentId) && c.id.isNotEmpty).toList();
+    if (selectedCards.isEmpty) {
+      _showActionFeedback('No generated report cards selected for publishing.', isError: true);
+      return;
+    }
+
+    final approvedCards = selectedCards.where((c) => c.status.toUpperCase() == 'APPROVED').toList();
+    final count = approvedCards.isNotEmpty ? approvedCards.length : selectedCards.length;
+    final cardIds = (approvedCards.isNotEmpty ? approvedCards : selectedCards).map((c) => c.id).toList();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Publish Report Cards?'),
+        content: Text(
+          'You are about to publish $count report card${count == 1 ? "" : "s"}.\n\n'
+          'Once published, they will become visible to parents and students.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Publish $count Card${count == 1 ? "" : "s"}'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final filters = ref.read(resultsFiltersProvider);
+    final notifier = ref.read(reportCardOperationsProvider.notifier);
+    final success = await notifier.bulkPublish(
+      reportCardIds: cardIds,
+      schoolId: schoolId,
+    );
+
+    if (success) {
+      final state = ref.read(reportCardOperationsProvider);
+      final result = state.bulkActionResult;
+      _clearSelection();
+      if (result != null && result.failedCount > 0) {
+        if (!mounted) return;
+        _showBulkActionResultDialog(
+          'Bulk Publish Result',
+          result,
+          academicYearId: filters.academicYearId,
+          classId: filters.classId,
+          sectionId: filters.sectionId,
+        );
+      } else {
+        _showActionFeedback('$count report cards published successfully.');
+      }
+    } else {
+      final state = ref.read(reportCardOperationsProvider);
+      _showActionFeedback(state.error ?? 'Bulk publish failed.', isError: true);
     }
   }
 
@@ -652,6 +1188,9 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: totalCount.toString(),
                           icon: Icons.people_outline,
                           color: theme.colorScheme.primary,
+                          filterKey: ReportCardLifecycleFilter.all,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.all,
+                          onTap: () => setState(() => _activeFilter = ReportCardLifecycleFilter.all),
                         ),
                         _buildStatCard(
                           context,
@@ -659,6 +1198,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: notGeneratedCount.toString(),
                           icon: Icons.assignment_late_outlined,
                           color: Colors.red,
+                          filterKey: ReportCardLifecycleFilter.notGenerated,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.notGenerated,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.notGenerated
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.notGenerated;
+                          }),
                         ),
                         _buildStatCard(
                           context,
@@ -666,6 +1212,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: draftCount.toString(),
                           icon: Icons.edit_note,
                           color: Colors.orange,
+                          filterKey: ReportCardLifecycleFilter.draft,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.draft,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.draft
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.draft;
+                          }),
                         ),
                         _buildStatCard(
                           context,
@@ -673,6 +1226,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: underReviewCount.toString(),
                           icon: Icons.rate_review_outlined,
                           color: Colors.amber,
+                          filterKey: ReportCardLifecycleFilter.underReview,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.underReview,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.underReview
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.underReview;
+                          }),
                         ),
                         _buildStatCard(
                           context,
@@ -680,6 +1240,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: approvedCount.toString(),
                           icon: Icons.check_circle_outline,
                           color: Colors.blue,
+                          filterKey: ReportCardLifecycleFilter.approved,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.approved,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.approved
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.approved;
+                          }),
                         ),
                         _buildStatCard(
                           context,
@@ -687,6 +1254,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: publishedCount.toString(),
                           icon: Icons.publish_outlined,
                           color: Colors.green,
+                          filterKey: ReportCardLifecycleFilter.published,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.published,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.published
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.published;
+                          }),
                         ),
                         _buildStatCard(
                           context,
@@ -694,6 +1268,13 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           value: lockedCount.toString(),
                           icon: Icons.lock_outline,
                           color: Colors.purple,
+                          filterKey: ReportCardLifecycleFilter.locked,
+                          isSelected: _activeFilter == ReportCardLifecycleFilter.locked,
+                          onTap: () => setState(() {
+                            _activeFilter = _activeFilter == ReportCardLifecycleFilter.locked
+                                ? ReportCardLifecycleFilter.all
+                                : ReportCardLifecycleFilter.locked;
+                          }),
                         ),
                       ];
 
@@ -731,52 +1312,124 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                           spacing: 12,
                           runSpacing: 12,
                           children: [
-                            Text(
-                              'Bulk Operations',
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                            ),
-                            if (filters.classId != null && filters.sectionId != null)
-                              Wrap(
-                                spacing: 12,
-                                runSpacing: 12,
-                                children: [
-                                  ElevatedButton.icon(
-                                    key: const Key('btn_bulk_generate'),
-                                    onPressed: () => _handleBulkGenerate(
-                                      filters.classId!,
-                                      filters.sectionId!,
-                                      schoolId,
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Bulk Operations',
+                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                if (filters.academicYearId == null || filters.classId == null || filters.sectionId == null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: Text(
+                                      'Please select Academic Year, Class and Section to enable generation.',
+                                      style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
                                     ),
-                                    icon: const Icon(Icons.flash_on),
-                                    label: const Text('Generate Class Cards'),
                                   ),
-                                  ElevatedButton.icon(
-                                    key: const Key('btn_bulk_publish'),
-                                    onPressed: approvedCount > 0
-                                        ? () => _handleBulkPublish(
-                                              filters.classId!,
-                                              filters.sectionId!,
-                                              schoolId,
-                                            )
-                                        : null,
-                                    icon: const Icon(Icons.publish),
-                                    label: const Text('Publish Approved'),
-                                  ),
-                                ],
-                              ),
+                              ],
+                            ),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                ElevatedButton.icon(
+                                  key: const Key('btn_bulk_generate'),
+                                  onPressed: (filters.academicYearId != null && filters.classId != null && filters.sectionId != null && !opsState.isLoading)
+                                      ? () => _handleBulkGenerate(
+                                            filters.classId!,
+                                            filters.sectionId!,
+                                            schoolId,
+                                          )
+                                      : null,
+                                  icon: opsState.isLoading
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                        )
+                                      : const Icon(Icons.flash_on),
+                                  label: Text(opsState.isLoading ? 'Generating Report Cards...' : 'Generate Class Cards'),
+                                ),
+                                ElevatedButton.icon(
+                                  key: const Key('btn_bulk_publish_all'),
+                                  onPressed: (approvedCount > 0 && filters.classId != null && filters.sectionId != null && !opsState.isLoading)
+                                      ? () => _handleBulkPublish(
+                                            filters.classId!,
+                                            filters.sectionId!,
+                                            schoolId,
+                                          )
+                                      : null,
+                                  icon: const Icon(Icons.publish),
+                                  label: Text('Publish All Approved ($approvedCount)'),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                         const SizedBox(height: 20),
 
-                        // Search Bar
-                        TextField(
-                          key: const Key('search_bar_input'),
-                          decoration: const InputDecoration(
-                            hintText: 'Search student roll, name or admission number...',
-                            prefixIcon: Icon(Icons.search),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12),
-                          ),
-                          onChanged: (v) => setState(() => _searchQuery = v),
+                        // Search Bar & Filter Indicator Row
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                key: const Key('search_bar_input'),
+                                decoration: const InputDecoration(
+                                  hintText: 'Search student roll, name or admission number...',
+                                  prefixIcon: Icon(Icons.search),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                                ),
+                                onChanged: (v) => setState(() => _searchQuery = v),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Active Filter Indicator Banner
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _activeFilter == ReportCardLifecycleFilter.all
+                                      ? Icons.people
+                                      : Icons.filter_alt,
+                                  size: 16,
+                                  color: _activeFilter == ReportCardLifecycleFilter.all
+                                      ? Colors.grey.shade700
+                                      : theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _activeFilter == ReportCardLifecycleFilter.all
+                                      ? 'Showing: All Students ($totalCount)'
+                                      : _activeFilter == ReportCardLifecycleFilter.notGenerated
+                                          ? 'Showing: Students Without Generated Report Cards ($notGeneratedCount)'
+                                          : 'Showing: ${_activeFilter.label} Report Cards (${_activeFilter == ReportCardLifecycleFilter.draft ? draftCount : _activeFilter == ReportCardLifecycleFilter.underReview ? underReviewCount : _activeFilter == ReportCardLifecycleFilter.approved ? approvedCount : _activeFilter == ReportCardLifecycleFilter.published ? publishedCount : lockedCount})',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: _activeFilter == ReportCardLifecycleFilter.all
+                                        ? Colors.black87
+                                        : theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_activeFilter != ReportCardLifecycleFilter.all)
+                              ActionChip(
+                                avatar: const Icon(Icons.close, size: 14),
+                                label: const Text('Reset Filter', style: TextStyle(fontSize: 11)),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => setState(() => _activeFilter = ReportCardLifecycleFilter.all),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 16),
 
@@ -794,7 +1447,45 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
 
                             return cardsAsync.when(
                               data: (List<ReportCardDto> cards) {
-                                final filtered = students.where((st) {
+                                // 1. Apply Lifecycle Filter
+                                final filteredByLifecycle = students.where((st) {
+                                  final card = cards.firstWhere(
+                                    (c) => c.studentId == st.id,
+                                    orElse: () => ReportCardDto(
+                                      id: '',
+                                      verificationUuid: '',
+                                      status: 'NOT GENERATED',
+                                      pdfHistory: const [],
+                                      tenantId: '',
+                                      schoolId: '',
+                                      academicYearId: '',
+                                      studentId: st.id,
+                                      aiMetrics: const {},
+                                    ),
+                                  );
+
+                                  final cardStatus = card.id.isEmpty ? 'NOT GENERATED' : card.status.toUpperCase();
+
+                                  switch (_activeFilter) {
+                                    case ReportCardLifecycleFilter.all:
+                                      return true;
+                                    case ReportCardLifecycleFilter.notGenerated:
+                                      return card.id.isEmpty || cardStatus == 'NOT GENERATED';
+                                    case ReportCardLifecycleFilter.draft:
+                                      return card.id.isNotEmpty && cardStatus == 'DRAFT';
+                                    case ReportCardLifecycleFilter.underReview:
+                                      return card.id.isNotEmpty && cardStatus == 'UNDER_REVIEW';
+                                    case ReportCardLifecycleFilter.approved:
+                                      return card.id.isNotEmpty && cardStatus == 'APPROVED';
+                                    case ReportCardLifecycleFilter.published:
+                                      return card.id.isNotEmpty && cardStatus == 'PUBLISHED';
+                                    case ReportCardLifecycleFilter.locked:
+                                      return card.id.isNotEmpty && cardStatus == 'LOCKED';
+                                  }
+                                }).toList();
+
+                                // 2. Apply Search Filter
+                                final filtered = filteredByLifecycle.where((st) {
                                   final name = '${st.firstName} ${st.lastName}'.toLowerCase();
                                   final roll = st.rollNumber.toLowerCase();
                                   final adm = st.admissionNumber.toLowerCase();
@@ -802,102 +1493,307 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                   return name.contains(query) || roll.contains(query) || adm.contains(query);
                                 }).toList();
 
+                                final matchingClasses = classState.classes.where((c) => c.id == filters.classId).toList();
+                                final currentClassName = matchingClasses.isNotEmpty ? matchingClasses.first.name : 'Class';
+
+                                final matchingSections = sectionState.sections.where((sec) => sec.id == filters.sectionId).toList();
+                                final currentSecName = matchingSections.isNotEmpty ? matchingSections.first.name : 'Section';
+
+                                final selectedCards = cards.where((c) => _selectedStudentIds.contains(c.studentId) && c.id.isNotEmpty).toList();
+                                final selectedUnderReviewCount = selectedCards.where((c) => c.status.toUpperCase() == 'UNDER_REVIEW').length;
+                                final selectedApprovedCount = selectedCards.where((c) => c.status.toUpperCase() == 'APPROVED').length;
+
                                 if (filtered.isEmpty) {
-                                  return const Padding(
-                                    padding: EdgeInsets.all(24.0),
+                                  return Padding(
+                                    padding: const EdgeInsets.all(32.0),
                                     child: Center(
-                                      child: Text('No students matches the query.'),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade400),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            _searchQuery.isNotEmpty
+                                                ? 'No students match "$_searchQuery"'
+                                                : 'No ${_activeFilter.label} Report Cards',
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            _searchQuery.isNotEmpty
+                                                ? 'Try searching with a different name, roll number, or admission number.'
+                                                : 'There are currently no ${_activeFilter.label.toLowerCase()} report cards for $currentClassName - $currentSecName.',
+                                            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          if (_activeFilter != ReportCardLifecycleFilter.all) ...[
+                                            const SizedBox(height: 14),
+                                            OutlinedButton.icon(
+                                              icon: const Icon(Icons.people_outline, size: 16),
+                                              label: const Text('Show All Students'),
+                                              onPressed: () => setState(() => _activeFilter = ReportCardLifecycleFilter.all),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                     ),
                                   );
                                 }
 
-                                if (isMobile) {
-                                  return ListView.separated(
-                                    shrinkWrap: true,
-                                    physics: const NeverScrollableScrollPhysics(),
-                                    itemCount: filtered.length,
-                                    separatorBuilder: (_, __) => const Divider(),
-                                    itemBuilder: (context, idx) {
-                                      final s = filtered[idx];
-                                      final card = cards.firstWhere(
-                                        (c) => c.studentId == s.id,
-                                        orElse: () => ReportCardDto(
-                                          id: '',
-                                          verificationUuid: '',
-                                          status: 'NOT GENERATED',
-                                          pdfHistory: const [],
-                                          tenantId: '',
-                                          schoolId: '',
-                                          academicYearId: '',
-                                          studentId: s.id,
-                                          aiMetrics: const {},
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    // Selection Context Action Toolbar
+                                    if (_selectedStudentIds.isNotEmpty)
+                                      Container(
+                                        margin: const EdgeInsets.only(bottom: 16),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: Colors.indigo.shade50,
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: Colors.indigo.shade200),
                                         ),
-                                      );
-
-                                      return ListTile(
-                                        title: Text('${s.rollNumber}. ${s.firstName} ${s.lastName}'),
-                                        subtitle: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                        child: Wrap(
+                                          alignment: WrapAlignment.spaceBetween,
+                                          crossAxisAlignment: WrapCrossAlignment.center,
+                                          spacing: 12,
+                                          runSpacing: 8,
                                           children: [
-                                            Text('Adm No: ${s.admissionNumber}'),
-                                            const SizedBox(height: 4),
-                                            _buildStatusBadge(card.status),
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.check_circle, color: Colors.indigo.shade700, size: 20),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  '${_selectedStudentIds.length} student${_selectedStudentIds.length == 1 ? "" : "s"} selected',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.indigo.shade900,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 6,
+                                              children: [
+                                                // Bulk operation actions buttons
+                                                ElevatedButton.icon(
+                                                  key: const Key('btn_bulk_approve_selected'),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: Colors.teal,
+                                                    foregroundColor: Colors.white,
+                                                  ),
+                                                  icon: const Icon(Icons.check_circle_outline, size: 16),
+                                                  label: Text(selectedUnderReviewCount > 0
+                                                      ? 'Approve Selected ($selectedUnderReviewCount)'
+                                                      : 'Approve Selected (${_selectedStudentIds.length})'),
+                                                  onPressed: (opsState.isLoading || selectedCards.isEmpty)
+                                                      ? null
+                                                      : () => _handleBulkApproveSelected(cards, schoolId),
+                                                ),
+                                                ElevatedButton.icon(
+                                                  key: const Key('btn_bulk_publish_selected'),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: Colors.indigo,
+                                                    foregroundColor: Colors.white,
+                                                  ),
+                                                  icon: const Icon(Icons.publish, size: 16),
+                                                  label: Text(selectedApprovedCount > 0
+                                                      ? 'Publish Selected ($selectedApprovedCount)'
+                                                      : 'Publish Selected (${_selectedStudentIds.length})'),
+                                                  onPressed: (opsState.isLoading || selectedCards.isEmpty)
+                                                      ? null
+                                                      : () => _handleBulkPublishSelected(cards, schoolId),
+                                                ),
+                                                OutlinedButton.icon(
+                                                  icon: const Icon(Icons.clear, size: 16),
+                                                  label: const Text('Clear Selection'),
+                                                  onPressed: _clearSelection,
+                                                ),
+                                              ],
+                                            ),
                                           ],
                                         ),
-                                        trailing: _buildPopupMenuButton(card, s, schoolId),
-                                      );
-                                    },
-                                  );
-                                }
+                                      ),
 
-                                return SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: DataTable(
-                                    columns: const [
-                                      DataColumn(label: Text('Roll No')),
-                                      DataColumn(label: Text('Admission No')),
-                                      DataColumn(label: Text('Student Name')),
-                                      DataColumn(label: Text('Class & Section')),
-                                      DataColumn(label: Text('Report Card Status')),
-                                      DataColumn(label: Text('Actions')),
-                                    ],
-                                    rows: filtered.map((s) {
-                                      final card = cards.firstWhere(
-                                        (c) => c.studentId == s.id,
-                                        orElse: () => ReportCardDto(
-                                          id: '',
-                                          verificationUuid: '',
-                                          status: 'NOT GENERATED',
-                                          pdfHistory: const [],
-                                          tenantId: '',
-                                          schoolId: '',
-                                          academicYearId: '',
-                                          studentId: s.id,
-                                          aiMetrics: const {},
+                                    if (isMobile)
+                                      ListView.separated(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        itemCount: filtered.length,
+                                        separatorBuilder: (_, __) => const Divider(),
+                                        itemBuilder: (context, idx) {
+                                          final s = filtered[idx];
+                                          final card = cards.firstWhere(
+                                            (c) => c.studentId == s.id,
+                                            orElse: () => ReportCardDto(
+                                              id: '',
+                                              verificationUuid: '',
+                                              status: 'NOT GENERATED',
+                                              pdfHistory: const [],
+                                              tenantId: '',
+                                              schoolId: '',
+                                              academicYearId: '',
+                                              studentId: s.id,
+                                              aiMetrics: const {},
+                                            ),
+                                          );
+
+                                          final className = classState.classes
+                                              .firstWhere((c) => c.id == s.classId,
+                                                  orElse: () => classState.classes.first)
+                                              .name;
+                                          final secName = sectionState.sections
+                                              .firstWhere((sec) => sec.id == s.sectionId,
+                                                  orElse: () => sectionState.sections.first)
+                                              .name;
+
+                                          return MouseRegion(
+                                            cursor: SystemMouseCursors.click,
+                                            child: ListTile(
+                                              leading: Checkbox(
+                                                value: _selectedStudentIds.contains(s.id),
+                                                onChanged: (val) {
+                                                  setState(() {
+                                                    if (val == true) {
+                                                      _selectedStudentIds.add(s.id);
+                                                    } else {
+                                                      _selectedStudentIds.remove(s.id);
+                                                    }
+                                                  });
+                                                },
+                                              ),
+                                              title: Text('${s.rollNumber}. ${s.firstName} ${s.lastName}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                              subtitle: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text('Adm No: ${s.admissionNumber}  •  $className-$secName'),
+                                                  const SizedBox(height: 4),
+                                                  _buildStatusBadge(card.status),
+                                                ],
+                                              ),
+                                              onTap: () => _handleStudentClick(s, card, className, secName),
+                                              trailing: _buildPopupMenuButton(card, s, schoolId),
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    else
+                                      SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        child: DataTable(
+                                          showCheckboxColumn: false,
+                                          columns: [
+                                            DataColumn(
+                                              label: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Checkbox(
+                                                    tristate: true,
+                                                    value: filtered.isEmpty
+                                                        ? false
+                                                        : (filtered.every((st) => _selectedStudentIds.contains(st.id))
+                                                            ? true
+                                                            : (filtered.any((st) => _selectedStudentIds.contains(st.id))
+                                                                ? null
+                                                                : false)),
+                                                    onChanged: filtered.isEmpty
+                                                        ? null
+                                                        : (val) {
+                                                            setState(() {
+                                                              if (filtered.every((st) => _selectedStudentIds.contains(st.id))) {
+                                                                for (final st in filtered) {
+                                                                  _selectedStudentIds.remove(st.id);
+                                                                }
+                                                              } else {
+                                                                for (final st in filtered) {
+                                                                  _selectedStudentIds.add(st.id);
+                                                                }
+                                                              }
+                                                            });
+                                                          },
+                                                  ),
+                                                  const Text('Roll No'),
+                                                ],
+                                              ),
+                                            ),
+                                            const DataColumn(label: Text('Admission No')),
+                                            const DataColumn(label: Text('Student Name')),
+                                            const DataColumn(label: Text('Class & Section')),
+                                            const DataColumn(label: Text('Report Card Status')),
+                                            const DataColumn(label: Text('Actions')),
+                                          ],
+                                          rows: filtered.map((s) {
+                                            final card = cards.firstWhere(
+                                              (c) => c.studentId == s.id,
+                                              orElse: () => ReportCardDto(
+                                                id: '',
+                                                verificationUuid: '',
+                                                status: 'NOT GENERATED',
+                                                pdfHistory: const [],
+                                                tenantId: '',
+                                                schoolId: '',
+                                                academicYearId: '',
+                                                studentId: s.id,
+                                                aiMetrics: const {},
+                                              ),
+                                            );
+
+                                            final className = classState.classes
+                                                .firstWhere((c) => c.id == s.classId,
+                                                    orElse: () => classState.classes.first)
+                                                .name;
+                                            final secName = sectionState.sections
+                                                .firstWhere((sec) => sec.id == s.sectionId,
+                                                    orElse: () => sectionState.sections.first)
+                                                .name;
+
+                                            final isSelected = _selectedStudentIds.contains(s.id);
+
+                                            return DataRow(
+                                              selected: isSelected,
+                                              onSelectChanged: (_) => _handleStudentClick(s, card, className, secName),
+                                              cells: [
+                                                DataCell(
+                                                  Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Checkbox(
+                                                        value: isSelected,
+                                                        onChanged: (val) {
+                                                          setState(() {
+                                                            if (val == true) {
+                                                              _selectedStudentIds.add(s.id);
+                                                            } else {
+                                                              _selectedStudentIds.remove(s.id);
+                                                            }
+                                                          });
+                                                        },
+                                                      ),
+                                                      Text(s.rollNumber),
+                                                    ],
+                                                  ),
+                                                ),
+                                                DataCell(Text(s.admissionNumber)),
+                                                DataCell(
+                                                  Text(
+                                                    '${s.firstName} ${s.lastName}',
+                                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                                  ),
+                                                ),
+                                                DataCell(Text('$className - $secName')),
+                                                DataCell(_buildStatusBadge(card.status)),
+                                                DataCell(
+                                                  _buildPopupMenuButton(card, s, schoolId),
+                                                ),
+                                              ],
+                                            );
+                                          }).toList(),
                                         ),
-                                      );
-
-                                      final className = classState.classes
-                                          .firstWhere((c) => c.id == s.classId,
-                                              orElse: () => classState.classes.first)
-                                          .name;
-                                      final secName = sectionState.sections
-                                          .firstWhere((sec) => sec.id == s.sectionId,
-                                              orElse: () => sectionState.sections.first)
-                                          .name;
-
-                                      return DataRow(
-                                        cells: [
-                                          DataCell(Text(s.rollNumber)),
-                                          DataCell(Text(s.admissionNumber)),
-                                          DataCell(Text('${s.firstName} ${s.lastName}')),
-                                          DataCell(Text('$className - $secName')),
-                                          DataCell(_buildStatusBadge(card.status)),
-                                          DataCell(_buildPopupMenuButton(card, s, schoolId)),
-                                        ],
-                                      );
-                                    }).toList(),
-                                  ),
+                                      ),
+                                  ],
                                 );
                               },
                               loading: () => const Center(child: CircularProgressIndicator()),

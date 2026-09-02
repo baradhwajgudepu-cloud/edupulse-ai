@@ -2,8 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../data/models/school_setup_models.dart';
-export '../../../tenant_setup/presentation/providers/tenant_providers.dart';
-export 'package:edupulse_network/edupulse_network.dart' show selectedTenantIdProvider, activeTenantIdProvider;
 
 // 1. Selected School State Provider
 final selectedSchoolIdProvider = StateProvider<String?>((ref) => null);
@@ -74,12 +72,26 @@ class SchoolsListNotifier extends StateNotifier<SchoolsListState> {
             if (_ref.read(selectedSchoolIdProvider) != targetSchoolId) {
               _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
             }
+            final match = schools.where((s) => s.id == targetSchoolId);
+            if (match.isNotEmpty) {
+              final schoolTenantId = match.first.tenantId;
+              if (schoolTenantId.isNotEmpty && _ref.read(selectedTenantIdProvider) == null) {
+                _ref.read(selectedTenantIdProvider.notifier).state = schoolTenantId;
+              }
+            }
             await sessionManager.saveSchoolId(targetSchoolId);
           } catch (e) {
             // Fallback for environments where platform channels are not mocked (e.g. unit tests)
             final targetSchoolId = schools.first.id;
             if (_ref.read(selectedSchoolIdProvider) != targetSchoolId) {
               _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
+            }
+            final match = schools.where((s) => s.id == targetSchoolId);
+            if (match.isNotEmpty) {
+              final schoolTenantId = match.first.tenantId;
+              if (schoolTenantId.isNotEmpty && _ref.read(selectedTenantIdProvider) == null) {
+                _ref.read(selectedTenantIdProvider.notifier).state = schoolTenantId;
+              }
             }
           }
         } else {
@@ -103,6 +115,14 @@ final schoolsListProvider =
     StateNotifierProvider<SchoolsListNotifier, SchoolsListState>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   return SchoolsListNotifier(apiClient, ref);
+});
+
+// Selected School Name Provider (Derives display name with fallback)
+final selectedSchoolNameProvider = Provider<String>((ref) {
+  final selectedId = ref.watch(selectedSchoolIdProvider);
+  if (selectedId == null) return 'Active School';
+  final schools = ref.watch(schoolsListProvider).schools;
+  return schools.where((s) => s.id == selectedId).firstOrNull?.name ?? 'Active School';
 });
 
 // School Detail Provider

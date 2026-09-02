@@ -3,7 +3,6 @@ import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../data/models/tenant_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
-export 'package:edupulse_network/edupulse_network.dart' show selectedTenantIdProvider, activeTenantIdProvider;
 
 class TenantsListState {
   final List<TenantDto> tenants;

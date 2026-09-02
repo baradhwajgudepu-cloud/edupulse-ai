@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
@@ -8,7 +9,6 @@ import '../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../planner/presentation/providers/planner_providers.dart';
 import '../../../../core/routing/routes.dart';
 import '../../tenant_setup/presentation/providers/tenant_providers.dart';
-import '../../tenant_setup/data/models/tenant_models.dart';
 import '../../notifications/presentation/providers/notifications_provider.dart';
 
 class AdminShell extends ConsumerStatefulWidget {
@@ -64,6 +64,99 @@ class _AdminShellState extends ConsumerState<AdminShell> {
     );
   }
 
+  void _showContextDetailsDialog(BuildContext context) {
+    final schoolsState = ref.read(schoolsListProvider);
+    final selectedSchoolId = ref.read(selectedSchoolIdProvider);
+    final tenantsState = ref.read(tenantsListProvider);
+    final activeTenantId = ref.read(activeTenantIdProvider);
+
+    final school = schoolsState.schools.where((s) => s.id == selectedSchoolId).firstOrNull;
+    final schoolName = school?.name ?? (selectedSchoolId == null ? 'All Schools / None' : 'Unknown School');
+    final schoolId = school?.id ?? (selectedSchoolId ?? 'None');
+
+    final tenant = tenantsState.tenants.where((t) => t.id == activeTenantId).firstOrNull;
+    final tenantName = tenant?.name ?? (activeTenantId == null ? 'None' : 'Tenant ($activeTenantId)');
+    final tenantId = activeTenantId ?? 'None';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('System Context Details'),
+          ],
+        ),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Diagnostic details for the currently active administrative context:',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              _buildContextRow(ctx, 'Tenant Name', tenantName),
+              _buildContextRow(ctx, 'Tenant ID', tenantId, isCopyable: tenantId != 'None'),
+              const Divider(height: 24),
+              _buildContextRow(ctx, 'School Name', schoolName),
+              _buildContextRow(ctx, 'School ID', schoolId, isCopyable: schoolId != 'None'),
+              const Divider(height: 24),
+              _buildContextRow(ctx, 'selectedSchoolId (State)', selectedSchoolId ?? 'None', isCopyable: selectedSchoolId != null),
+              _buildContextRow(ctx, 'API Header (X-Tenant-ID)', activeTenantId ?? 'None', isCopyable: activeTenantId != null),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContextRow(BuildContext context, String label, String value, {bool isCopyable = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 175,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          if (isCopyable)
+            IconButton(
+              icon: const Icon(Icons.copy, size: 16),
+              tooltip: 'Copy $label',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Copied $label to clipboard: $value'), duration: const Duration(seconds: 1)),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -73,17 +166,19 @@ class _AdminShellState extends ConsumerState<AdminShell> {
     ref.listen<AuthState>(authStateProvider, (previous, next) {
       if (next is Authenticated) {
         final user = next.user;
-        final isSuper = user.isSuperuser || 
+        final isSuper = user.isSuperuser ||
             user.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN');
-        
-        final currentTenant = ref.read(selectedTenantIdProvider);
-        if (currentTenant == null) {
-          if (isSuper) {
-            ref.read(selectedTenantIdProvider.notifier).state = null;
-          } else {
+
+        if (isSuper) {
+          ref.read(tenantsListProvider.notifier).fetchTenants();
+        } else {
+          final currentTenant = ref.read(selectedTenantIdProvider);
+          if (currentTenant == null && user.tenantId != null && user.tenantId!.isNotEmpty) {
             ref.read(selectedTenantIdProvider.notifier).state = user.tenantId;
           }
         }
+        ref.read(schoolsListProvider.notifier).fetchSchools();
+        ref.read(notificationsStateProvider.notifier).fetchNotifications();
       } else if (next is Unauthenticated) {
         ref.read(selectedTenantIdProvider.notifier).state = null;
       }
@@ -95,7 +190,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         final match = schools.where((s) => s.id == next);
         if (match.isNotEmpty) {
           final tenantId = match.first.tenantId;
-          if (ref.read(selectedTenantIdProvider) != tenantId) {
+          if (tenantId.isNotEmpty && ref.read(selectedTenantIdProvider) != tenantId) {
             ref.read(selectedTenantIdProvider.notifier).state = tenantId;
           }
         }
@@ -108,9 +203,16 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         final match = next.schools.where((s) => s.id == selectedSchoolId);
         if (match.isNotEmpty) {
           final tenantId = match.first.tenantId;
-          if (ref.read(selectedTenantIdProvider) != tenantId) {
+          if (tenantId.isNotEmpty && ref.read(selectedTenantIdProvider) != tenantId) {
             ref.read(selectedTenantIdProvider.notifier).state = tenantId;
           }
+        } else if (!next.isLoading) {
+          final nextSchoolId = next.schools.isNotEmpty ? next.schools.first.id : null;
+          ref.read(selectedSchoolIdProvider.notifier).state = nextSchoolId;
+          ref.read(selectedAcademicYearIdProvider.notifier).state = null;
+          try {
+            ref.read(sessionManagerProvider).saveSchoolId(nextSchoolId ?? '');
+          } catch (_) {}
         }
       }
     });
@@ -119,7 +221,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
     final selectedSchoolId = ref.watch(selectedSchoolIdProvider);
     final tenantsState = ref.watch(tenantsListProvider);
     final selectedTenantId = ref.watch(activeTenantIdProvider);
-    
+
     // Register the watcher provider to ensure it listens to active tenant switching
     ref.watch(tenantSetupWatcherProvider);
 
@@ -146,38 +248,29 @@ class _AdminShellState extends ConsumerState<AdminShell> {
       adminName = authState.user.fullName;
       adminEmail = authState.user.email;
       if (isSuperAdmin) {
-        if (selectedTenantId == null) {
-          tenantContext = 'No Tenant Selected';
-        } else if (tenantsState.error != null || schoolsState.error != null) {
+        if (schoolsState.isLoading || (tenantsState.isLoading && tenantsState.tenants.isEmpty)) {
+          tenantContext = 'Loading context...';
+        } else if (schoolsState.error != null && schoolsState.schools.isEmpty) {
           tenantContext = 'Unable to load school context. Please retry.';
-        } else if (tenantsState.isLoading) {
-          tenantContext = 'Loading tenant context...';
-        } else if (schoolsState.isLoading) {
-          tenantContext = 'Loading schools...';
-        } else if (selectedSchoolId == null) {
-          tenantContext = 'Loading school context...';
+        } else if (selectedSchoolId != null && schoolsState.schools.any((s) => s.id == selectedSchoolId)) {
+          final school = schoolsState.schools.firstWhere((s) => s.id == selectedSchoolId);
+          final tenantMatch = tenantsState.tenants.where((t) => t.id == school.tenantId);
+          tenantContext = tenantMatch.isNotEmpty ? tenantMatch.first.name : school.name;
+        } else if (selectedTenantId != null && tenantsState.tenants.any((t) => t.id == selectedTenantId)) {
+          final tenant = tenantsState.tenants.firstWhere((t) => t.id == selectedTenantId);
+          tenantContext = tenant.name;
+        } else if (schoolsState.schools.isNotEmpty) {
+          tenantContext = schoolsState.schools.first.name;
+        } else if (selectedTenantId == null) {
+          tenantContext = 'All Tenants';
         } else {
-          final currentTenant = tenantsState.tenants.firstWhere(
-            (t) => t.id == selectedTenantId,
-            orElse: () => TenantDto(
-              id: '',
-              name: 'Delhi Public School Hyderabad',
-              code: '',
-              subdomain: '',
-              email: '',
-              timezone: '',
-              currency: '',
-              isActive: true,
-              status: '',
-            ),
-          );
-          tenantContext = currentTenant.name;
+          tenantContext = 'No School Context';
         }
       } else {
         final tId = authState.user.tenantId;
-        tenantContext = tId != null
+        tenantContext = tId != null && tId.isNotEmpty
             ? 'Tenant ID: ${tId.substring(0, tId.length > 8 ? 8 : tId.length)}...'
-            : 'No Tenant Context';
+            : (schoolsState.schools.isNotEmpty ? schoolsState.schools.first.name : 'No Tenant Context');
       }
     }
 
@@ -262,7 +355,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
               context.go(AppRoutes.attendance);
             },
           ),
-          
+
           // Expandable School Setup Section
           ExpansionTile(
             leading: const Icon(Icons.school_outlined),
@@ -437,23 +530,71 @@ class _AdminShellState extends ConsumerState<AdminShell> {
               context.go(AppRoutes.fees);
             },
           ),
-          ListTile(
+          ExpansionTile(
+            initiallyExpanded: activePath.startsWith('/results'),
             leading: const Icon(Icons.assessment_outlined),
-            title: const Text('Results'),
-            selected: activePath == '/results' || (activePath.startsWith('/results/') && !activePath.startsWith('/results/report-cards')),
-            onTap: () {
-              if (isDrawer) Navigator.pop(context);
-              context.go(AppRoutes.results);
-            },
+            title: const Text('Results & Exams'),
+            children: [
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 32.0, right: 16.0),
+                leading: const Icon(Icons.dashboard_outlined, size: 20),
+                title: const Text('Results Dashboard'),
+                selected: activePath == AppRoutes.results,
+                onTap: () {
+                  if (isDrawer) Navigator.pop(context);
+                  context.go(AppRoutes.results);
+                },
+              ),
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 32.0, right: 16.0),
+                leading: const Icon(Icons.category_outlined, size: 20),
+                title: const Text('Exam Types'),
+                selected: activePath.startsWith(AppRoutes.examTypes),
+                onTap: () {
+                  if (isDrawer) Navigator.pop(context);
+                  context.go(AppRoutes.examTypes);
+                },
+              ),
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 32.0, right: 16.0),
+                leading: const Icon(Icons.assignment_turned_in_outlined, size: 20),
+                title: const Text('Examinations Setup'),
+                selected: activePath.startsWith(AppRoutes.examinations),
+                onTap: () {
+                  if (isDrawer) Navigator.pop(context);
+                  context.go(AppRoutes.examinations);
+                },
+              ),
+              ListTile(
+                contentPadding: const EdgeInsets.only(left: 32.0, right: 16.0),
+                leading: const Icon(Icons.edit_calendar_outlined, size: 20),
+                title: const Text('Marks Management'),
+                selected: activePath.startsWith(AppRoutes.marksManagement),
+                onTap: () {
+                  if (isDrawer) Navigator.pop(context);
+                  context.go(AppRoutes.marksManagement);
+                },
+              ),
+              ListTile(
+                key: const Key('drawer_report_cards_tile'),
+                contentPadding: const EdgeInsets.only(left: 32.0, right: 16.0),
+                leading: const Icon(Icons.badge_outlined, size: 20),
+                title: const Text('Report Cards'),
+                selected: activePath.startsWith(AppRoutes.reportCards),
+                onTap: () {
+                  if (isDrawer) Navigator.pop(context);
+                  context.go(AppRoutes.reportCards);
+                },
+              ),
+            ],
           ),
           ListTile(
-            key: const Key('drawer_report_cards_tile'),
-            leading: const Icon(Icons.badge_outlined),
-            title: const Text('Report Cards'),
-            selected: activePath.startsWith('/results/report-cards'),
+            leading: const Icon(Icons.auto_awesome, color: Colors.purple),
+            title: const Text('✨ AI Intelligence', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple)),
+            selected: activePath.startsWith(AppRoutes.aiIntelligence),
             onTap: () {
               if (isDrawer) Navigator.pop(context);
-              context.go(AppRoutes.reportCards);
+              context.go(AppRoutes.aiIntelligence);
             },
           ),
           ListTile(
@@ -547,7 +688,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
         ),
         actions: [
           // 🔄 Context Error Retry Button (Super Admin Only)
-          if (isSuperAdmin && (tenantsState.error != null || schoolsState.error != null))
+          if (isSuperAdmin && (schoolsState.error != null && schoolsState.schools.isEmpty || tenantsState.error != null && tenantsState.tenants.isEmpty))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: TextButton.icon(
@@ -573,7 +714,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
                   decoration: BoxDecoration(
                     border: Border.all(color: theme.colorScheme.outlineVariant),
-                    color: theme.colorScheme.surfaceVariant,
+                    color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: DropdownButtonHideUnderline(
@@ -617,7 +758,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
                   decoration: BoxDecoration(
                     border: Border.all(color: theme.colorScheme.outlineVariant),
-                    color: theme.colorScheme.surfaceVariant,
+                    color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: DropdownButtonHideUnderline(
@@ -657,7 +798,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
                         // 2. Set selected school ID
                         ref.read(selectedSchoolIdProvider.notifier).state = v;
                         ref.read(selectedAcademicYearIdProvider.notifier).state = null; // Clear cached academic year
-                        
+
                         // 3. Sync selectedTenantIdProvider for UI and other components
                         if (v != null) {
                           final schools = ref.read(schoolsListProvider).schools;
@@ -676,7 +817,7 @@ class _AdminShellState extends ConsumerState<AdminShell> {
                 ),
               ),
             ),
-          
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
@@ -701,6 +842,13 @@ class _AdminShellState extends ConsumerState<AdminShell> {
                     ],
                   ),
                 const SizedBox(width: 12),
+                if (isSuperAdmin || isTenantAdmin)
+                  IconButton(
+                    tooltip: 'System Context Details',
+                    icon: const Icon(Icons.info_outline),
+                    onPressed: () => _showContextDetailsDialog(context),
+                  ),
+                const SizedBox(width: 4),
                 Consumer(
                   builder: (context, ref, child) {
                     final notifState = ref.watch(notificationsStateProvider);

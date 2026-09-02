@@ -20,6 +20,14 @@ class FakeDPSSessionManager implements SessionManager {
   }
 
   @override
+  Future<String?> getTenantName() async => 'Delhi Public School Society';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Delhi Public School Hyderabad - Campus 2';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
   Future<String?> getRefreshToken() async => 'mock_refresh';

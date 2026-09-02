@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,6 +65,9 @@ class FakeOnboardingRepository implements AuthRepository {
 
 class FakeOnboardingSessionManager implements SessionManager {
   String? cachedTenantId;
+  String? cachedTenantName;
+  String? cachedSchoolId;
+  String? cachedSchoolName;
 
   @override
   Future<String?> getTenantId() async => cachedTenantId;
@@ -71,6 +75,22 @@ class FakeOnboardingSessionManager implements SessionManager {
   @override
   Future<void> saveTenantId(String tenantId) async {
     cachedTenantId = tenantId;
+  }
+
+  @override
+  Future<String?> getTenantName() async => cachedTenantName;
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {
+    cachedTenantName = tenantName;
+  }
+
+  @override
+  Future<String?> getSchoolName() async => cachedSchoolName;
+
+  @override
+  Future<void> saveSchoolName(String schoolName) async {
+    cachedSchoolName = schoolName;
   }
 
   @override
@@ -84,9 +104,11 @@ class FakeOnboardingSessionManager implements SessionManager {
   @override
   Future<bool> hasSession() async => true;
   @override
-  Future<String?> getSchoolId() async => 'school_1';
+  Future<String?> getSchoolId() async => cachedSchoolId ?? 'school_1';
   @override
-  Future<void> saveSchoolId(String schoolId) async {}
+  Future<void> saveSchoolId(String schoolId) async {
+    cachedSchoolId = schoolId;
+  }
 }
 
 class FakeOnboardingApiClient extends BaseApiClient {
@@ -172,6 +194,13 @@ class FakeOnboardingApiClient extends BaseApiClient {
           message: 'Mock 403 Forbidden',
         ));
       }
+      if (code.toString().contains('FAIL_422_PHONE')) {
+        return const ApiResult.failure(ApiFailure(
+          type: ApiFailureType.validation,
+          statusCode: 422,
+          message: "Validation error: [body -> phone]: String should match pattern '^(?:\\+91|0)?[6-9]\\d{9}\$'",
+        ));
+      }
       if (code.toString().contains('FAIL_422') || code == 'AY2222') {
         return const ApiResult.failure(ApiFailure(
           type: ApiFailureType.validation,
@@ -235,11 +264,11 @@ class FakeOnboardingApiClient extends BaseApiClient {
       }
     }
 
-    if (path.contains('/timetables') && data is Map<String, dynamic> && data['period_number'] == 1) {
+    if (path.contains('/timetables') && data is Map<String, dynamic> && data['period_number'] == 1 && data['class_id'] == 'class_resolved_id_123' && data['section_id'] == 'section_resolved_id_123') {
       return const ApiResult.failure(ApiFailure(
         type: ApiFailureType.validation,
-        statusCode: 422,
-        message: 'Class/Section already has a booked period at slot 1 on MONDAY.',
+        statusCode: 409,
+        message: 'Conflict or duplicate record exists',
       ));
     }
 
@@ -255,20 +284,37 @@ class FakeOnboardingApiClient extends BaseApiClient {
     }
 
     if (path.contains('/import-jobs/parse')) {
+      final selected = path.contains('sheet_name=')
+          ? Uri.decodeComponent(path.split('sheet_name=').last)
+          : 'School Information';
       return ApiResult.success(mapper({
         'success': true,
         'message': 'File parsed successfully.',
         'data': {
           'filename': 'test.xlsx',
           'format': 'xlsx',
-          'sheets': ['Sheet1'],
-          'selected_sheet': 'Sheet1',
-          'columns': ['school_code', 'school_name'],
+          'sheets': ['School Information', 'Academic Structure', 'Classes', 'Sections'],
+          'selected_sheet': selected,
+          'columns': selected.contains('School')
+              ? ['school_code', 'school_name', 'board', 'school_type', 'email', 'phone', 'status']
+              : selected.contains('Academic')
+                  ? ['school_code', 'academic_year_code', 'academic_year_name', 'start_date', 'end_date', 'status', 'is_current']
+                  : ['academic_year_code', 'class_code', 'display_label', 'level', 'grade_category', 'max_capacity', 'status'],
           'row_count': 1,
-          'preview_rows': [
-            ['school_code', 'school_name'],
-            ['DPSH', 'DPS Hyderabad']
-          ]
+          'rows': selected.contains('School')
+              ? [
+                  ['school_code', 'school_name', 'board', 'school_type', 'email', 'phone', 'status'],
+                  ['DPSH', 'DPS Hyderabad', 'CBSE', 'HIGH_SCHOOL', 'dpsh@edu.in', '+919876543210', 'ACTIVE']
+                ]
+              : selected.contains('Academic')
+                  ? [
+                      ['school_code', 'academic_year_code', 'academic_year_name', 'start_date', 'end_date', 'status', 'is_current'],
+                      ['DPSH', 'AY2026-2027', 'Academic Year 2026-27', '2026-06-01', '2027-03-31', 'ACTIVE', 'true']
+                    ]
+                  : [
+                      ['academic_year_code', 'class_code', 'display_label', 'level', 'grade_category', 'max_capacity', 'status'],
+                      ['AY2026-2027', 'CLASS08', 'Class 8', '8', 'MIDDLE', '40', 'ACTIVE']
+                    ]
         }
       }));
     }
@@ -570,7 +616,7 @@ void main() {
       expect(state.sheets.containsKey(OnboardingStep.school), true);
       expect(state.sheets[OnboardingStep.school]?.rows.length, 1);
       expect(state.sheets.containsKey(OnboardingStep.students), true);
-      expect(state.sheets[OnboardingStep.students]?.rows.length, 2);
+      expect(state.sheets[OnboardingStep.students]?.rows.length, 360);
     });
 
     test('Skips entity rows containing dependency issues and reports status', () async {
@@ -965,8 +1011,8 @@ void main() {
         OnboardingStep.school,
         'school.csv',
         'school_code,school_name,board,school_type,email,phone,status\n'
-        'FAIL_422,Unprocessable School,CBSE,HIGH_SCHOOL,a@b.com,999,ACTIVE\n'
-        'FAIL_500,Internal Error School,CBSE,HIGH_SCHOOL,a@b.com,999,ACTIVE',
+        'FAIL_422,Unprocessable School,CBSE,HIGH_SCHOOL,a@b.com,9876543210,ACTIVE\n'
+        'FAIL_500,Internal Error School,CBSE,HIGH_SCHOOL,a@b.com,9876543210,ACTIVE',
       );
 
       await notifier.executeOnboarding('school_1', fakeApiClient);
@@ -991,8 +1037,8 @@ void main() {
         OnboardingStep.school,
         'school.csv',
         'school_code,school_name,board,school_type,email,phone,status\n'
-        'FAIL_401,Unauthorized School,CBSE,HIGH_SCHOOL,a@b.com,999,ACTIVE\n'
-        'FAIL_422,Unprocessable School,CBSE,HIGH_SCHOOL,a@b.com,999,ACTIVE',
+        'FAIL_401,Unauthorized School,CBSE,HIGH_SCHOOL,a@b.com,9876543210,ACTIVE\n'
+        'FAIL_422,Unprocessable School,CBSE,HIGH_SCHOOL,a@b.com,9876543210,ACTIVE',
       );
 
       await notifier.executeOnboarding('school_1', fakeApiClient);
@@ -3145,6 +3191,238 @@ void main() {
       final post = fakeApiClient.postCalls.firstWhere((c) => c['path'].contains('/syllabuses'));
       expect(post['data']['class_id'], equals('class_resolved_id_123')); // Existing class reused
       expect(post['data']['subject_id'], equals(newSubjectId)); // Newly created subject resolved
+    });
+
+    test('CS. Phone and contact number normalization helper tests', () {
+      // 1. Hyphenated Indian phone numbers
+      expect(SchoolOnboardingValidators.normalizePhoneNumber('+91-9848011000'), '+919848011000');
+      // 2. Space separated phone numbers
+      expect(SchoolOnboardingValidators.normalizePhoneNumber('+91 9848011000'), '+919848011000');
+      // 3. Parentheses formatting
+      expect(SchoolOnboardingValidators.normalizePhoneNumber('(98480) 11000'), '9848011000');
+      // 4. Hyphenated local number
+      expect(SchoolOnboardingValidators.normalizePhoneNumber('98480-11000'), '9848011000');
+      // 5. Postal code with spaces
+      expect(SchoolOnboardingValidators.normalizePostalCode('500 081'), '500081');
+      // 6. Null and empty safety
+      expect(SchoolOnboardingValidators.normalizePhoneNumber(null), '');
+      expect(SchoolOnboardingValidators.normalizePhoneNumber('   '), '');
+      expect(SchoolOnboardingValidators.normalizePostalCode(null), '');
+    });
+
+    test('CT. School Information creation normalizes phone and PIN in POST payload', () async {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      notifier.loadCsvFile(
+        OnboardingStep.school,
+        'school.csv',
+        'school_code,school_name,board,school_type,email,phone,status,postal_code\n'
+        'TS001,Telangana Model School & Junior College,CBSE,HIGH_SCHOOL,principal.ts001@telanganaschool.edu,+91-9848011000,ACTIVE,500 081',
+      );
+
+      await notifier.executeOnboarding('school_1', fakeApiClient);
+      final state = container.read(schoolOnboardingProvider);
+
+      final schoolSheet = state.sheets[OnboardingStep.school]!;
+      expect(schoolSheet.rows[0].status, OnboardingRowStatus.success);
+
+      // Verify POST /schools payload contained normalized phone and postal code
+      final post = fakeApiClient.postCalls.firstWhere((c) => c['path'] == '/schools');
+      expect(post['data']['phone'], equals('+919848011000'));
+      expect(post['data']['postal_code'], equals('500081'));
+      expect(post['data']['code'], equals('TS001'));
+      expect(post['data']['board'], equals('CBSE'));
+      expect(post['data']['school_type'], equals('HIGH_SCHOOL'));
+    });
+
+    test('CU. Backend HTTP 422 validation error message propagation', () async {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      notifier.loadCsvFile(
+        OnboardingStep.school,
+        'school.csv',
+        'school_code,school_name,board,school_type,email,phone,status\n'
+        'FAIL_422_PHONE,Telangana Model School,CBSE,HIGH_SCHOOL,test@telangana.edu,9876543210,ACTIVE',
+      );
+
+      await notifier.executeOnboarding('school_1', fakeApiClient);
+      final state = container.read(schoolOnboardingProvider);
+
+      final schoolSheet = state.sheets[OnboardingStep.school]!;
+      expect(schoolSheet.rows[0].status, OnboardingRowStatus.failed);
+      expect(schoolSheet.rows[0].apiErrorMessage, contains('Validation error: [body -> phone]'));
+      expect(schoolSheet.rows[0].apiErrorMessage, isNot(equals('A server error occurred.')));
+    });
+
+    test('CV. Complete 13-sheet synthetic dev fixture executes without dependency errors', () async {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+
+      // Fetch schools to populate active school context (DPSH)
+      await container.read(schoolsListProvider.notifier).fetchSchools();
+
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      // Load complete relational synthetic fixture
+      notifier.loadSyntheticFixture();
+      final preState = container.read(schoolOnboardingProvider);
+
+      // Verify all 13 steps are loaded in memory
+      for (final step in OnboardingStep.values) {
+        if (step == OnboardingStep.validation || step == OnboardingStep.import || step == OnboardingStep.report) continue;
+        expect(preState.sheets.containsKey(step), isTrue, reason: 'Step $step must be loaded');
+        expect(preState.sheets[step]!.rows.isNotEmpty, isTrue, reason: 'Step $step must contain rows');
+        for (final row in preState.sheets[step]!.rows) {
+          expect(row.status, isNot(equals(OnboardingRowStatus.error)), reason: 'Row should not have pre-import validation error');
+        }
+      }
+
+      // Execute onboarding across all 13 sheets
+      await notifier.executeOnboarding('school_1', fakeApiClient);
+      final postState = container.read(schoolOnboardingProvider);
+
+      // Verify that all downstream 12 sheets completed successfully
+      for (final step in OnboardingStep.values) {
+        if (step == OnboardingStep.validation || step == OnboardingStep.import || step == OnboardingStep.report || step == OnboardingStep.school) continue;
+        final sheet = postState.sheets[step]!;
+        for (final row in sheet.rows) {
+          expect(
+            row.status,
+            equals(OnboardingRowStatus.success),
+            reason: 'Step $step row ${row.rowIndex} must succeed (failed with ${row.apiErrorMessage ?? row.dependencyFailureReason})',
+          );
+        }
+      }
+
+      // Verify resolution maps are populated
+      expect(postState.resolvedSchools.isNotEmpty, isTrue);
+      expect(postState.resolvedAcademicYears.isNotEmpty, isTrue);
+      expect(postState.resolvedClasses.isNotEmpty, isTrue);
+      expect(postState.resolvedSections.isNotEmpty, isTrue);
+      expect(postState.resolvedSubjects.isNotEmpty, isTrue);
+      expect(postState.resolvedTeachers.isNotEmpty, isTrue);
+      expect(postState.resolvedGuardians.isNotEmpty, isTrue);
+      expect(postState.resolvedStudents.isNotEmpty, isTrue);
+    });
+
+    test('CW. Worksheet name alias matching resolves to correct OnboardingStep', () {
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('School Information'), OnboardingStep.school);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('school_info'), OnboardingStep.school);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Academic Structure'), OnboardingStep.academicYears);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Academic Years'), OnboardingStep.academicYears);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Grade Levels (Classes)'), OnboardingStep.classes);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Classes'), OnboardingStep.classes);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Sections & Rooms'), OnboardingStep.sections);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Subjects Catalog'), OnboardingStep.subjects);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Teachers Roster'), OnboardingStep.teachers);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Staff'), OnboardingStep.teachers);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Parents & Guardians'), OnboardingStep.guardians);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Students Register'), OnboardingStep.students);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Student-Guardian Links'), OnboardingStep.relationships);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Teacher Assignments'), OnboardingStep.teacherAssignments);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Assignments'), OnboardingStep.teacherAssignments);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Timetable Slots'), OnboardingStep.timetable);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Syllabus Metadata'), OnboardingStep.syllabus);
+      expect(SchoolOnboardingValidators.matchStepFromSheetName('Exams & Documents'), OnboardingStep.exams);
+    });
+
+    test('CX. Multi-sheet Excel workbook auto-detection and entire workbook ingestion', () async {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      // Ingest entire multi-sheet workbook
+      await notifier.loadEntireWorkbook('master_onboarding.xlsx', Uint8List.fromList([1, 2, 3]));
+      final state = container.read(schoolOnboardingProvider);
+
+      // Verify School Information and Academic Structure sheets were parsed and mapped
+      expect(state.sheets.containsKey(OnboardingStep.school), isTrue);
+      expect(state.sheets.containsKey(OnboardingStep.academicYears), isTrue);
+      expect(state.sheets.containsKey(OnboardingStep.classes), isTrue);
+      expect(state.sheets[OnboardingStep.school]!.rows.isNotEmpty, isTrue);
+      expect(state.sheets[OnboardingStep.academicYears]!.rows.isNotEmpty, isTrue);
+    });
+
+    test('CY. Provider graph initializes without CircularDependencyError', () {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          activeTenantIdProvider.overrideWith((ref) {
+            final selected = ref.watch(selectedTenantIdProvider);
+            if (selected != null && selected.isNotEmpty) return selected;
+            return 'default_tenant';
+          }),
+        ],
+      );
+
+      // Verify activeTenantId, schoolsListProvider, and schoolOnboardingProvider initialize cleanly
+      expect(container.read(activeTenantIdProvider), 'default_tenant');
+      final schoolsState = container.read(schoolsListProvider);
+      expect(schoolsState.isLoading, isFalse);
+      final onboardingState = container.read(schoolOnboardingProvider);
+      expect(onboardingState.isProcessing, isFalse);
+    });
+
+    test('CZ. ApiExceptionMapper properly classifies application and circular errors', () {
+      final circularDioException = DioException(
+        requestOptions: RequestOptions(path: '/schools'),
+        error: 'Instance of \'CircularDependencyError\'',
+        type: DioExceptionType.unknown,
+      );
+      final failure = ApiExceptionMapper.mapToFailure(circularDioException);
+      expect(failure.message.contains('Circular provider dependency detected'), isTrue);
+    });
+
+    test('DA. Cross-sheet validation flags timetable slots exceeding weekly_periods workload limit', () {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      // Load Teacher Assignment with limit of 2 periods
+      notifier.loadCsvFile(
+        OnboardingStep.teacherAssignments,
+        'assignments.csv',
+        'teacher_code,subject_code,class_code,section_code,academic_year_code,assignment_type,weekly_periods,effective_from\n'
+        'T001,SUB_MATH,CLASS08,SEC_A,AY2026-2027,PRIMARY,2,2026-06-01',
+      );
+
+      // Load Timetable with 3 periods for same assignment (exceeding limit of 2)
+      notifier.loadCsvFile(
+        OnboardingStep.timetable,
+        'timetable.csv',
+        'academic_year_code,day_of_week,period_number,start_time,end_time,class_code,section_code,subject_code,teacher_code,room_number,period_type\n'
+        'AY2026-2027,MONDAY,1,09:00:00,09:45:00,CLASS08,SEC_A,SUB_MATH,T001,Room 101,REGULAR\n'
+        'AY2026-2027,TUESDAY,1,09:00:00,09:45:00,CLASS08,SEC_A,SUB_MATH,T001,Room 101,REGULAR\n'
+        'AY2026-2027,WEDNESDAY,1,09:00:00,09:45:00,CLASS08,SEC_A,SUB_MATH,T001,Room 101,REGULAR',
+      );
+
+      final state = container.read(schoolOnboardingProvider);
+      final ttSheet = state.sheets[OnboardingStep.timetable]!;
+      expect(ttSheet.rows.first.unresolvedReferences.any((r) => r.contains('Workload limit reached')), isTrue);
     });
   });
 }

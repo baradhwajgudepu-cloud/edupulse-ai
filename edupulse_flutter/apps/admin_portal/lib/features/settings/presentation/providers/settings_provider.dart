@@ -88,6 +88,61 @@ class SettingsNotifier extends StateNotifier<AsyncValue<void>> {
     );
   }
 
+  Future<String?> uploadSchoolLogo({
+    required String schoolId,
+    required List<int> fileBytes,
+    required String fileName,
+  }) async {
+    state = const AsyncValue.loading();
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+    });
+
+    final result = await _apiClient.post(
+      '/schools/$schoolId/logo',
+      data: formData,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final data = payload['data'] as Map<String, dynamic>?;
+        return data?['logo_url'] as String?;
+      },
+    );
+
+    return result.when(
+      onSuccess: (newLogoUrl) {
+        state = const AsyncValue.data(null);
+        _ref.invalidate(currentSchoolProvider);
+        _ref.read(schoolsListProvider.notifier).fetchSchools();
+        return newLogoUrl;
+      },
+      onFailure: (failure) {
+        state = AsyncValue.error(failure.message, StackTrace.current);
+        return null;
+      },
+    );
+  }
+
+  Future<bool> deleteSchoolLogo({required String schoolId}) async {
+    state = const AsyncValue.loading();
+    final result = await _apiClient.delete(
+      '/schools/$schoolId/logo',
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        state = const AsyncValue.data(null);
+        _ref.invalidate(currentSchoolProvider);
+        _ref.read(schoolsListProvider.notifier).fetchSchools();
+        return true;
+      },
+      onFailure: (failure) {
+        state = AsyncValue.error(failure.message, StackTrace.current);
+        return false;
+      },
+    );
+  }
+
   Future<bool> updateTenantPreferences(Map<String, dynamic> payload) async {
     state = const AsyncValue.loading();
     final result = await _apiClient.put(

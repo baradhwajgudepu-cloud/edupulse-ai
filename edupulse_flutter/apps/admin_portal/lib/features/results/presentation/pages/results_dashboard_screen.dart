@@ -6,6 +6,7 @@ import 'package:admin_portal/features/school_setup/data/models/school_setup_mode
 import 'package:admin_portal/features/students/data/models/student_models.dart';
 import 'package:admin_portal/features/results/data/models/results_models.dart';
 import 'package:admin_portal/features/results/presentation/providers/results_providers.dart';
+import '../../../../core/routing/routes.dart';
 
 class ResultsDashboardScreen extends ConsumerStatefulWidget {
   const ResultsDashboardScreen({super.key});
@@ -295,6 +296,24 @@ class _ResultsDashboardScreenState extends ConsumerState<ResultsDashboardScreen>
       appBar: AppBar(
         title: const Text('Results & Report Cards'),
         actions: [
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
+            ),
+            icon: const Icon(Icons.edit_calendar, size: 18),
+            label: const Text('Manage Marks'),
+            onPressed: () {
+              final queryParams = <String, String>{};
+              if (filters.examinationId != null) queryParams['exam_id'] = filters.examinationId!;
+              if (filters.classId != null) queryParams['class_id'] = filters.classId!;
+              if (filters.sectionId != null) queryParams['section_id'] = filters.sectionId!;
+              if (filters.academicYearId != null) queryParams['ay_id'] = filters.academicYearId!;
+              final uri = Uri(path: AppRoutes.marksManagement, queryParameters: queryParams);
+              context.push(uri.toString());
+            },
+          ),
+          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {

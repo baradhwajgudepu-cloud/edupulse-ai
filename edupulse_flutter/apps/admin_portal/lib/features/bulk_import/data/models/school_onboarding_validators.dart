@@ -40,6 +40,42 @@ class SchoolOnboardingValidators {
     return s.replaceAll('""', '"');
   }
 
+  /// Safely normalizes phone/mobile numbers by removing formatting characters (spaces, hyphens, parentheses).
+  /// Preserves valid leading '+', '0', or digits matching Indian mobile/landline numbers.
+  static String normalizePhoneNumber(String? rawPhone) {
+    if (rawPhone == null) return '';
+    final trimmed = rawPhone.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(RegExp(r'[\s\-\.\(\)]'), '');
+  }
+
+  /// Safely normalizes 6-digit postal/PIN codes.
+  static String normalizePostalCode(String? rawPostal) {
+    if (rawPostal == null) return '';
+    return rawPostal.trim().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  /// Resolves an Excel worksheet name or alias to the corresponding OnboardingStep.
+  static OnboardingStep? matchStepFromSheetName(String sheetName) {
+    final clean = sheetName.trim().toLowerCase().replaceAll(RegExp(r'[\s_\-&()+]'), '');
+    if (clean.contains('school') || clean == 'info' || clean == 'schoolinfo') return OnboardingStep.school;
+    if (clean.contains('academicyear') || clean.contains('academicstructure') || clean == 'academics' || clean == 'years') return OnboardingStep.academicYears;
+    if (clean.contains('grade') || clean.contains('class') || clean == 'classes' || clean == 'gradelevels') return OnboardingStep.classes;
+    if (clean.contains('section') || clean.contains('room')) return OnboardingStep.sections;
+    if (clean.contains('subject') || clean == 'courses') return OnboardingStep.subjects;
+    if (clean.contains('assignment') || clean.contains('teacherassignment')) return OnboardingStep.teacherAssignments;
+    if (clean.contains('teacher') || clean.contains('staff') || clean == 'faculty') return OnboardingStep.teachers;
+    if (clean.contains('link') || clean.contains('relationship') || (clean.contains('student') && (clean.contains('guardian') || clean.contains('parent')))) {
+      return OnboardingStep.relationships;
+    }
+    if (clean.contains('guardian') || clean.contains('parent')) return OnboardingStep.guardians;
+    if (clean.contains('student') || clean == 'studentsregister' || clean == 'roster') return OnboardingStep.students;
+    if (clean.contains('timetable') || clean.contains('schedule') || clean.contains('slot')) return OnboardingStep.timetable;
+    if (clean.contains('syllabus') || clean.contains('curriculum') || clean.contains('topic')) return OnboardingStep.syllabus;
+    if (clean.contains('exam') || clean.contains('document') || clean.contains('test') || clean == 'assessment') return OnboardingStep.exams;
+    return null;
+  }
+
   static List<String> getRequiredColumns(OnboardingStep step) {
     switch (step) {
       case OnboardingStep.school:
@@ -230,6 +266,33 @@ class SchoolOnboardingValidators {
       final email = data['official_email'] ?? '';
       if (email.isNotEmpty && !_emailRegex.hasMatch(email)) {
         errors.add('Invalid official email format (found: "$email")');
+      }
+    }
+
+    // Phone Checkers
+    final phoneFields = ['phone', 'mobile', 'emergency_contact', 'alternate_mobile'];
+    for (final f in phoneFields) {
+      if (data.containsKey(f)) {
+        final val = data[f] ?? '';
+        if (val.isNotEmpty) {
+          final normalized = normalizePhoneNumber(val);
+          final phoneRegex = RegExp(r'^(?:\+91|0)?[6-9]\d{9}$');
+          if (!phoneRegex.hasMatch(normalized)) {
+            errors.add('Column "$f" must be a valid 10-digit Indian phone number (found: "$val").');
+          }
+        }
+      }
+    }
+
+    // Postal Code Checkers
+    if (data.containsKey('postal_code')) {
+      final val = data['postal_code'] ?? '';
+      if (val.isNotEmpty) {
+        final normalized = normalizePostalCode(val);
+        final pinRegex = RegExp(r'^[1-9][0-9]{5}$');
+        if (!pinRegex.hasMatch(normalized)) {
+          errors.add('Column "postal_code" must be a valid 6-digit PIN code (found: "$val").');
+        }
       }
     }
 

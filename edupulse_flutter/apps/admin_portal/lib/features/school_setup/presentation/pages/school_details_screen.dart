@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
 import '../providers/school_setup_providers.dart';
+import '../../../students/presentation/providers/student_providers.dart';
+import '../../../guardians/presentation/providers/guardian_providers.dart';
+import '../../../teachers/presentation/providers/teachers_providers.dart';
 
 class SchoolDetailsScreen extends ConsumerStatefulWidget {
   final String? schoolId;
@@ -324,7 +328,17 @@ class _SchoolDetailsScreenState extends ConsumerState<SchoolDetailsScreen> {
         );
 
     if (success) {
+      if (ref.read(selectedSchoolIdProvider) == widget.schoolId) {
+        ref.read(selectedSchoolIdProvider.notifier).state = null;
+        ref.read(selectedAcademicYearIdProvider.notifier).state = null;
+        try {
+          await ref.read(sessionManagerProvider).saveSchoolId('');
+        } catch (_) {}
+      }
       ref.invalidate(schoolsListProvider);
+      ref.invalidate(studentListProvider);
+      ref.invalidate(guardianListProvider);
+      ref.invalidate(teachersListProvider);
       context.pop();
     } else {
       final actionState = ref.read(setupActionProvider);

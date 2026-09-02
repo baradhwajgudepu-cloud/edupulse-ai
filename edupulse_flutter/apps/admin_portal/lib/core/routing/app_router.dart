@@ -34,6 +34,9 @@ import '../../features/migrations/presentation/pages/academic_setup_migration_wi
 import '../../features/migrations/presentation/pages/guardian_mapping_migration_wizard_screen.dart';
 import '../../features/migrations/presentation/pages/guardian_migration_wizard_screen.dart';
 import '../../features/results/presentation/pages/results_dashboard_screen.dart';
+import '../../features/results/presentation/pages/exam_types_screen.dart';
+import '../../features/results/presentation/pages/examinations_setup_screen.dart';
+import '../../features/results/presentation/pages/admin_marks_management_screen.dart';
 import '../../features/results/presentation/pages/student_result_detail_screen.dart';
 import '../../features/results/presentation/pages/report_card_management_screen.dart';
 import '../../features/teachers/presentation/pages/teachers_screen.dart';
@@ -56,6 +59,7 @@ import '../../features/reports/presentation/pages/reports_dashboard_screen.dart'
 import '../../features/communication_analytics/presentation/pages/communication_analytics_screen.dart';
 import '../../features/settings/presentation/pages/settings_screen.dart';
 import '../../features/notifications/presentation/pages/notifications_screen.dart';
+import '../../features/ai_intelligence/presentation/pages/ai_intelligence_dashboard_screen.dart';
 
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -277,6 +281,29 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const ResultsDashboardScreen(),
           ),
           GoRoute(
+            path: AppRoutes.examTypes,
+            builder: (context, state) => const ExamTypesScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.examinations,
+            builder: (context, state) => const ExaminationsSetupScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.marksManagement,
+            builder: (context, state) {
+              final examId = state.uri.queryParameters['exam_id'];
+              final classId = state.uri.queryParameters['class_id'];
+              final sectionId = state.uri.queryParameters['section_id'];
+              final ayId = state.uri.queryParameters['ay_id'];
+              return AdminMarksManagementScreen(
+                initialExamId: examId,
+                initialClassId: classId,
+                initialSectionId: sectionId,
+                initialAcademicYearId: ayId,
+              );
+            },
+          ),
+          GoRoute(
             path: AppRoutes.studentResultDetail,
             builder: (context, state) => StudentResultDetailScreen(
               studentId: state.pathParameters['studentId']!,
@@ -379,6 +406,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.plannerSchedule,
             builder: (context, state) => const PlannerScheduleScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.aiIntelligence,
+            builder: (context, state) => const AIIntelligenceDashboardScreen(),
           ),
         ],
       ),

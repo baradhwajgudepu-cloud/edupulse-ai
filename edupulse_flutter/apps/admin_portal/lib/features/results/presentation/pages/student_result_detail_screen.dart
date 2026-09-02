@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:admin_portal/features/results/data/models/results_models.dart';
 import 'package:admin_portal/features/results/presentation/providers/results_providers.dart';
 
-
 class StudentResultDetailScreen extends ConsumerWidget {
   final String studentId;
 
@@ -19,7 +18,15 @@ class StudentResultDetailScreen extends ConsumerWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          Text(value, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -43,19 +50,32 @@ class StudentResultDetailScreen extends ConsumerWidget {
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 28),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-              textAlign: TextAlign.center,
+            Row(
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 12),
             Text(
               value,
-              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -69,11 +89,13 @@ class StudentResultDetailScreen extends ConsumerWidget {
       case 'A':
         return Colors.green;
       case 'B':
-      case 'C':
         return Colors.blue;
+      case 'C':
+        return Colors.amber.shade800;
       case 'D':
-      case 'E':
         return Colors.orange;
+      case 'E':
+        return Colors.deepOrange;
       case 'F':
       default:
         return Colors.red;
@@ -123,7 +145,6 @@ class StudentResultDetailScreen extends ConsumerWidget {
             }
           }
 
-
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -147,11 +168,14 @@ class StudentResultDetailScreen extends ConsumerWidget {
                             children: [
                               Icon(Icons.error_outline, color: theme.colorScheme.onErrorContainer),
                               const SizedBox(width: 8),
-                              Text(
-                                'Incomplete or Invalid Report Card Data',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: theme.colorScheme.onErrorContainer,
-                                  fontWeight: FontWeight.bold,
+                              Expanded(
+                                child: Text(
+                                  'Incomplete or Invalid Report Card Data',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    color: theme.colorScheme.onErrorContainer,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ],
@@ -204,9 +228,12 @@ class StudentResultDetailScreen extends ConsumerWidget {
                               children: [
                                 Icon(Icons.face, color: theme.colorScheme.primary),
                                 const SizedBox(width: 8),
-                                Text(
-                                  'Student Details',
-                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                Expanded(
+                                  child: Text(
+                                    'Student Details',
+                                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               ],
                             ),
@@ -236,16 +263,23 @@ class StudentResultDetailScreen extends ConsumerWidget {
                               children: [
                                 Icon(Icons.analytics_outlined, color: theme.colorScheme.primary),
                                 const SizedBox(width: 8),
-                                Text(
-                                  'Academic Summary',
-                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                Expanded(
+                                  child: Text(
+                                    'Academic Summary',
+                                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               ],
                             ),
                             const Divider(height: 24),
                             LayoutBuilder(
                               builder: (context, boxConstraints) {
-                                final double cardWidth = boxConstraints.maxWidth > 500 ? (boxConstraints.maxWidth - 32) / 3 : (boxConstraints.maxWidth - 16) / 2;
+                                final double cardWidth = boxConstraints.maxWidth > 520
+                                    ? (boxConstraints.maxWidth - 32) / 3
+                                    : (boxConstraints.maxWidth > 320
+                                        ? (boxConstraints.maxWidth - 16) / 2
+                                        : boxConstraints.maxWidth);
                                 return Wrap(
                                   spacing: 16,
                                   runSpacing: 16,
@@ -285,8 +319,11 @@ class StudentResultDetailScreen extends ConsumerWidget {
                               },
                             ),
                             const SizedBox(height: 16),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            Wrap(
+                              alignment: WrapAlignment.spaceBetween,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 8,
+                              runSpacing: 8,
                               children: [
                                 Text('Promotion Status:', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold)),
                                 Container(
@@ -347,228 +384,304 @@ class StudentResultDetailScreen extends ConsumerWidget {
                           SizedBox(height: 12),
                           Card(
                             child: Padding(
-                              padding: EdgeInsets.all(24.0),
+                              padding: EdgeInsets.all(16.0),
                               child: Center(
-                                child: Text('No examination history available for this student.'),
+                                child: Text('No historical examination records found for this academic year.'),
                               ),
                             ),
                           ),
-                          SizedBox(height: 24),
                         ],
                       );
                     }
 
-                    // Dynamically map subject grades across examinations
+                    // Build cross-exam subject performance mapping
                     final Map<String, Map<String, String>> subjectProgress = {};
                     final List<String> examNames = history.examinations.map((e) => e.examinationName).toList();
+
                     for (final exam in history.examinations) {
                       for (final sub in exam.subjectMarks) {
                         subjectProgress.putIfAbsent(sub.subjectName, () => {});
-                        subjectProgress[sub.subjectName]![exam.examinationName] = sub.marksObtained != null ? sub.marksObtained!.toStringAsFixed(0) : 'ABS';
+                        subjectProgress[sub.subjectName]![exam.examinationName] = '${sub.marksObtained?.toStringAsFixed(0) ?? 'ABS'} (${sub.grade})';
                       }
                     }
                     final List<String> subjects = subjectProgress.keys.toList()..sort();
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Trend Section
-                        Text(
-                          'Academic Performance Trend',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 12),
-                        Card(
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            side: BorderSide(color: theme.colorScheme.outlineVariant),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: history.examinations.map((exam) {
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 180,
-                                        child: Text(
-                                          exam.examinationName,
-                                          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(6),
-                                          child: LinearProgressIndicator(
-                                            value: exam.percentage / 100.0,
-                                            backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                                            color: theme.colorScheme.primary,
-                                            minHeight: 12,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Text(
-                                        '${exam.percentage.toStringAsFixed(1)}%',
-                                        style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: _getGradeColor(exam.grade).withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(4),
-                                        ),
-                                        child: Text(
-                                          exam.grade,
-                                          style: TextStyle(
-                                            color: _getGradeColor(exam.grade),
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                      ),
-
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Trend Section
+                            Text(
+                              'Academic Performance Trend',
+                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        // Subject Performance Matrix
-                        Text(
-                          'Subject Performance',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 12),
-                        Card(
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            side: BorderSide(color: theme.colorScheme.outlineVariant),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                columns: [
-                                  const DataColumn(label: Text('Subject')),
-                                  ...examNames.map((name) => DataColumn(
-                                    label: Text(name),
-                                  )).toList(),
-                                ],
-                                rows: subjects.map((subName) {
-                                  final progress = subjectProgress[subName]!;
-                                  return DataRow(
-                                    cells: [
-                                      DataCell(Text(subName)),
-                                      ...examNames.map((name) {
-                                        final val = progress[name] ?? '-';
-                                        return DataCell(Text(val));
-                                      }).toList(),
-                                    ],
-                                  );
-                                }).toList(),
+                            const SizedBox(height: 12),
+                            Card(
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                side: BorderSide(color: theme.colorScheme.outlineVariant),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: history.examinations.map((exam) {
+                                    final isNarrow = constraints.maxWidth < 520;
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                      child: isNarrow
+                                          ? Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  exam.examinationName,
+                                                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                                                  overflow: TextOverflow.ellipsis,
+                                                  maxLines: 2,
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: ClipRRect(
+                                                        borderRadius: BorderRadius.circular(6),
+                                                        child: LinearProgressIndicator(
+                                                          value: exam.percentage / 100.0,
+                                                          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                                                          color: theme.colorScheme.primary,
+                                                          minHeight: 10,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Text(
+                                                      '${exam.percentage.toStringAsFixed(1)}%',
+                                                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                                                    ),
+                                                    const SizedBox(width: 6),
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                      decoration: BoxDecoration(
+                                                        color: _getGradeColor(exam.grade).withValues(alpha: 0.1),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                      ),
+                                                      child: Text(
+                                                        exam.grade,
+                                                        style: TextStyle(
+                                                          color: _getGradeColor(exam.grade),
+                                                          fontWeight: FontWeight.bold,
+                                                          fontSize: 10,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            )
+                                          : Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 180,
+                                                  child: Text(
+                                                    exam.examinationName,
+                                                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                                                    overflow: TextOverflow.ellipsis,
+                                                    maxLines: 1,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: ClipRRect(
+                                                    borderRadius: BorderRadius.circular(6),
+                                                    child: LinearProgressIndicator(
+                                                      value: exam.percentage / 100.0,
+                                                      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                                                      color: theme.colorScheme.primary,
+                                                      minHeight: 12,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 16),
+                                                Text(
+                                                  '${exam.percentage.toStringAsFixed(1)}%',
+                                                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: _getGradeColor(exam.grade).withValues(alpha: 0.1),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                  ),
+                                                  child: Text(
+                                                    exam.grade,
+                                                    style: TextStyle(
+                                                      color: _getGradeColor(exam.grade),
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 10,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                    );
+                                  }).toList(),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
+                            const SizedBox(height: 24),
 
-                        // Expandable Examination summaries
-                        Text(
-                          'Academic Performance History',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 12),
-                        ...history.examinations.map((exam) {
-                          return Card(
-                            elevation: 0,
-                            margin: const EdgeInsets.only(bottom: 12),
-                            shape: RoundedRectangleBorder(
-                              side: BorderSide(color: theme.colorScheme.outlineVariant),
-                              borderRadius: BorderRadius.circular(12),
+                            // Subject Performance Matrix
+                            Text(
+                              'Subject Performance',
+                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                             ),
-                            child: ExpansionTile(
-                              title: Text(
-                                exam.examinationName,
-                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            const SizedBox(height: 12),
+                            Card(
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                side: BorderSide(color: theme.colorScheme.outlineVariant),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              subtitle: Text(
-                                'Total: ${exam.totalObtainedMarks.toStringAsFixed(0)} / ${exam.totalMaxMarks}  |  Percentage: ${exam.percentage}%  |  Grade: ${exam.grade}',
-                                style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                              ),
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(minWidth: constraints.maxWidth > 32 ? constraints.maxWidth - 32 : 300),
                                     child: DataTable(
-                                      columns: const [
-                                        DataColumn(label: Text('Subject')),
-                                        DataColumn(label: Text('Max Marks')),
-                                        DataColumn(label: Text('Marks Obtained')),
-                                        DataColumn(label: Text('Grade')),
-                                        DataColumn(label: Text('Status')),
-                                        DataColumn(label: Text('Remarks')),
+                                      columnSpacing: 24,
+                                      horizontalMargin: 12,
+                                      columns: [
+                                        const DataColumn(
+                                          label: Text('Subject', style: TextStyle(fontWeight: FontWeight.bold)),
+                                        ),
+                                        ...examNames.map((name) => DataColumn(
+                                          label: ConstrainedBox(
+                                            constraints: const BoxConstraints(maxWidth: 160),
+                                            child: Tooltip(
+                                              message: name,
+                                              child: Text(
+                                                name,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
+                                          ),
+                                        )),
                                       ],
-                                      rows: exam.subjectMarks.map((sub) {
+                                      rows: subjects.map((subName) {
+                                        final progress = subjectProgress[subName]!;
                                         return DataRow(
                                           cells: [
-                                            DataCell(Text(sub.subjectName)),
-                                            DataCell(Text(sub.maxMarks.toString())),
-                                            DataCell(Text(sub.marksObtained?.toString() ?? 'ABSENT')),
-                                            DataCell(Text(
-                                              sub.grade,
-                                              style: TextStyle(
-                                                color: _getGradeColor(sub.grade),
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            )),
-                                            DataCell(Text(sub.status)),
-                                            DataCell(Text(sub.remarks ?? '')),
+                                            DataCell(Text(subName, style: const TextStyle(fontWeight: FontWeight.w500))),
+                                            ...examNames.map((name) {
+                                              final val = progress[name] ?? '-';
+                                              return DataCell(Text(val));
+                                            }),
                                           ],
                                         );
                                       }).toList(),
                                     ),
                                   ),
                                 ),
-                              ],
+                              ),
                             ),
-                          );
-                        }).toList(),
-                      ],
+                            const SizedBox(height: 24),
+
+                            // Expandable Examination summaries
+                            Text(
+                              'Academic Performance History',
+                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 12),
+                            ...history.examinations.map((exam) {
+                              return Card(
+                                elevation: 0,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                shape: RoundedRectangleBorder(
+                                  side: BorderSide(color: theme.colorScheme.outlineVariant),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: ExpansionTile(
+                                  title: Text(
+                                    exam.examinationName,
+                                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
+                                  ),
+                                  subtitle: Text(
+                                    'Total: ${exam.totalObtainedMarks.toStringAsFixed(0)} / ${exam.totalMaxMarks}  |  Percentage: ${exam.percentage}%  |  Grade: ${exam.grade}',
+                                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
+                                  ),
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(16.0),
+                                      child: SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        child: ConstrainedBox(
+                                          constraints: BoxConstraints(minWidth: constraints.maxWidth > 32 ? constraints.maxWidth - 32 : 300),
+                                          child: DataTable(
+                                            columnSpacing: 20,
+                                            horizontalMargin: 12,
+                                            columns: const [
+                                              DataColumn(label: Text('Subject', style: TextStyle(fontWeight: FontWeight.bold))),
+                                              DataColumn(label: Text('Max Marks', style: TextStyle(fontWeight: FontWeight.bold))),
+                                              DataColumn(label: Text('Marks Obtained', style: TextStyle(fontWeight: FontWeight.bold))),
+                                              DataColumn(label: Text('Grade', style: TextStyle(fontWeight: FontWeight.bold))),
+                                              DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                                              DataColumn(label: Text('Remarks', style: TextStyle(fontWeight: FontWeight.bold))),
+                                            ],
+                                            rows: exam.subjectMarks.map((sub) {
+                                              return DataRow(
+                                                cells: [
+                                                  DataCell(Text(sub.subjectName)),
+                                                  DataCell(Text(sub.maxMarks.toString())),
+                                                  DataCell(Text(sub.marksObtained?.toString() ?? 'ABSENT')),
+                                                  DataCell(Text(
+                                                    sub.grade,
+                                                    style: TextStyle(
+                                                      color: _getGradeColor(sub.grade),
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  )),
+                                                  DataCell(Text(sub.status)),
+                                                  DataCell(Text(sub.remarks ?? '')),
+                                                ],
+                                              );
+                                            }).toList(),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        );
+                      },
                     );
                   },
                   loading: () => const Center(
                     child: Padding(
                       padding: EdgeInsets.all(24.0),
-                      child: Column(
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 12),
-                          Text('Loading academic history...'),
-                        ],
-                      ),
+                      child: CircularProgressIndicator(),
                     ),
                   ),
-                  error: (err, _) => Center(
+                  error: (err, _) => Card(
                     child: Padding(
-                      padding: const EdgeInsets.all(24.0),
+                      padding: const EdgeInsets.all(16.0),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Unable to load academic history.',
-                            style: TextStyle(color: Colors.red),
-                          ),
+                          Text('Failed to load academic history', style: TextStyle(color: theme.colorScheme.error, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          Text('$err', style: theme.textTheme.bodySmall),
                           const SizedBox(height: 12),
                           ElevatedButton(
                             onPressed: () {
@@ -599,9 +712,12 @@ class StudentResultDetailScreen extends ConsumerWidget {
                           children: [
                             Icon(Icons.comment_outlined, color: theme.colorScheme.primary),
                             const SizedBox(width: 8),
-                            Text(
-                              'Signatures & Remarks',
-                              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            Expanded(
+                              child: Text(
+                                'Signatures & Remarks',
+                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -648,9 +764,12 @@ class StudentResultDetailScreen extends ConsumerWidget {
                             children: [
                               Icon(Icons.psychology_outlined, color: theme.colorScheme.primary),
                               const SizedBox(width: 8),
-                              Text(
-                                'AI Predictive Analytics',
-                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                              Expanded(
+                                child: Text(
+                                  'AI Predictive Analytics',
+                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ],
                           ),

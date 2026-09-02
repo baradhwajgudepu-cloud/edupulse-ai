@@ -270,6 +270,16 @@ class OnboardingState {
   final bool isCancelled;
   final OnboardingApprovalStatus approvalStatus;
 
+  // Tenant Lifecycle Fields
+  final bool createNewTenant;
+  final String? newTenantName;
+  final String? newTenantCode;
+  final String? newTenantEmail;
+  final String? selectedTenantId;
+  final String? resolvedTenantId;
+  final String? resolvedTenantName;
+  final String? resolvedSchoolName;
+
   // Audit Fields
   final String? approvedBy;
   final DateTime? approvedAt;
@@ -303,6 +313,14 @@ class OnboardingState {
     this.globalErrorMessage,
     required this.isCancelled,
     required this.approvalStatus,
+    this.createNewTenant = true,
+    this.newTenantName,
+    this.newTenantCode,
+    this.newTenantEmail,
+    this.selectedTenantId,
+    this.resolvedTenantId,
+    this.resolvedTenantName,
+    this.resolvedSchoolName,
     this.approvedBy,
     this.approvedAt,
     this.activeImportStep,
@@ -331,6 +349,14 @@ class OnboardingState {
       isCompleted: false,
       isCancelled: false,
       approvalStatus: OnboardingApprovalStatus.awaitingValidation,
+      createNewTenant: true,
+      newTenantName: 'Telangana Educational Society',
+      newTenantCode: 'TS_EDU',
+      newTenantEmail: 'admin@telanganaedu.org',
+      selectedTenantId: null,
+      resolvedTenantId: null,
+      resolvedTenantName: null,
+      resolvedSchoolName: null,
       approvedBy: null,
       approvedAt: null,
       currentProgressRow: 0,
@@ -360,6 +386,14 @@ class OnboardingState {
     String? globalErrorMessage,
     bool? isCancelled,
     OnboardingApprovalStatus? approvalStatus,
+    bool? createNewTenant,
+    String? newTenantName,
+    String? newTenantCode,
+    String? newTenantEmail,
+    String? selectedTenantId,
+    String? resolvedTenantId,
+    String? resolvedTenantName,
+    String? resolvedSchoolName,
     String? approvedBy,
     DateTime? approvedAt,
     OnboardingStep? activeImportStep,
@@ -388,6 +422,14 @@ class OnboardingState {
       globalErrorMessage: globalErrorMessage ?? this.globalErrorMessage,
       isCancelled: isCancelled ?? this.isCancelled,
       approvalStatus: approvalStatus ?? this.approvalStatus,
+      createNewTenant: createNewTenant ?? this.createNewTenant,
+      newTenantName: newTenantName ?? this.newTenantName,
+      newTenantCode: newTenantCode ?? this.newTenantCode,
+      newTenantEmail: newTenantEmail ?? this.newTenantEmail,
+      selectedTenantId: selectedTenantId ?? this.selectedTenantId,
+      resolvedTenantId: resolvedTenantId ?? this.resolvedTenantId,
+      resolvedTenantName: resolvedTenantName ?? this.resolvedTenantName,
+      resolvedSchoolName: resolvedSchoolName ?? this.resolvedSchoolName,
       approvedBy: approvedBy ?? this.approvedBy,
       approvedAt: approvedAt ?? this.approvedAt,
       activeImportStep: activeImportStep ?? this.activeImportStep,

@@ -240,6 +240,32 @@ class BulkClassGenerateResponseDto {
 }
 
 @immutable
+class BulkReportCardActionResponseDto {
+  final int totalRequested;
+  final int successCount;
+  final int failedCount;
+  final List<StudentFailureDetailDto> failures;
+
+  const BulkReportCardActionResponseDto({
+    required this.totalRequested,
+    required this.successCount,
+    required this.failedCount,
+    required this.failures,
+  });
+
+  factory BulkReportCardActionResponseDto.fromJson(Map<String, dynamic> json) {
+    final list = json['failures'] as List<dynamic>? ?? const [];
+    final failedList = list.map((e) => StudentFailureDetailDto.fromJson(e as Map<String, dynamic>)).toList();
+    return BulkReportCardActionResponseDto(
+      totalRequested: json['total_requested'] as int? ?? 0,
+      successCount: json['success_count'] as int? ?? 0,
+      failedCount: json['failed_count'] as int? ?? 0,
+      failures: failedList,
+    );
+  }
+}
+
+@immutable
 class VerificationResponseDto {
   final String studentName;
   final String rollNumber;

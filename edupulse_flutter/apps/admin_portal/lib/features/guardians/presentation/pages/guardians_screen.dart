@@ -69,6 +69,8 @@ class _GuardiansScreenState extends ConsumerState<GuardiansScreen> {
   Widget build(BuildContext context) {
     final schoolId = ref.watch(selectedSchoolIdProvider);
     final listState = ref.watch(guardianListProvider);
+    final actionState = ref.watch(guardianActionsProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 768;
 

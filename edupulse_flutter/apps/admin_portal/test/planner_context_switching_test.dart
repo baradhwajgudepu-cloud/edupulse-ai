@@ -5,8 +5,6 @@ import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:admin_portal/app.dart';
-import 'package:admin_portal/core/routing/routes.dart';
-import 'package:admin_portal/core/routing/app_router.dart';
 import 'package:admin_portal/core/providers/bootstrap_provider.dart';
 import 'package:admin_portal/features/school_setup/presentation/providers/school_setup_providers.dart';
 import 'package:admin_portal/features/planner/presentation/providers/planner_providers.dart';
@@ -190,14 +188,6 @@ void main() {
           bootstrapResultProvider.overrideWithValue(BootstrapResult(success: true)),
           
           activeTenantIdProvider.overrideWith((ref) {
-            final selectedSchoolId = ref.watch(selectedSchoolIdProvider);
-            if (selectedSchoolId != null) {
-              final schoolsState = ref.watch(schoolsListProvider);
-              final match = schoolsState.schools.where((s) => s.id == selectedSchoolId);
-              if (match.isNotEmpty) {
-                return match.first.tenantId;
-              }
-            }
             final selectedTenantId = ref.watch(selectedTenantIdProvider);
             if (selectedTenantId != null && selectedTenantId.isNotEmpty) {
               return selectedTenantId;

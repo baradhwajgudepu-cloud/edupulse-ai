@@ -16,6 +16,8 @@ class ReportsDashboardScreen extends ConsumerStatefulWidget {
 
 class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  String? _selectedStudentId;
+  String? _selectedStudentName;
 
   final TextEditingController _academicSearchController = TextEditingController();
   String _academicSearchQuery = '';
@@ -34,6 +36,8 @@ class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen>
     if (_tabController.index != 1) {
       ref.read(reportsFiltersProvider.notifier).updateGrade(null);
       setState(() {
+        _selectedStudentId = null;
+        _selectedStudentName = null;
         _academicSearchQuery = '';
         _academicSearchController.clear();
         _academicCurrentPage = 1;
@@ -313,6 +317,10 @@ class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen>
                     hint: const Text('All Classes'),
                     onChanged: (val) {
                       ref.read(reportsFiltersProvider.notifier).updateClass(val);
+                      setState(() {
+                        _selectedStudentId = null;
+                        _selectedStudentName = null;
+                      });
                       _invalidateReports();
                     },
                     items: [
@@ -333,6 +341,10 @@ class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen>
                       hint: const Text('All Sections'),
                       onChanged: (val) {
                         ref.read(reportsFiltersProvider.notifier).updateSection(val);
+                        setState(() {
+                          _selectedStudentId = null;
+                          _selectedStudentName = null;
+                        });
                         _invalidateReports();
                       },
                       items: [
@@ -397,6 +409,10 @@ class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen>
                 TextButton.icon(
                   onPressed: () {
                     ref.read(reportsFiltersProvider.notifier).reset();
+                    setState(() {
+                      _selectedStudentId = null;
+                      _selectedStudentName = null;
+                    });
                     _invalidateReports();
                   },
                   icon: const Icon(Icons.clear_all, size: 18),
@@ -1067,6 +1083,198 @@ class _ReportsDashboardScreenState extends ConsumerState<ReportsDashboardScreen>
                 },
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Drills down inside screen to fetch Student Academic history
+  Widget _buildStudentDrilldownSection(AppSpacing spacing, AppRadius radius, ThemeData theme) {
+    final studentsAsync = ref.watch(reportsStudentsProvider);
+    final academicAsync = ref.watch(reportsAcademicProvider);
+    final filters = ref.watch(reportsFiltersProvider);
+
+    return studentsAsync.when(
+      data: (students) {
+        if (students.isEmpty) {
+          return const Center(child: Text('No students found in selected section.'));
+        }
+
+        var displayStudents = students;
+        if (filters.grade != null && academicAsync.hasValue) {
+          final acadVal = academicAsync.value;
+          if (acadVal != null) {
+            final studentPerformance = (acadVal['student_performance'] as List<dynamic>?) ?? [];
+            final studentIdsInGrade = studentPerformance
+                .where((sp) => sp['grade']?.toString().toUpperCase() == filters.grade!.toUpperCase())
+                .map((sp) => sp['student_id']?.toString())
+                .toSet();
+            
+            displayStudents = students.where((s) => studentIdsInGrade.contains(s['id']?.toString())).toList();
+          }
+        }
+
+        if (displayStudents.isEmpty) {
+          return const Center(child: Text('No students found with selected grade.'));
+        }
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 800;
+            final body = Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Left Column: Student List Selection
+                Expanded(
+                  flex: isWide ? 4 : 10,
+                  child: Container(
+                    height: 400,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: theme.colorScheme.outlineVariant),
+                      borderRadius: BorderRadius.circular(radius.md),
+                    ),
+                    child: ListView.separated(
+                      itemCount: displayStudents.length,
+                      separatorBuilder: (context, idx) => const Divider(height: 1),
+                      itemBuilder: (context, idx) {
+                        final student = displayStudents[idx];
+                        final isSelected = student['id'] == _selectedStudentId;
+                        return ListTile(
+                          selected: isSelected,
+                          selectedTileColor: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                          title: Text('${student['first_name']} ${student['last_name']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                          subtitle: Text('Adm No: ${student['admission_number']} | Roll: ${student['roll_number']}'),
+                          trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+                          onTap: () {
+                            setState(() {
+                              _selectedStudentId = student['id'] as String;
+                              _selectedStudentName = '${student['first_name']} ${student['last_name']}';
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                if (isWide) const SizedBox(width: 16),
+                // Right Column: Chronological Exam History detail
+                if (isWide)
+                  Expanded(
+                    flex: 6,
+                    child: _selectedStudentId == null
+                        ? Container(
+                            height: 400,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(radius.md),
+                            ),
+                            child: const Text('Select a student from the list to view exam history.'),
+                          )
+                        : _buildStudentHistoryDetail(spacing, radius, theme),
+                  ),
+              ],
+            );
+
+            if (!isWide && _selectedStudentId != null) {
+              return Column(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => setState(() => _selectedStudentId = null),
+                    icon: const Icon(Icons.arrow_back),
+                    label: const Text('Back to Student List'),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildStudentHistoryDetail(spacing, radius, theme),
+                ],
+              );
+            }
+
+            return body;
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, _) => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(8.0),
+          child: Text('Unable to load student list right now.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStudentHistoryDetail(AppSpacing spacing, AppRadius radius, ThemeData theme) {
+    final historyAsync = ref.watch(reportsStudentAcademicHistoryProvider(_selectedStudentId!));
+
+    return Container(
+      height: 400,
+      padding: EdgeInsets.all(spacing.md),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(radius.md),
+      ),
+      child: historyAsync.when(
+        data: (history) {
+          final exams = (history['examinations'] as List<dynamic>?) ?? [];
+          if (exams.isEmpty) {
+            return Center(child: Text('No academic term details found for $_selectedStudentName.'));
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$_selectedStudentName - Exam History',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: exams.length,
+                  separatorBuilder: (context, idx) => const Divider(),
+                  itemBuilder: (context, idx) {
+                    final ex = exams[idx];
+                    final subjects = (ex['subject_marks'] as List<dynamic>?) ?? [];
+                    return ExpansionTile(
+                      title: Text(ex['examination_name'] ?? 'Exam'),
+                      subtitle: Text('Score: ${ex['total_obtained_marks']}/${ex['total_max_marks']} (${ex['percentage']}% • Grade: ${ex['grade']})'),
+                      children: [
+                        Table(
+                          border: TableBorder.all(color: theme.colorScheme.outlineVariant, width: 0.5),
+                          children: [
+                            const TableRow(
+                              decoration: BoxDecoration(color: Colors.black12),
+                              children: [
+                                Padding(padding: EdgeInsets.all(4), child: Text('Subject', style: TextStyle(fontWeight: FontWeight.bold))),
+                                Padding(padding: EdgeInsets.all(4), child: Text('Obtained', style: TextStyle(fontWeight: FontWeight.bold))),
+                                Padding(padding: EdgeInsets.all(4), child: Text('Grade', style: TextStyle(fontWeight: FontWeight.bold))),
+                              ],
+                            ),
+                            ...subjects.map((sub) => TableRow(
+                              children: [
+                                Padding(padding: const EdgeInsets.all(4), child: Text(sub['subject_name'] ?? 'N/A')),
+                                Padding(padding: const EdgeInsets.all(4), child: Text('${sub['marks_obtained'] ?? 0}/${sub['max_marks']}')),
+                                Padding(padding: const EdgeInsets.all(4), child: Text(sub['grade'] ?? 'F')),
+                              ],
+                            )),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (err, _) => const Center(
+          child: Padding(
+            padding: EdgeInsets.all(8.0),
+            child: Text('Unable to load history details right now.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w500)),
+          ),
         ),
       ),
     );
@@ -2813,7 +3021,15 @@ class _RiskDetailDialogBody extends StatelessWidget {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(r['student_name'] ?? 'Unknown Student', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            Expanded(
+                              child: Text(
+                                r['student_name'] ?? 'Unknown Student',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(

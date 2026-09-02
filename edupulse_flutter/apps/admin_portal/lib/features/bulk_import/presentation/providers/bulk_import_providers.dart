@@ -406,7 +406,7 @@ class BulkImportNotifier extends StateNotifier<BulkImportState> {
         },
         onFailure: (failure) {
           state = state.copyWith(
-            globalErrorMessage: failure.message,
+            globalErrorMessage: failure.message ?? 'Failed to parse spreadsheet file.',
           );
         },
       );
@@ -417,6 +417,10 @@ class BulkImportNotifier extends StateNotifier<BulkImportState> {
       );
     }
   }
+
+
+
+  final RegExp _uuidRegex = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
 
   Future<void> selectFile(String fileName, String csvContent) async {
     if (state.isUploading) return;

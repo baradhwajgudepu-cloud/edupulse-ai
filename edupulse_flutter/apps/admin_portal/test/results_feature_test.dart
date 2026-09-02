@@ -19,6 +19,14 @@ class FakeResultsSessionManager implements SessionManager {
   }
 
   @override
+  Future<String?> getTenantName() async => 'Mock Tenant';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Mock School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
   Future<String?> getRefreshToken() async => 'mock_refresh';
@@ -468,7 +476,7 @@ void main() {
 
     // Subject marks mapping
     expect(find.text('Mathematics'), findsWidgets);
-    expect(find.text('92'), findsOneWidget);
+    expect(find.text('92 (A+)'), findsOneWidget);
 
     // Remarks
     expect(find.text('Excellent progress.'), findsOneWidget);

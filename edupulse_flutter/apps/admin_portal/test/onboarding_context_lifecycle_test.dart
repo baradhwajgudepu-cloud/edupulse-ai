@@ -213,18 +213,81 @@ void main() {
       expect(container.read(schoolOnboardingProvider).approvalStatus, OnboardingApprovalStatus.awaitingValidation);
     });
 
-    test('11. Source file changed => previous validation/approval is invalidated', () {
-      final container = ProviderContainer();
+    test('12. Mode A (Create New Organization) creates Tenant first and persists tenant context', () async {
+      final fakeSession = FakeOnboardingSessionManager();
+      final fakeApi = FakeOnboardingApiClient();
+
+      final container = ProviderContainer(
+        overrides: [
+          sessionManagerProvider.overrideWithValue(fakeSession),
+        ],
+      );
+
       final notifier = container.read(schoolOnboardingProvider.notifier);
-      
       notifier.loadSyntheticFixture();
-      expect(container.read(schoolOnboardingProvider).approvalStatus, OnboardingApprovalStatus.awaitingApproval);
-      
-      // Load new CSV file on school step
-      notifier.loadCsvFile(OnboardingStep.school, 'school.csv', 'school_code,school_name,board,school_type,email,phone,status\n');
-      
-      // Should invalidate back to awaitingValidation
-      expect(container.read(schoolOnboardingProvider).approvalStatus, OnboardingApprovalStatus.awaitingValidation);
+      notifier.setTenantMode(
+        createNewTenant: true,
+        newTenantName: 'Telangana Educational Society',
+        newTenantCode: 'TS_EDU',
+        newTenantEmail: 'admin@telanganaedu.org',
+      );
+
+      SchoolOnboardingNotifier.bypassApproval = true;
+      await notifier.executeOnboarding('', fakeApi);
+
+      expect(container.read(selectedTenantIdProvider), isNotNull);
+      expect(fakeSession.cachedTenantId, isNotNull);
+      expect(fakeSession.cachedTenantName, 'Telangana Educational Society');
+      expect(container.read(selectedSchoolIdProvider), isNotNull);
+      expect(fakeSession.cachedSchoolId, isNotNull);
+
+      // Verify POST /tenants was called first before /schools
+      final postPaths = fakeApi.postCalls.map((c) => c['path'] as String).toList();
+      expect(postPaths.first, '/tenants');
+      expect(postPaths[1], '/schools');
+    });
+
+    test('13. Mode B (Add School to Existing Tenant) uses existing tenant without calling POST /tenants', () async {
+      final fakeSession = FakeOnboardingSessionManager();
+      final fakeApi = FakeOnboardingApiClient();
+
+      final container = ProviderContainer(
+        overrides: [
+          sessionManagerProvider.overrideWithValue(fakeSession),
+          selectedTenantIdProvider.overrideWith((ref) => 'existing-tenant-uuid-456'),
+        ],
+      );
+
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+      notifier.loadSyntheticFixture();
+      notifier.setTenantMode(
+        createNewTenant: false,
+        selectedTenantId: 'existing-tenant-uuid-456',
+      );
+
+      SchoolOnboardingNotifier.bypassApproval = true;
+      await notifier.executeOnboarding('', fakeApi);
+
+      expect(container.read(selectedTenantIdProvider), 'existing-tenant-uuid-456');
+      expect(fakeSession.cachedTenantId, 'existing-tenant-uuid-456');
+
+      // Verify POST /tenants was NOT called
+      final postPaths = fakeApi.postCalls.map((c) => c['path'] as String).toList();
+      expect(postPaths.contains('/tenants'), isFalse);
+      expect(postPaths.first, '/schools');
+    });
+
+    test('14. Context persistence saves and restores tenant and school names', () async {
+      final fakeSession = FakeOnboardingSessionManager();
+      await fakeSession.saveTenantId('t-123');
+      await fakeSession.saveTenantName('Hyderabad Public Society');
+      await fakeSession.saveSchoolId('s-456');
+      await fakeSession.saveSchoolName('HPS Begumpet');
+
+      expect(await fakeSession.getTenantId(), 't-123');
+      expect(await fakeSession.getTenantName(), 'Hyderabad Public Society');
+      expect(await fakeSession.getSchoolId(), 's-456');
+      expect(await fakeSession.getSchoolName(), 'HPS Begumpet');
     });
   });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/school_setup_providers.dart';
+import '../../data/models/school_setup_models.dart';
 
 class ClassDetailsScreen extends ConsumerStatefulWidget {
   final String schoolId;

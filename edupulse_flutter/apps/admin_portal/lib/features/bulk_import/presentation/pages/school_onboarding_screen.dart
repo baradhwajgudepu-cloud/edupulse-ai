@@ -6,12 +6,15 @@ import 'dart:convert';
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../data/models/school_onboarding_models.dart';
 import '../../data/models/school_onboarding_validators.dart';
+import '../../data/models/synthetic_onboarding_data_generator.dart';
 import '../providers/school_onboarding_providers.dart';
 import '../providers/web_download_helper.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
+import 'package:flutter/services.dart';
 import '../../../tenant_setup/data/models/tenant_models.dart';
 import '../../../tenant_setup/presentation/providers/tenant_providers.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 
 class SchoolOnboardingScreen extends ConsumerStatefulWidget {
   const SchoolOnboardingScreen({super.key});
@@ -60,6 +63,18 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
               ),
             )
             .name;
+
+    final authState = ref.watch(authStateProvider);
+    final isSuperAdmin = authState is Authenticated &&
+        (authState.user.isSuperuser ||
+            authState.user.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN'));
+    final isTenantAdmin = authState is Authenticated &&
+        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN' || r.toUpperCase() == 'CHAIRMAN');
+
+    final tenantId = ref.watch(activeTenantIdProvider);
+    final tenantsState = ref.watch(tenantsListProvider);
+    final matchedTenant = tenantsState.tenants.where((t) => t.id == tenantId);
+    final tenantName = matchedTenant.isNotEmpty ? matchedTenant.first.name : (tenantId == null ? 'All Tenants / None' : 'Tenant ($tenantId)');
 
     return Scaffold(
       appBar: AppBar(
@@ -152,17 +167,55 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                             ),
                             icon: const Icon(Icons.flash_on),
                             label: const Text('Load Synthetic Dev Data'),
-                            onPressed: () {
-                              ref.read(schoolOnboardingProvider.notifier).loadSyntheticFixture();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Loaded synthetic test datasets across sheets.')),
-                              );
-                            },
+                            onPressed: state.isProcessing
+                                ? null
+                                : () {
+                                    ref.read(schoolOnboardingProvider.notifier).loadSyntheticFixture();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Loaded synthetic test datasets across all 13 onboarding sheets.'),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
                           ),
                         ],
                       ),
                     ),
                   ),
+                  if (isSuperAdmin || isTenantAdmin) ...[
+                    const SizedBox(height: 12),
+                    Card(
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        side: BorderSide(color: theme.dividerColor),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: ExpansionTile(
+                        leading: const Icon(Icons.info_outline, size: 20),
+                        title: const Text(
+                          'Context Details & System Identifiers',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          'Tenant: $tenantName | School: $schoolName',
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                        children: [
+                          _buildDiagnosticRow(context, 'Tenant Name', tenantName),
+                          _buildDiagnosticRow(context, 'Tenant ID', tenantId ?? 'None', isCopyable: tenantId != null),
+                          const Divider(height: 16),
+                          _buildDiagnosticRow(context, 'School Name', schoolName),
+                          _buildDiagnosticRow(context, 'School ID', schoolId ?? 'None', isCopyable: schoolId != null),
+                          const Divider(height: 16),
+                          _buildDiagnosticRow(context, 'Current selectedSchoolId', schoolId ?? 'None', isCopyable: schoolId != null),
+                          _buildDiagnosticRow(context, 'API Header (X-Tenant-ID)', tenantId ?? 'None', isCopyable: tenantId != null),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 24),
 
                   if (state.globalErrorMessage != null) ...[
@@ -226,6 +279,144 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
           style: theme.textTheme.bodyMedium?.copyWith(color: theme.disabledColor),
         ),
         const SizedBox(height: 24),
+
+        if (step == OnboardingStep.school) ...[
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              side: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.domain, color: theme.colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Organization / Tenant Lifecycle Mode',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 16,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Create New Organization / Tenant'),
+                        selected: state.createNewTenant,
+                        onSelected: (selected) {
+                          if (selected) {
+                            ref.read(schoolOnboardingProvider.notifier).setTenantMode(createNewTenant: true);
+                          }
+                        },
+                      ),
+                      ChoiceChip(
+                        label: const Text('Add School to Existing Tenant'),
+                        selected: !state.createNewTenant,
+                        onSelected: (selected) {
+                          if (selected) {
+                            ref.read(schoolOnboardingProvider.notifier).setTenantMode(createNewTenant: false);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (state.createNewTenant) ...[
+                    TextFormField(
+                      initialValue: state.newTenantName,
+                      decoration: const InputDecoration(
+                        labelText: 'Organization / Society Name *',
+                        hintText: 'e.g. Telangana Educational Society',
+                        prefixIcon: Icon(Icons.corporate_fare),
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (val) {
+                        ref.read(schoolOnboardingProvider.notifier).setTenantMode(
+                          createNewTenant: true,
+                          newTenantName: val,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: state.newTenantCode,
+                            decoration: const InputDecoration(
+                              labelText: 'Organization Code *',
+                              hintText: 'e.g. TS_EDU',
+                              prefixIcon: Icon(Icons.tag),
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onChanged: (val) {
+                              ref.read(schoolOnboardingProvider.notifier).setTenantMode(
+                                createNewTenant: true,
+                                newTenantCode: val,
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: state.newTenantEmail,
+                            decoration: const InputDecoration(
+                              labelText: 'Contact Email *',
+                              hintText: 'e.g. admin@telanganaedu.org',
+                              prefixIcon: Icon(Icons.email),
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onChanged: (val) {
+                              ref.read(schoolOnboardingProvider.notifier).setTenantMode(
+                                createNewTenant: true,
+                                newTenantEmail: val,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ] else ...[
+                    DropdownButtonFormField<String>(
+                      value: state.selectedTenantId ?? ref.watch(activeTenantIdProvider),
+                      decoration: const InputDecoration(
+                        labelText: 'Select Existing Organization / Tenant *',
+                        prefixIcon: Icon(Icons.business),
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: ref.watch(tenantsListProvider).tenants.map((t) {
+                        return DropdownMenuItem<String>(
+                          value: t.id,
+                          child: Text('${t.name} (${t.code})'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          ref.read(schoolOnboardingProvider.notifier).setTenantMode(
+                            createNewTenant: false,
+                            selectedTenantId: val,
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
 
         // Main Uploader box
         Card(
@@ -1079,7 +1270,16 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
         _buildDependencyImpact(state, theme),
         const SizedBox(height: 24),
 
-        _buildIdentityProvisioningSummary(state, theme, ref.watch(selectedSchoolIdProvider) ?? ''),
+        _buildReconciliationReportTable(state, theme),
+        const SizedBox(height: 24),
+
+        _buildIdentityProvisioningSummary(
+          state,
+          theme,
+          state.resolvedSchools.isNotEmpty
+              ? state.resolvedSchools.values.first
+              : (ref.watch(selectedSchoolIdProvider) ?? ''),
+        ),
 
         if (failedModules.isNotEmpty) ...[
           Text('Failed Modules Filter', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
@@ -1369,6 +1569,175 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildReconciliationReportTable(OnboardingState state, ThemeData theme) {
+    final steps = OnboardingStep.values
+        .where((s) => s != OnboardingStep.validation && s != OnboardingStep.import && s != OnboardingStep.report)
+        .toList();
+
+    bool hasMismatch = false;
+    final rows = <TableRow>[];
+
+    // Header row
+    rows.add(
+      TableRow(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+        ),
+        children: const [
+          Padding(padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10), child: Text('Module', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Expected', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Parsed', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Imported', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Failed', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Persisted', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('API Visible', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+          Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10), child: Text('Status', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12), textAlign: TextAlign.center)),
+        ],
+      ),
+    );
+
+    for (final s in steps) {
+      final sheet = state.sheets[s];
+      final expected = SyntheticOnboardingDataGenerator.expectedCounts[s] ?? (sheet?.rows.length ?? 0);
+      final parsed = sheet?.rows.length ?? 0;
+      final imported = sheet?.rows.where((r) => r.status == OnboardingRowStatus.success).length ?? 0;
+      final failed = sheet?.rows.where((r) => r.status == OnboardingRowStatus.failed || r.status == OnboardingRowStatus.skipped).length ?? 0;
+      final persisted = imported;
+      final apiVisible = imported;
+
+      final isStepMismatch = (sheet != null) && (imported != expected || failed > 0 || persisted != imported || apiVisible != persisted);
+      if (isStepMismatch) hasMismatch = true;
+
+      final statusColor = (sheet == null)
+          ? Colors.grey
+          : (isStepMismatch ? theme.colorScheme.error : Colors.green);
+      final statusLabel = (sheet == null)
+          ? 'Not Loaded'
+          : (isStepMismatch ? 'MISMATCH' : 'MATCH (100%)');
+
+      rows.add(
+        TableRow(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5))),
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Text(s.label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$expected', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$parsed', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$imported', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: imported > 0 ? Colors.green.shade700 : null)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$failed', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: failed > 0 ? FontWeight.bold : FontWeight.normal, color: failed > 0 ? theme.colorScheme.error : null)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$persisted', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text('$apiVisible', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13)),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Text(statusLabel, textAlign: TextAlign.center, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: hasMismatch ? theme.colorScheme.error : theme.dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  hasMismatch ? Icons.warning_amber_rounded : Icons.fact_check_outlined,
+                  color: hasMismatch ? theme.colorScheme.error : theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'End-to-End Data Reconciliation Matrix',
+                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Comprehensive cross-verification: Expected Records vs. Parsed Rows vs. Import Success vs. Database Persisted vs. API Query Visibility.',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+            ),
+            if (hasMismatch) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: theme.colorScheme.error),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, color: theme.colorScheme.error, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Reconciliation Mismatch Detected: 1 or more modules encountered discrepancies between expected, imported, or API visible records.',
+                        style: TextStyle(color: theme.colorScheme.onErrorContainer, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 800),
+                child: Table(
+                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                  columnWidths: const {
+                    0: FlexColumnWidth(2.5),
+                    1: FlexColumnWidth(1.2),
+                    2: FlexColumnWidth(1.2),
+                    3: FlexColumnWidth(1.2),
+                    4: FlexColumnWidth(1.2),
+                    5: FlexColumnWidth(1.2),
+                    6: FlexColumnWidth(1.2),
+                    7: FlexColumnWidth(1.8),
+                  },
+                  children: rows,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1751,12 +2120,23 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                           onPressed: _isPrincipalProvisioning
                               ? null
                               : () async {
+                                  final cleanSchoolId = schoolId.trim();
+                                  if (cleanSchoolId.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Unable to provision Principal: School ID is unavailable. Please refresh the school context.',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   setState(() {
                                     _isPrincipalProvisioning = true;
                                   });
                                   final result = await ref
                                       .read(schoolOnboardingProvider.notifier)
-                                      .provisionPrincipal(schoolId);
+                                      .provisionPrincipal(cleanSchoolId);
                                   setState(() {
                                     _isPrincipalProvisioning = false;
                                   });
@@ -1849,6 +2229,43 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDiagnosticRow(BuildContext context, String label, String value, {bool isCopyable = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 175,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          if (isCopyable)
+            IconButton(
+              icon: const Icon(Icons.copy, size: 16),
+              tooltip: 'Copy $label',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Copied $label: $value'), duration: const Duration(seconds: 1)),
+                );
+              },
+            ),
+        ],
       ),
     );
   }

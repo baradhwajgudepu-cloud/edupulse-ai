@@ -48,3 +48,65 @@ async def test_cors_preflight_onboarding_matrix(endpoint: str):
         )
         assert response_lh.status_code == 200, f"Failed preflight for {endpoint} with localhost"
         assert response_lh.headers.get("access-control-allow-origin") == "http://localhost:11500"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("origin", [
+    "https://edupulse-ai-1721.web.app",
+    "https://edupulse-ai-1721.firebaseapp.com",
+    "https://edupulse-ai-17221.web.app",
+    "https://edupulse-ai-17221.firebaseapp.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+])
+async def test_cors_preflight_marks_upload_endpoint(origin: str):
+    """
+    Verify production browser preflight OPTIONS request containing:
+    - Origin
+    - Access-Control-Request-Method: POST
+    - Access-Control-Request-Headers: authorization,content-type,x-tenant-id
+    succeeds with 200 OK and includes X-Tenant-ID in Access-Control-Allow-Headers.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+        exam_id = "c7a52511-b0db-4643-a6fe-4f113a968a3e"
+        endpoint = f"/api/v1/marks/examinations/{exam_id}/upload-class-all-subjects"
+        response = await client.options(
+            endpoint,
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type,x-tenant-id",
+            }
+        )
+        assert response.status_code == 200, f"Failed preflight for {origin}"
+        assert response.headers.get("access-control-allow-origin") == origin
+        assert response.headers.get("access-control-allow-credentials") == "true"
+        assert "POST" in response.headers.get("access-control-allow-methods", "")
+
+        allow_headers = response.headers.get("access-control-allow-headers", "").lower()
+        assert "x-tenant-id" in allow_headers, f"x-tenant-id missing from allow-headers: {allow_headers}"
+        assert "authorization" in allow_headers, f"authorization missing from allow-headers: {allow_headers}"
+        assert "content-type" in allow_headers, f"content-type missing from allow-headers: {allow_headers}"
+
+
+@pytest.mark.anyio
+async def test_cors_preflight_disallowed_origin():
+    """
+    Verify that an untrusted origin is strictly rejected by CORSMiddleware.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+        endpoint = "/api/v1/marks/examinations/c7a52511-b0db-4643-a6fe-4f113a968a3e/upload-class-all-subjects"
+        response = await client.options(
+            endpoint,
+            headers={
+                "Origin": "https://malicious.attacker.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type,x-tenant-id",
+            }
+        )
+        assert response.status_code == 400
+        assert "Disallowed CORS origin" in response.text
+        assert response.headers.get("access-control-allow-origin") is None
+

@@ -24,14 +24,23 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
         "http://localhost:11500",
         "http://127.0.0.1:11500",
-	"http://localhost:19064",
-	"http://127.0.0.1:19064",	
+        "http://localhost:19064",
+        "http://127.0.0.1:19064",
+        "https://edupulse-ai-1721.web.app",
+        "https://edupulse-ai-1721.firebaseapp.com",
+        "https://edupulse-ai-17221.web.app",
+        "https://edupulse-ai-17221.firebaseapp.com",
     ]
     EDUPULSE_CORS_ORIGINS: List[str] | None = None
-    CORS_ORIGIN_REGEX: str | None = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    CORS_ORIGIN_REGEX: str | None = (
+        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        r"|^https://edupulse-ai-(?:1721|17221)\.(?:web\.app|firebaseapp\.com)$"
+    )
 
     # Security and JWT configurations
     SECRET_KEY: str = "SUPER_SECRET_KEY_FOR_LOCAL_DEV_CHANGE_IN_PRODUCTION"

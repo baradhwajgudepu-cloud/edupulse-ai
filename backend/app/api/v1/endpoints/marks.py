@@ -1,6 +1,9 @@
 import uuid
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, UploadFile, File, Response
+
+logger = logging.getLogger(__name__)
 
 from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.marks import get_marks_service
@@ -13,7 +16,8 @@ from app.schemas.marks import (
     MarksReviewQueueItem, ParentExamResultResponse, ParentTimetableSlot,
     ParentReportCardItem, MarksExcelUploadSummary,
     ExamWideUploadPreviewResponse, ExamWideUploadConfirmRequest,
-    ExamWideUploadSummary, ExaminationPublishSummary
+    ExamWideUploadSummary, ExaminationPublishSummary,
+    ClassAllSubjectsUploadSummary
 )
 from app.models.user import User
 from app.schemas.response import APIResponse
@@ -279,6 +283,115 @@ async def download_exam_wide_template(
         content=template_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=Exam_Marks_Template.xlsx"}
+    )
+
+@router.get(
+    "/examinations/{exam_id}/class-all-subjects-template",
+    status_code=status.HTTP_200_OK,
+    summary="Download Excel template for class and all subjects bulk marks upload"
+)
+async def download_class_all_subjects_template(
+    exam_id: uuid.UUID,
+    class_id: uuid.UUID = Query(...),
+    section_id: uuid.UUID = Query(...),
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("marks.read")),
+    service: MarksService = Depends(get_marks_service)
+):
+    template_bytes, filename = await service.generate_class_all_subjects_template(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        class_id=class_id,
+        section_id=section_id
+    )
+    return Response(
+        content=template_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+MARKS_UPLOAD_IMPLEMENTATION_VERSION = "ALL_SUBJECTS_V2_RUNTIME_TRACE"
+
+@router.post(
+    "/examinations/{exam_id}/upload-class-all-subjects",
+    response_model=APIResponse[ClassAllSubjectsUploadSummary],
+    status_code=status.HTTP_200_OK,
+    summary="Upload and bulk import marks for a selected class and section across all subjects"
+)
+async def upload_class_all_subjects_marks(
+    exam_id: uuid.UUID,
+    class_id: uuid.UUID = Query(...),
+    section_id: uuid.UUID = Query(...),
+    school_id: uuid.UUID = Query(...),
+    file: UploadFile = File(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("marks.create")),
+    service: MarksService = Depends(get_marks_service)
+) -> APIResponse[ClassAllSubjectsUploadSummary]:
+    file_bytes = await file.read()
+    filename = file.filename or "upload.xlsx"
+    sheet_name = "N/A"
+    if not filename.lower().endswith(".csv"):
+        try:
+            import io
+            from openpyxl import load_workbook
+            wb_check = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+            sheet_name = wb_check.active.title if wb_check.active else "N/A"
+        except Exception:
+            pass
+
+    endpoint_path = f"/api/v1/marks/examinations/{exam_id}/upload-class-all-subjects"
+
+    # Production Structured Trace: [MARKS_UPLOAD_REQUEST_STARTED]
+    logger.info(
+        "[MARKS_UPLOAD_REQUEST_STARTED] path=%s exam_id=%s class_id=%s section_id=%s school_id=%s tenant_id=%s filename=%s file_size=%d sheet_name=%s",
+        endpoint_path, exam_id, class_id, section_id, school_id, tenant_id, filename, len(file_bytes), sheet_name
+    )
+
+    # Production Structured Trace: [MARKS_UPLOAD_AUTH_OK]
+    logger.info(
+        "[MARKS_UPLOAD_AUTH_OK] path=%s exam_id=%s tenant_id=%s school_id=%s user_id=%s user_email=%s is_superuser=%s",
+        endpoint_path, exam_id, tenant_id, school_id, current_user.id, current_user.email, current_user.is_superuser
+    )
+
+    try:
+        summary = await service.import_class_all_subjects_marks(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            exam_id=exam_id,
+            class_id=class_id,
+            section_id=section_id,
+            file_bytes=file_bytes,
+            filename=filename,
+            current_user=current_user
+        )
+    except HTTPException:
+        # Re-raise standard HTTPExceptions (e.g. 422 validation, 403, 404) untouched
+        raise
+    except Exception:
+        # Production Structured Trace: [MARKS_UPLOAD_ERROR] for unexpected / database exceptions
+        # Log full traceback server-side with exc_info without leaking internal error details to client
+        logger.exception(
+            "[MARKS_UPLOAD_ERROR] Unexpected error during marks bulk upload: path=%s exam_id=%s tenant_id=%s school_id=%s",
+            endpoint_path,
+            exam_id,
+            tenant_id,
+            school_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while processing the marks upload."
+        )
+
+    return APIResponse[ClassAllSubjectsUploadSummary](
+        success=True,
+        message=(
+            f"Successfully processed {summary.total_students_processed} students across {summary.total_subjects_detected} subjects "
+            f"({summary.total_marks_created} created, {summary.total_marks_updated} updated, {len(summary.validation_errors)} error(s))."
+        ),
+        data=summary
     )
 
 

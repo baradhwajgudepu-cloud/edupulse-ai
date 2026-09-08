@@ -1,9 +1,9 @@
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import joinedload
 
 from app.models.marks import Marks, MarksStatus, ExamResult
@@ -24,12 +24,15 @@ from app.schemas.marks import (
     MarksReviewQueueItem, ParentExamResultResponse, ParentSubjectMarkItem,
     ParentTimetableSlot, ParentReportCardItem, MarksExcelUploadSummary,
     ExamWideUploadRowPreview, ExamWideUploadPreviewResponse,
-    ExamWideUploadConfirmRequest, ExamWideUploadSummary, ExaminationPublishSummary
+    ExamWideUploadConfirmRequest, ExamWideUploadSummary, ExaminationPublishSummary,
+    ClassAllSubjectsUploadSummary
 )
 from app.models.guardian import Guardian, StudentGuardian
 from app.services.notification import NotificationService
+from app.core.normalization import normalize_subject_header, format_subject_header
 
 logger = logging.getLogger(__name__)
+
 
 class MarksService:
     def __init__(
@@ -1919,5 +1922,958 @@ class MarksService:
         buf = io.BytesIO()
         wb.save(buf)
         return buf.getvalue()
+
+    async def generate_class_all_subjects_template(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        class_id: uuid.UUID,
+        section_id: uuid.UUID
+    ) -> Tuple[bytes, str]:
+        import io
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        # 1. Fetch Examination
+        stmt_e = select(Examination).where(
+            Examination.id == exam_id,
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None)
+        )
+        res_e = await self.marks_repo.db.execute(stmt_e)
+        examination = res_e.scalar_one_or_none()
+        if not examination:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        # 2. Fetch all schedules for this class & section (or class-wide)
+        stmt_s = select(ExamSchedule).where(
+            ExamSchedule.exam_id == exam_id,
+            ExamSchedule.class_id == class_id,
+            or_(
+                ExamSchedule.section_id == section_id,
+                ExamSchedule.section_id.is_(None)
+            ),
+            ExamSchedule.school_id == school_id,
+            ExamSchedule.tenant_id == tenant_id,
+            ExamSchedule.deleted_at.is_(None)
+        ).options(
+            joinedload(ExamSchedule.class_obj),
+            joinedload(ExamSchedule.section),
+            joinedload(ExamSchedule.subject)
+        ).order_by(ExamSchedule.created_at)
+
+        res_s = await self.marks_repo.db.execute(stmt_s)
+        schedules = list(res_s.unique().scalars().all())
+        if not schedules:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No examination schedules/papers configured for this class and section."
+            )
+
+        # De-duplicate by subject_id (prefer section-specific if both exist)
+        subject_schedules: Dict[uuid.UUID, ExamSchedule] = {}
+        for s in schedules:
+            if s.subject_id not in subject_schedules or s.section_id == section_id:
+                subject_schedules[s.subject_id] = s
+
+        sorted_schedules = list(subject_schedules.values())
+
+        # 3. Fetch enrolled students
+        students = await self.marks_repo.get_class_students_sorted(class_id, section_id, school_id, tenant_id)
+        if not students:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No enrolled students found in this class and section."
+            )
+
+        c_name = sorted_schedules[0].class_obj.name if sorted_schedules[0].class_obj else "Class"
+        sec_name = sorted_schedules[0].section.name if (sorted_schedules[0].section and sorted_schedules[0].section_id == section_id) else "Section"
+        clean_c_name = c_name.replace(" ", "_")
+        clean_sec_name = sec_name.replace(" ", "_")
+        filename = f"{clean_c_name}_{clean_sec_name}_All_Subjects_Marks_Template.xlsx"
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Marks Entry"
+
+        # Construct headers
+        headers = ["Roll No", "Student Name"]
+        for s in sorted_schedules:
+            sub_name = s.subject.subject_name if s.subject else "Subject"
+            headers.append(format_subject_header(sub_name, s.max_marks))
+
+        ws.append(headers)
+
+
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1A365D", end_color="1A365D", fill_type="solid")
+        thin_border = Border(
+            left=Side(style="thin", color="D0D5DD"),
+            right=Side(style="thin", color="D0D5DD"),
+            top=Side(style="thin", color="D0D5DD"),
+            bottom=Side(style="thin", color="D0D5DD")
+        )
+        center_align = Alignment(horizontal="center", vertical="center")
+        left_align = Alignment(horizontal="left", vertical="center")
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = thin_border
+
+        # Existing marks lookup: (student_id, schedule_id) -> Marks
+        sched_ids = [s.id for s in sorted_schedules]
+        stmt_m = select(Marks).where(
+            Marks.examination_id == exam_id,
+            Marks.exam_schedule_id.in_(sched_ids),
+            Marks.school_id == school_id,
+            Marks.tenant_id == tenant_id,
+            Marks.deleted_at.is_(None)
+        )
+        res_m = await self.marks_repo.db.execute(stmt_m)
+        marks_map = {(m.student_id, m.exam_schedule_id): m for m in res_m.scalars().all()}
+
+        # Populate student rows
+        for row_idx, st in enumerate(students, start=2):
+            row_data = [
+                st.roll_number or "",
+                st.full_name or ""
+            ]
+            for s in sorted_schedules:
+                existing = marks_map.get((st.id, s.id))
+                val = existing.marks_obtained if (existing and existing.marks_obtained is not None) else ""
+                row_data.append(val)
+
+            ws.append(row_data)
+
+            # Apply formatting
+            ws.cell(row=row_idx, column=1).alignment = center_align
+            ws.cell(row=row_idx, column=1).border = thin_border
+            ws.cell(row=row_idx, column=2).alignment = left_align
+            ws.cell(row=row_idx, column=2).border = thin_border
+
+            for col_idx in range(3, len(headers) + 1):
+                c = ws.cell(row=row_idx, column=col_idx)
+                c.alignment = center_align
+                c.border = thin_border
+
+        # Auto-adjust column widths
+        ws.column_dimensions["A"].width = 14
+        ws.column_dimensions["B"].width = 28
+        for col_idx in range(3, len(headers) + 1):
+            col_letter = ws.cell(row=1, column=col_idx).column_letter
+            ws.column_dimensions[col_letter].width = 22
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue(), filename
+
+    async def import_class_all_subjects_marks(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        class_id: uuid.UUID,
+        section_id: uuid.UUID,
+        file_bytes: bytes,
+        filename: str,
+        current_user: User
+    ) -> ClassAllSubjectsUploadSummary:
+        import io
+        import csv
+        import re
+        from openpyxl import load_workbook
+
+        # 1. Fetch Examination
+        stmt_e = select(Examination).where(
+            Examination.id == exam_id,
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None)
+        )
+        res_e = await self.marks_repo.db.execute(stmt_e)
+        examination = res_e.scalar_one_or_none()
+        if not examination:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        if examination.status in [ExamStatus.LOCKED, ExamStatus.ARCHIVED, ExamStatus.COMPLETED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot upload marks because the examination is frozen."
+            )
+
+        # 2. Fetch all schedules for this class & section
+        stmt_s = select(ExamSchedule).where(
+            ExamSchedule.exam_id == exam_id,
+            ExamSchedule.class_id == class_id,
+            or_(
+                ExamSchedule.section_id == section_id,
+                ExamSchedule.section_id.is_(None)
+            ),
+            ExamSchedule.school_id == school_id,
+            ExamSchedule.tenant_id == tenant_id,
+            ExamSchedule.deleted_at.is_(None)
+        ).options(
+            joinedload(ExamSchedule.class_obj),
+            joinedload(ExamSchedule.section),
+            joinedload(ExamSchedule.subject),
+            joinedload(ExamSchedule.teacher_subject_assignment)
+        )
+        res_s = await self.marks_repo.db.execute(stmt_s)
+        schedules = list(res_s.unique().scalars().all())
+        if not schedules:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No examination schedules/papers configured for this class and section."
+            )
+
+        # De-duplicate by subject_id (prefer section-specific if both exist)
+        subject_schedules: Dict[uuid.UUID, ExamSchedule] = {}
+        for s in schedules:
+            if s.subject_id not in subject_schedules or s.section_id == section_id:
+                subject_schedules[s.subject_id] = s
+
+        sorted_schedules = list(subject_schedules.values())
+
+        # Build normalized lookup for each schedule
+        schedule_by_norm: Dict[str, ExamSchedule] = {}
+        for s in sorted_schedules:
+            if not s.subject:
+                continue
+            sub_name = s.subject.subject_name
+            sub_code = s.subject.subject_code or ""
+
+            k_name = normalize_subject_header(sub_name)
+            k_code = normalize_subject_header(sub_code)
+
+            if k_name:
+                schedule_by_norm[k_name] = s
+            if k_code:
+                schedule_by_norm[k_code] = s
+            if k_code and k_name:
+                schedule_by_norm[f"{k_code}{k_name}"] = s
+                schedule_by_norm[f"{k_name}{k_code}"] = s
+
+        # 3. Fetch enrolled students
+        students = await self.marks_repo.get_class_students_sorted(class_id, section_id, school_id, tenant_id)
+        if not students:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No enrolled students found for this class and section."
+            )
+
+        student_by_roll = {}
+        student_by_adm = {}
+        student_by_name = {}
+        for st in students:
+            if st.roll_number:
+                student_by_roll[str(st.roll_number).strip().lower()] = st
+                try:
+                    student_by_roll[str(int(str(st.roll_number).strip())).lower()] = st
+                except Exception:
+                    pass
+            if st.admission_number:
+                student_by_adm[str(st.admission_number).strip().lower()] = st
+            if st.full_name:
+                student_by_name[str(st.full_name).strip().lower()] = st
+
+        # 4. Parse file
+        # Production Structured Trace: [MARKS_UPLOAD_PARSE_STARTED]
+        logger.info(
+            "[MARKS_UPLOAD_PARSE_STARTED] exam_id=%s tenant_id=%s school_id=%s class_id=%s section_id=%s filename=%s file_size=%d",
+            exam_id, tenant_id, school_id, class_id, section_id, filename, len(file_bytes)
+        )
+
+        is_csv = filename.lower().endswith(".csv")
+        sheet_title = "CSV" if is_csv else "N/A"
+        if is_csv:
+            try:
+                text_content = file_bytes.decode("utf-8-sig", errors="replace")
+                reader = csv.reader(io.StringIO(text_content))
+                raw_rows = list(reader)
+            except Exception as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to parse CSV file: {str(e)}")
+        else:
+            try:
+                wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+                if "Marks Entry" in wb.sheetnames:
+                    ws = wb["Marks Entry"]
+                elif "ALL_SUBJECTS" in wb.sheetnames:
+                    ws = wb["ALL_SUBJECTS"]
+                else:
+                    ws = wb.active
+                sheet_title = ws.title
+                raw_rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+            except Exception as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to parse Excel workbook: {str(e)}")
+
+        if not raw_rows or len(raw_rows) < 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty or missing data rows.")
+
+        # Identify header row (scans first 5 rows to be resilient to metadata/empty rows)
+        header_row_idx = 0
+        for r_idx, r in enumerate(raw_rows[:5]):
+            r_str = [str(c or "").strip().lower() for c in r if c is not None]
+            if any("roll" in c or "admission" in c or ("student" in c and "name" in c) for c in r_str):
+                header_row_idx = r_idx
+                break
+
+        header_row = [str(h or "").strip() for h in raw_rows[header_row_idx]]
+
+        # Phase 3 Structured Logging: [MARKS UPLOAD RAW]
+        logger.info(
+            "[MARKS UPLOAD RAW] sheet_name=%s row_count=%d column_count=%d detected_header_row=%s",
+            sheet_title,
+            len(raw_rows),
+            len(raw_rows[0]) if raw_rows else 0,
+            header_row
+        )
+
+        roll_idx = -1
+        name_idx = -1
+        adm_idx = -1
+        subject_cols: List[Tuple[int, ExamSchedule, str]] = []
+        unmatched_headers: List[str] = []
+
+        for idx, h in enumerate(header_row):
+            if not h:
+                continue
+            h_lower = h.lower()
+            h_norm = normalize_subject_header(h)
+
+            # Strict identification checks to prevent stealing subject columns
+            if roll_idx == -1 and (
+                h_lower in ["roll no", "roll no.", "roll number", "roll", "roll_no", "rollno", "roll #", "r.no", "rno"]
+                or h_norm in ["roll", "rollno", "rollnumber", "rno"]
+            ):
+                roll_idx = idx
+                continue
+
+            if adm_idx == -1 and (
+                h_lower in ["admission no", "admission no.", "admission number", "adm no", "adm_no", "admno", "adm #", "admission_no", "admission"]
+                or h_norm in ["admissionno", "admissionnumber", "admno", "admission"]
+            ):
+                adm_idx = idx
+                continue
+
+            if name_idx == -1 and (
+                h_lower in ["student name", "name of student", "student_name", "studentname", "full name", "fullname", "student"]
+                or h_norm in ["studentname", "nameofstudent", "fullname"]
+                or ("student" in h_lower and "name" in h_lower and "subject" not in h_lower)
+            ):
+                name_idx = idx
+                continue
+
+            # Deterministic Subject Matching
+            matched_sched = schedule_by_norm.get(h_norm)
+            if not matched_sched:
+                for s in sorted_schedules:
+                    if not s.subject:
+                        continue
+                    sn_norm = normalize_subject_header(s.subject.subject_name)
+                    sc_norm = normalize_subject_header(s.subject.subject_code or "")
+                    if h_norm == sn_norm or (sc_norm and h_norm == sc_norm):
+                        matched_sched = s
+                        break
+
+            logger.debug(
+                "[MARKS UPLOAD NORMALIZED] header='%s' normalized='%s' matched_subject=%s",
+                h,
+                h_norm,
+                matched_sched.subject_id if matched_sched else None
+            )
+
+            if matched_sched:
+                sub_label = matched_sched.subject.subject_name if matched_sched.subject else h
+                subject_cols.append((idx, matched_sched, sub_label))
+            else:
+                unmatched_headers.append(h)
+
+        if roll_idx == -1 and name_idx == -1 and adm_idx == -1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not detect student identification column ('Roll No', 'Student Name', or 'Admission No') in header."
+            )
+
+        # Check if the spreadsheet is in Long Format (Row per subject with subject_code/name and marks_obtained columns)
+        is_long_format = False
+        if not subject_cols:
+            sub_code_col = -1
+            sub_name_col = -1
+            for i, h in enumerate(header_row):
+                hl = h.lower()
+                if any(k in hl for k in ["subject_code", "subject code", "sub_code", "paper_code", "subcode"]) or ("subject" in hl and "code" in hl):
+                    if sub_code_col == -1:
+                        sub_code_col = i
+                elif any(k in hl for k in ["subject_name", "subject name", "sub_name", "subname", "paper_name"]) or ("subject" in hl and "name" in hl):
+                    if sub_name_col == -1:
+                        sub_name_col = i
+                elif "subject" in hl or "paper" in hl:
+                    if sub_name_col == -1 and sub_code_col != i:
+                        sub_name_col = i
+
+            marks_col = next((i for i, h in enumerate(header_row) if any(k in h.lower() for k in ["marks_obtained", "marks obtained", "mark_obtained", "marks", "mark", "obtained", "score"]) and "max" not in h.lower()), -1)
+            max_col = next((i for i, h in enumerate(header_row) if any(k in h.lower() for k in ["maximum_marks", "max_marks", "maximum", "max"])), -1)
+            status_col = next((i for i, h in enumerate(header_row) if any(k in h.lower() for k in ["result_status", "status", "attendance"])), -1)
+            remarks_col = next((i for i, h in enumerate(header_row) if any(k in h.lower() for k in ["remarks", "remark", "note", "comment"])), -1)
+
+            if (sub_code_col != -1 or sub_name_col != -1) and marks_col != -1:
+                is_long_format = True
+
+        if not subject_cols and not is_long_format:
+            detected_headers = [str(h or "").strip() for h in header_row if str(h or "").strip()]
+            normalized_headers = [normalize_subject_header(h) for h in detected_headers]
+            expected_subjects = [
+                f"{s.subject.subject_name} (Code: {s.subject.subject_code or 'N/A'}, Max: {s.max_marks})"
+                if s.subject else f"Schedule {s.id}"
+                for s in sorted_schedules
+            ]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Could not detect any matching subject columns in the uploaded file for this class and examination. "
+                    f"Detected spreadsheet headers: {detected_headers}. "
+                    f"Normalized headers: {normalized_headers}. "
+                    f"Expected scheduled subjects: {expected_subjects}."
+                )
+            )
+
+        # Production Structured Trace: [MARKS_UPLOAD_PARSE_COMPLETE]
+        logger.info(
+            "[MARKS_UPLOAD_PARSE_COMPLETE] format=%s exam_id=%s tenant_id=%s school_id=%s rows_count=%d subject_cols=%d is_long_format=%s",
+            "long-format" if is_long_format else "wide-format",
+            exam_id, tenant_id, school_id, len(raw_rows), len(subject_cols), is_long_format
+        )
+
+        # 5. Teacher Resolution (Authenticated user teacher mapping)
+        # Verify if current_user has an associated Teacher entity in this school
+        stmt_cur_teacher = select(Teacher.id).where(
+            Teacher.user_id == current_user.id,
+            Teacher.school_id == school_id,
+            Teacher.tenant_id == tenant_id,
+            Teacher.deleted_at.is_(None)
+        ).limit(1)
+        res_cur_teacher = await self.marks_repo.db.execute(stmt_cur_teacher)
+        current_user_teacher_id: Optional[uuid.UUID] = res_cur_teacher.scalar()
+
+        # 6. Resolve TeacherSubjectAssignments for all class schedules
+        sched_tsa_ids = {s.teacher_subject_assignment_id for s in sorted_schedules if s.teacher_subject_assignment_id}
+        sched_subject_ids = {s.subject_id for s in sorted_schedules if s.subject_id}
+        stmt_tsa = select(TeacherSubjectAssignment).where(
+            TeacherSubjectAssignment.school_id == school_id,
+            TeacherSubjectAssignment.tenant_id == tenant_id,
+            TeacherSubjectAssignment.deleted_at.is_(None),
+            TeacherSubjectAssignment.is_active.is_(True),
+            or_(
+                TeacherSubjectAssignment.id.in_(sched_tsa_ids) if sched_tsa_ids else False,
+                TeacherSubjectAssignment.class_id == class_id,
+                TeacherSubjectAssignment.subject_id.in_(sched_subject_ids) if sched_subject_ids else False
+            )
+        )
+        res_tsa = await self.marks_repo.db.execute(stmt_tsa)
+        tsa_list = list(res_tsa.scalars().all())
+
+        tsa_by_id: Dict[uuid.UUID, TeacherSubjectAssignment] = {t.id: t for t in tsa_list}
+        tsa_exact_sec: Dict[Tuple[uuid.UUID, uuid.UUID], TeacherSubjectAssignment] = {}
+        tsa_class_wide: Dict[uuid.UUID, TeacherSubjectAssignment] = {}
+
+        for t in tsa_list:
+            if t.section_id == section_id:
+                tsa_exact_sec[(t.class_id, t.subject_id)] = t
+            elif t.section_id is None:
+                if t.subject_id not in tsa_class_wide:
+                    tsa_class_wide[t.subject_id] = t
+
+        # Helper: Safe Teacher & TSA resolution per schedule following strict data integrity hierarchy
+        schedule_resolutions: Dict[uuid.UUID, Dict[str, Any]] = {}
+
+        def resolve_schedule_context(s: ExamSchedule, subject_label: str) -> Dict[str, Any]:
+            if s.id in schedule_resolutions:
+                return schedule_resolutions[s.id]
+
+            # Priority 1: TeacherSubjectAssignment explicitly linked to schedule
+            resolved_tsa = None
+            if s.teacher_subject_assignment_id and s.teacher_subject_assignment_id in tsa_by_id:
+                resolved_tsa = tsa_by_id[s.teacher_subject_assignment_id]
+            elif (
+                s.teacher_subject_assignment
+                and s.teacher_subject_assignment.is_active
+                and s.teacher_subject_assignment.deleted_at is None
+                and s.teacher_subject_assignment.school_id == school_id
+                and s.teacher_subject_assignment.tenant_id == tenant_id
+            ):
+                resolved_tsa = s.teacher_subject_assignment
+
+            # Priority 2: Exact TSA matching school + class + section + subject
+            if not resolved_tsa:
+                resolved_tsa = tsa_exact_sec.get((s.class_id, s.subject_id))
+
+            resolved_teacher_id = None
+            resolved_tsa_id = None
+
+            if resolved_tsa and resolved_tsa.teacher_id:
+                resolved_teacher_id = resolved_tsa.teacher_id
+                resolved_tsa_id = resolved_tsa.id
+            elif current_user_teacher_id:
+                # Priority 3: Valid Teacher mapped through current_user.id (Teacher.user_id == current_user.id AND Teacher.school_id == school_id)
+                resolved_teacher_id = current_user_teacher_id
+                resolved_tsa_id = (
+                    resolved_tsa.id
+                    if resolved_tsa
+                    else (
+                        s.teacher_subject_assignment_id
+                        if s.teacher_subject_assignment_id
+                        else (tsa_class_wide.get(s.subject_id).id if tsa_class_wide.get(s.subject_id) else None)
+                    )
+                )
+                if not resolved_tsa_id:
+                    for t in tsa_list:
+                        if t.subject_id == s.subject_id:
+                            resolved_tsa_id = t.id
+                            break
+            else:
+                # Priority 4: Any other explicitly configured teacher relationship already present in existing domain model
+                # (a) Class-wide TSA for this subject (section is None)
+                if not resolved_tsa:
+                    resolved_tsa = tsa_class_wide.get(s.subject_id)
+                # (b) Any TSA for this class & subject in this school
+                if not resolved_tsa:
+                    for t in tsa_list:
+                        if t.subject_id == s.subject_id and t.class_id == s.class_id:
+                            resolved_tsa = t
+                            break
+                # (c) Any TSA for this subject in this school
+                if not resolved_tsa:
+                    for t in tsa_list:
+                        if t.subject_id == s.subject_id:
+                            resolved_tsa = t
+                            break
+
+                if resolved_tsa and resolved_tsa.teacher_id:
+                    resolved_teacher_id = resolved_tsa.teacher_id
+                    resolved_tsa_id = resolved_tsa.id
+
+            # Priority 5: Otherwise raise HTTP 422 (never use arbitrary active teacher or current_user.id)
+            if not resolved_teacher_id or not resolved_tsa_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Cannot upload marks for subject '{subject_label}': No assigned teacher or Teacher Subject Assignment "
+                        f"is configured for class/section in this school, and the current user is not mapped to an active teacher. "
+                        f"Please assign a teacher to this subject schedule before uploading marks."
+                    )
+                )
+
+            ctx = {
+                "tsa_id": resolved_tsa_id,
+                "teacher_id": resolved_teacher_id,
+                "subject_name": subject_label
+            }
+            schedule_resolutions[s.id] = ctx
+            return ctx
+
+        # Pre-resolve for all sorted_schedules
+        for s in sorted_schedules:
+            sub_title = s.subject.subject_name if s.subject else str(s.subject_id)
+            try:
+                resolve_schedule_context(s, sub_title)
+            except HTTPException:
+                pass
+
+        # 7. Fetch all existing marks for this examination, class, section, and schedules
+        all_sched_ids = {s.id for s in sorted_schedules}
+        stmt_existing = select(Marks).where(
+            Marks.examination_id == exam_id,
+            Marks.class_id == class_id,
+            or_(
+                Marks.section_id == section_id,
+                Marks.section_id.is_(None)
+            ),
+            Marks.exam_schedule_id.in_(all_sched_ids),
+            Marks.school_id == school_id,
+            Marks.tenant_id == tenant_id,
+            Marks.deleted_at.is_(None)
+        )
+        res_ex = await self.marks_repo.db.execute(stmt_existing)
+        existing_marks = list(res_ex.scalars().all())
+        existing_map: Dict[Tuple[uuid.UUID, uuid.UUID], Marks] = {
+            (m.student_id, m.exam_schedule_id): m for m in existing_marks
+        }
+
+        # Helper: Unified mark persistence and logging before creation
+        def save_or_update_mark(
+            matched_student: Student,
+            sched: ExamSchedule,
+            marks_val: Optional[float],
+            res_status: ExamResult,
+            raw_remarks_val: Optional[str]
+        ) -> bool:
+            nonlocal created_count, updated_count
+            key = (matched_student.id, sched.id)
+            sched_ctx = schedule_resolutions[sched.id]
+            t_id = sched_ctx["teacher_id"]
+            tsa_id = sched_ctx["tsa_id"]
+            grade = self._compute_grade(marks_val, sched.max_marks) if marks_val is not None else None
+
+            existing = existing_map.get(key)
+
+            # Production Structured Diagnostic Trace: [MARKS_UPLOAD_RECORD]
+            logger.info(
+                "[MARKS_UPLOAD_RECORD] [MARKS DIAGNOSTIC] op=%s tenant=%s school=%s exam=%s class=%s section=%s "
+                "student=%s subject=%s schedule=%s teacher=%s current_user=%s tsa=%s",
+                "UPDATE" if existing else "INSERT",
+                tenant_id,
+                school_id,
+                exam_id,
+                class_id,
+                section_id,
+                matched_student.id,
+                sched.subject_id,
+                sched.id,
+                t_id,
+                current_user.id,
+                tsa_id
+            )
+
+            if existing:
+                existing.marks_obtained = marks_val
+                existing.maximum_marks = sched.max_marks
+                existing.result_status = res_status
+                existing.grade = grade
+                existing.remarks = raw_remarks_val or existing.remarks
+                if t_id and (not existing.teacher_id or existing.teacher_id != t_id):
+                    existing.teacher_id = t_id
+                if tsa_id and (not existing.teacher_subject_assignment_id or existing.teacher_subject_assignment_id != tsa_id):
+                    existing.teacher_subject_assignment_id = tsa_id
+                existing.status = MarksStatus.SUBMITTED if existing.status == MarksStatus.DRAFT else existing.status
+                existing.updated_at = datetime.now(timezone.utc)
+                existing.updated_by = current_user.id
+                self.marks_repo.db.add(existing)
+                updated_count += 1
+                return False
+            else:
+                new_mark = Marks(
+                    tenant_id=tenant_id,
+                    school_id=school_id,
+                    examination_id=exam_id,
+                    exam_schedule_id=sched.id,
+                    student_id=matched_student.id,
+                    class_id=class_id,
+                    section_id=section_id,
+                    subject_id=sched.subject_id,
+                    academic_year_id=examination.academic_year_id,
+                    teacher_id=t_id,
+                    teacher_subject_assignment_id=tsa_id,
+                    maximum_marks=sched.max_marks,
+                    marks_obtained=marks_val,
+                    result_status=res_status,
+                    grade=grade,
+                    status=MarksStatus.SUBMITTED,
+                    remarks=raw_remarks_val,
+                    created_by=current_user.id
+                )
+                self.marks_repo.db.add(new_mark)
+                existing_map[key] = new_mark
+                created_count += 1
+                return True
+
+        # Handle Long-Format Spreadsheet (e.g. quarterly dataset or per-subject rows)
+        if is_long_format:
+            logger.info(
+                "[MARKS PARSER DETECTED] Long-format per-subject spreadsheet detected. sub_code_col=%s, sub_name_col=%s, marks_col=%s",
+                sub_code_col,
+                sub_name_col,
+                marks_col
+            )
+            validation_errors: List[str] = []
+            students_processed_set = set()
+            subjects_detected_set = set()
+            created_count = 0
+            updated_count = 0
+            failed_rows = 0
+
+            for row_num, row in enumerate(raw_rows[header_row_idx + 1:], start=header_row_idx + 2):
+                if not row or all(v is None or str(v).strip() == "" for v in row):
+                    continue
+
+                raw_roll = str(row[roll_idx]).strip() if (roll_idx != -1 and roll_idx < len(row) and row[roll_idx] is not None) else ""
+                raw_name = str(row[name_idx]).strip() if (name_idx != -1 and name_idx < len(row) and row[name_idx] is not None) else ""
+                raw_adm = str(row[adm_idx]).strip() if (adm_idx != -1 and adm_idx < len(row) and row[adm_idx] is not None) else ""
+
+                matched_student = None
+                if raw_roll:
+                    matched_student = student_by_roll.get(raw_roll.lower())
+                    if not matched_student:
+                        try:
+                            matched_student = student_by_roll.get(str(int(raw_roll)).lower())
+                        except Exception:
+                            pass
+                if not matched_student and raw_adm:
+                    matched_student = student_by_adm.get(raw_adm.lower())
+                if not matched_student and raw_name:
+                    matched_student = student_by_name.get(raw_name.lower())
+
+                student_label = matched_student.full_name if matched_student else (raw_name or f"Roll {raw_roll}" or f"Row {row_num}")
+
+                if not matched_student:
+                    failed_rows += 1
+                    validation_errors.append(f"Row {row_num}: Could not identify enrolled student (Roll: '{raw_roll}', Name: '{raw_name}').")
+                    continue
+
+                students_processed_set.add(matched_student.id)
+
+                # Identify subject
+                raw_sub_code = str(row[sub_code_col]).strip() if (sub_code_col != -1 and sub_code_col < len(row) and row[sub_code_col] is not None) else ""
+                raw_sub_name = str(row[sub_name_col]).strip() if (sub_name_col != -1 and sub_name_col < len(row) and row[sub_name_col] is not None) else ""
+
+                matched_sched = None
+                for key in [normalize_subject_header(raw_sub_code), normalize_subject_header(raw_sub_name)]:
+                    if key and key in schedule_by_norm:
+                        matched_sched = schedule_by_norm[key]
+                        break
+
+                if not matched_sched:
+                    failed_rows += 1
+                    validation_errors.append(f"Row {row_num} ({matched_student.full_name}): Unrecognized subject '{raw_sub_code or raw_sub_name}'.")
+                    continue
+
+                subjects_detected_set.add(matched_sched.id)
+
+                # Ensure schedule context is resolved
+                sub_title = matched_sched.subject.subject_name if matched_sched.subject else str(matched_sched.subject_id)
+                resolve_schedule_context(matched_sched, sub_title)
+
+                # Parse mark
+                raw_mark_val = row[marks_col] if marks_col < len(row) else None
+                raw_status_val = str(row[status_col]).strip().upper() if (status_col != -1 and status_col < len(row) and row[status_col] is not None) else "PRESENT"
+                raw_remarks_val = str(row[remarks_col]).strip() if (remarks_col != -1 and remarks_col < len(row) and row[remarks_col] is not None) else ""
+
+                # Result status
+                res_status = ExamResult.PRESENT
+                if "ABSENT" in raw_status_val or raw_status_val == "A":
+                    res_status = ExamResult.ABSENT
+                    marks_val = 0.0
+                elif "EXEMPT" in raw_status_val or raw_status_val == "E":
+                    res_status = ExamResult.EXEMPTED
+                    marks_val = None
+                elif "MALPRACTICE" in raw_status_val or raw_status_val == "M":
+                    res_status = ExamResult.MALPRACTICE
+                    marks_val = 0.0
+                else:
+                    try:
+                        if raw_mark_val is not None and str(raw_mark_val).strip() != "":
+                            marks_val = float(str(raw_mark_val).strip())
+                            if marks_val < 0:
+                                validation_errors.append(f"Row {row_num} ({matched_student.full_name}): Negative marks ({marks_val}) not allowed.")
+                                failed_rows += 1
+                                continue
+                            if marks_val > matched_sched.max_marks:
+                                validation_errors.append(f"Row {row_num} ({matched_student.full_name}): Marks ({marks_val}) exceed Maximum Marks ({matched_sched.max_marks}) for {matched_sched.subject.subject_name if matched_sched.subject else 'Subject'}.")
+                                failed_rows += 1
+                                continue
+                        else:
+                            marks_val = None
+                    except ValueError:
+                        validation_errors.append(f"Row {row_num} ({matched_student.full_name}): Invalid marks value '{raw_mark_val}'.")
+                        failed_rows += 1
+                        continue
+
+                # Upsert mark using unified helper
+                save_or_update_mark(matched_student, matched_sched, marks_val, res_status, raw_remarks_val)
+
+            # Production Structured Trace: [MARKS_UPLOAD_DB_PRE_FLUSH]
+            logger.info(
+                "[MARKS_UPLOAD_DB_PRE_FLUSH] [MARKS BATCH PRE-FLUSH] format=long-format tenant_id=%s school_id=%s exam_id=%s class_id=%s section_id=%s "
+                "current_user_id=%s schedules_count=%d students_processed=%d marks_created=%d marks_updated=%d",
+                tenant_id,
+                school_id,
+                exam_id,
+                class_id,
+                section_id,
+                current_user.id,
+                len(sorted_schedules),
+                len(students_processed_set),
+                created_count,
+                updated_count
+            )
+            # Wrap commit in try/except Exception with rollback, traceback, [MARKS_UPLOAD_DB_COMMIT_ERROR], and re-raise
+            try:
+                await self.marks_repo.db.flush()
+                await self.marks_repo.db.commit()
+                # Production Structured Trace: [MARKS_UPLOAD_DB_COMMIT_SUCCESS]
+                logger.info(
+                    "[MARKS_UPLOAD_DB_COMMIT_SUCCESS] format=long-format tenant_id=%s school_id=%s exam_id=%s class_id=%s section_id=%s marks_created=%d marks_updated=%d",
+                    tenant_id, school_id, exam_id, class_id, section_id, created_count, updated_count
+                )
+            except Exception as exc:
+                await self.marks_repo.db.rollback()
+                endpoint_path = f"/api/v1/marks/examinations/{exam_id}/upload-class-all-subjects"
+                logger.error(
+                    "[MARKS_UPLOAD_DB_COMMIT_ERROR] [MARKS_UPLOAD_ERROR] %s: %s | path=%s exam_id=%s tenant_id=%s school_id=%s",
+                    type(exc).__name__,
+                    str(exc),
+                    endpoint_path,
+                    exam_id,
+                    tenant_id,
+                    school_id,
+                    exc_info=True
+                )
+                raise
+
+            c_obj = schedules[0].class_obj if schedules else None
+            sec_obj = schedules[0].section if schedules else None
+            c_title = c_obj.name if c_obj else "Class"
+            sec_title = sec_obj.name if sec_obj else "Section"
+
+            return ClassAllSubjectsUploadSummary(
+                total_students_processed=len(students_processed_set),
+                total_subjects_detected=len(subjects_detected_set),
+                total_marks_created=created_count,
+                total_marks_updated=updated_count,
+                failed_rows=failed_rows,
+                validation_errors=validation_errors,
+                examination_name=examination.exam_name,
+                class_name=c_title,
+                section_name=sec_title
+            )
+
+        # Wide-Format Spreadsheet processing
+        validation_errors: List[str] = []
+        students_processed_set = set()
+        created_count = 0
+        updated_count = 0
+        failed_rows = 0
+
+        # Pre-resolve all detected subject columns (raises HTTP 422 if teacher or TSA missing)
+        for col_idx, sched, sub_name in subject_cols:
+            resolve_schedule_context(sched, sub_name)
+
+        for row_num, row in enumerate(raw_rows[header_row_idx + 1:], start=header_row_idx + 2):
+            if not row or all(v is None or str(v).strip() == "" for v in row):
+                continue
+
+            matched_student = None
+            raw_roll = str(row[roll_idx]).strip() if (roll_idx != -1 and roll_idx < len(row) and row[roll_idx] is not None) else ""
+            raw_name = str(row[name_idx]).strip() if (name_idx != -1 and name_idx < len(row) and row[name_idx] is not None) else ""
+            raw_adm = str(row[adm_idx]).strip() if (adm_idx != -1 and adm_idx < len(row) and row[adm_idx] is not None) else ""
+
+            if raw_roll:
+                matched_student = student_by_roll.get(raw_roll.lower())
+                if not matched_student:
+                    try:
+                        matched_student = student_by_roll.get(str(int(raw_roll)).lower())
+                    except Exception:
+                        pass
+            if not matched_student and raw_adm:
+                matched_student = student_by_adm.get(raw_adm.lower())
+            if not matched_student and raw_name:
+                matched_student = student_by_name.get(raw_name.lower())
+
+            student_label = matched_student.full_name if matched_student else (raw_name or f"Roll {raw_roll}" or f"Row {row_num}")
+
+            if not matched_student:
+                failed_rows += 1
+                validation_errors.append(f"Row {row_num}: Could not identify enrolled student (Roll: '{raw_roll}', Name: '{raw_name}').")
+                continue
+
+            students_processed_set.add(matched_student.id)
+
+            for col_idx, sched, sub_name in subject_cols:
+                if col_idx >= len(row) or row[col_idx] is None:
+                    continue
+
+                raw_cell = str(row[col_idx]).strip()
+                if raw_cell == "":
+                    continue
+
+                raw_cell_upper = raw_cell.upper()
+                if raw_cell_upper in ["AB", "ABSENT", "A"]:
+                    res_status = ExamResult.ABSENT
+                    marks_val = 0.0
+                elif raw_cell_upper in ["EX", "EXEMPTED"]:
+                    res_status = ExamResult.EXEMPTED
+                    marks_val = None
+                elif raw_cell_upper in ["MP", "MALPRACTICE"]:
+                    res_status = ExamResult.MALPRACTICE
+                    marks_val = 0.0
+                else:
+                    try:
+                        marks_val = float(raw_cell)
+                    except ValueError:
+                        validation_errors.append(f"Row {row_num} ({student_label}) - {sub_name}: Invalid numeric value '{raw_cell}'.")
+                        continue
+
+                    if marks_val < 0.0:
+                        validation_errors.append(f"Row {row_num} ({student_label}) - {sub_name}: Marks cannot be negative ({marks_val}).")
+                        continue
+                    if marks_val > sched.max_marks:
+                        validation_errors.append(f"Row {row_num} ({student_label}) - {sub_name}: Mark {marks_val} exceeds maximum allowed {sched.max_marks}.")
+                        continue
+
+                    res_status = ExamResult.PRESENT
+
+                # Upsert mark using unified helper
+                save_or_update_mark(matched_student, sched, marks_val, res_status, None)
+
+        # Production Structured Trace: [MARKS_UPLOAD_DB_PRE_FLUSH]
+        logger.info(
+            "[MARKS_UPLOAD_DB_PRE_FLUSH] [MARKS BATCH PRE-FLUSH] format=wide-format tenant_id=%s school_id=%s exam_id=%s class_id=%s section_id=%s "
+            "current_user_id=%s schedules_count=%d students_processed=%d marks_created=%d marks_updated=%d",
+            tenant_id,
+            school_id,
+            exam_id,
+            class_id,
+            section_id,
+            current_user.id,
+            len(sorted_schedules),
+            len(students_processed_set),
+            created_count,
+            updated_count
+        )
+        # Wrap commit in try/except Exception with rollback, traceback, [MARKS_UPLOAD_DB_COMMIT_ERROR], and re-raise
+        try:
+            await self.marks_repo.db.flush()
+            await self.marks_repo.db.commit()
+            # Production Structured Trace: [MARKS_UPLOAD_DB_COMMIT_SUCCESS]
+            logger.info(
+                "[MARKS_UPLOAD_DB_COMMIT_SUCCESS] format=wide-format tenant_id=%s school_id=%s exam_id=%s class_id=%s section_id=%s marks_created=%d marks_updated=%d",
+                tenant_id, school_id, exam_id, class_id, section_id, created_count, updated_count
+            )
+        except Exception as exc:
+            await self.marks_repo.db.rollback()
+            endpoint_path = f"/api/v1/marks/examinations/{exam_id}/upload-class-all-subjects"
+            logger.error(
+                "[MARKS_UPLOAD_DB_COMMIT_ERROR] [MARKS_UPLOAD_ERROR] %s: %s | path=%s exam_id=%s tenant_id=%s school_id=%s",
+                type(exc).__name__,
+                str(exc),
+                endpoint_path,
+                exam_id,
+                tenant_id,
+                school_id,
+                exc_info=True
+            )
+            raise
+
+        c_obj = schedules[0].class_obj if schedules else None
+        sec_obj = schedules[0].section if schedules else None
+        c_title = c_obj.name if c_obj else "Class"
+        sec_title = sec_obj.name if sec_obj else "Section"
+
+        return ClassAllSubjectsUploadSummary(
+            total_students_processed=len(students_processed_set),
+            total_subjects_detected=len(subject_cols),
+            total_marks_created=created_count,
+            total_marks_updated=updated_count,
+            failed_rows=failed_rows,
+            validation_errors=validation_errors,
+            examination_name=examination.exam_name,
+            class_name=c_title,
+            section_name=sec_title
+        )
+
 
 

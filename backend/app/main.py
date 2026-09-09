@@ -142,6 +142,22 @@ async def sync_tenant_rbac_permissions():
             logging.getLogger("uvicorn").error(f"Error syncing tenant RBAC permissions: {e}")
 
 
+async def ensure_marks_enum_values():
+    """
+    Safely ensures that modern MarksStatus enum values exist in PostgreSQL on application startup.
+    This guarantees zero-downtime compatibility and prevents InvalidTextRepresentationError.
+    """
+    from app.db.session import engine
+    from sqlalchemy import text
+    try:
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            for val in ["SUBMITTED", "UNDER_REVIEW", "RETURNED", "APPROVED"]:
+                await conn.execute(text(f"ALTER TYPE marksstatus ADD VALUE IF NOT EXISTS '{val}'"))
+    except Exception as e:
+        logger.warning(f"Could not automatically ensure marksstatus enum values during startup: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
@@ -149,6 +165,11 @@ async def lifespan(app: FastAPI):
     setup_logging()
 
     logger.info("Starting up EduPulse AI backend foundation...")
+    try:
+        await ensure_marks_enum_values()
+    except Exception as e:
+        logger.error(f"Failed to ensure marksstatus enum values during startup: {e}")
+
     try:
         await seed_reports_settings_permissions()
     except Exception as e:
@@ -158,6 +179,7 @@ async def lifespan(app: FastAPI):
         await sync_tenant_rbac_permissions()
     except Exception as e:
         logger.error(f"Failed to sync tenant RBAC permissions during startup: {e}")
+
 
     # Start background scheduled notification worker
     from app.db.session import AsyncSessionLocal

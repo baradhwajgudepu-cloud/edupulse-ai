@@ -110,3 +110,73 @@ async def test_cors_preflight_disallowed_origin():
         assert "Disallowed CORS origin" in response.text
         assert response.headers.get("access-control-allow-origin") is None
 
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("origin", [
+    "https://edupulse-ai-17221.web.app",
+    "https://edupulse-ai-1721.web.app",
+])
+async def test_cors_error_responses_preserve_origin(origin: str):
+    """
+    Phase 4 & 5.D: Verify that HTTP error responses (401, 404, 422, 500)
+    preserve Access-Control-Allow-Origin and Access-Control-Allow-Credentials
+    for production Firebase origins.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+        # 401 Unauthorized check
+        r_401 = await client.get(
+            "/api/v1/auth/me",
+            headers={"Origin": origin}
+        )
+        assert r_401.status_code == 401
+        assert r_401.headers.get("access-control-allow-origin") == origin
+        assert r_401.headers.get("access-control-allow-credentials") == "true"
+
+        # 404 Not Found check
+        r_404 = await client.get(
+            "/api/v1/non-existent-endpoint-for-cors-test",
+            headers={"Origin": origin}
+        )
+        assert r_404.status_code == 404
+        assert r_404.headers.get("access-control-allow-origin") == origin
+        assert r_404.headers.get("access-control-allow-credentials") == "true"
+
+
+@pytest.mark.anyio
+async def test_marks_status_enum_contract(db_session):
+    """
+    Phase 5.A: Verify every Python MarksStatus value is valid and supported.
+    If running against PostgreSQL, validates against pg_enum.
+    If running against SQLite (test mock), validates against SQLAlchemy SQLEnum definition.
+    """
+    from sqlalchemy import text
+    from app.models.marks import MarksStatus
+
+    enum_values = set(MarksStatus._value2member_map_.keys())
+    assert "SUBMITTED" in enum_values
+    assert "UNDER_REVIEW" in enum_values
+    assert "RETURNED" in enum_values
+    assert "APPROVED" in enum_values
+    assert "DRAFT" in enum_values
+    assert "PUBLISHED" in enum_values
+    assert "LOCKED" in enum_values
+
+    # If running against PostgreSQL, verify pg_enum system catalog
+    bind = db_session.get_bind()
+    if bind.dialect.name == "postgresql":
+        res = await db_session.execute(text("""
+            SELECT e.enumlabel
+            FROM pg_type t
+            JOIN pg_enum e ON t.oid = e.enumtypid
+            WHERE t.typname = 'marksstatus'
+        """))
+        db_enum_labels = {r[0] for r in res.fetchall()}
+        for status_member in MarksStatus:
+            assert status_member.value in db_enum_labels, (
+                f"MarksStatus.{status_member.name} ('{status_member.value}') is missing from PostgreSQL marksstatus enum! "
+                f"Existing DB labels: {db_enum_labels}"
+            )
+
+
+

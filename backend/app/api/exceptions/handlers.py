@@ -5,6 +5,31 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.schemas.response import APIResponse
 from app.core.logging import logger
 
+def _inject_cors_headers(request: Request, response: JSONResponse) -> None:
+    """
+    Ensures error responses (4xx, 5xx) retain CORS headers for allowed origins,
+    preventing browsers from obscuring server errors with CORS network errors.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    import re
+    from app.core.settings import settings
+    is_allowed = False
+    if origin in settings.cors_origins_list:
+        is_allowed = True
+    elif settings.CORS_ORIGIN_REGEX and re.match(settings.CORS_ORIGIN_REGEX, origin):
+        is_allowed = True
+
+    if is_allowed:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = (
+            "Content-Length, Content-Range, X-Trace-ID, X-Process-Time, "
+            "x-trace-id, x-process-time, X-Tenant-ID, X-School-ID, Content-Disposition"
+        )
+
+
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     Catches all unhandled system exceptions and returns a 500 error within the standard API response structure.
@@ -22,10 +47,12 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         data=None
     ).model_dump()
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=response_data
     )
+    _inject_cors_headers(request, response)
+    return response
 
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """
@@ -45,10 +72,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         data=None
     ).model_dump()
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=exc.status_code,
         content=response_data
     )
+    _inject_cors_headers(request, response)
+    return response
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """
@@ -91,10 +120,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         data={"errors": sanitized_errors}
     ).model_dump()
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=response_data
     )
+    _inject_cors_headers(request, response)
+    return response
 
 def setup_exception_handlers(app: FastAPI) -> None:
     """
@@ -103,3 +134,5 @@ def setup_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, global_exception_handler)
+    app.add_exception_handler(status.HTTP_500_INTERNAL_SERVER_ERROR, global_exception_handler)
+

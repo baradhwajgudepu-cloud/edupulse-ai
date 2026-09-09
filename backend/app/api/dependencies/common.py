@@ -58,12 +58,17 @@ async def get_optional_tenant_id(
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID", description="Active Tenant UUID")
 ) -> Optional[uuid.UUID]:
     """
-    Shared dependency to extract and validate the active Tenant UUID from request headers optionally.
+    Shared dependency to optionally extract and validate the active Tenant UUID from request headers.
+    Returns None if header is omitted, blank, or string 'none'/'null'/'undefined'.
+    Raises 400 only if a non-empty header format is not a valid UUID.
     """
-    if not x_tenant_id or not x_tenant_id.strip() or x_tenant_id.strip() == "None":
+    if not x_tenant_id or not x_tenant_id.strip():
+        return None
+    cleaned = x_tenant_id.strip()
+    if cleaned.lower() in ("none", "null", "undefined"):
         return None
     try:
-        return uuid.UUID(x_tenant_id.strip())
+        return uuid.UUID(cleaned)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

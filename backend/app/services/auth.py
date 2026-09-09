@@ -65,6 +65,8 @@ class AuthService:
         # If no matching user found under the hinted tenant, proceed to safe global identity resolution
         if not user:
             candidates = await self.user_repo.get_all_by_email_or_login_id(identifier)
+            active_candidates = [u for u in candidates if u.status == UserStatus.ACTIVE]
+
             if len(candidates) == 0:
                 # Timing leak protection
                 verify_password(login_in.password, "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$P13Z840YqZ7jI7w1gS3W7Q")
@@ -72,14 +74,19 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid email or password."
                 )
-            elif len(candidates) == 1:
+            elif len(active_candidates) == 1:
+                user = active_candidates[0]
+            elif len(active_candidates) == 0 and len(candidates) == 1:
+                # Exactly one candidate exists but account is inactive/locked
                 user = candidates[0]
-            else:
+            elif len(active_candidates) > 1:
                 # Ambiguous identity across multiple tenants
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Multiple organization accounts use this login. Please select your organization."
                 )
+            else:
+                user = candidates[0]
 
         # 1. Lockout verification
         now = datetime.now(timezone.utc)

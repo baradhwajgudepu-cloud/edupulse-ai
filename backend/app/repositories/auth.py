@@ -67,8 +67,9 @@ class UserRepository:
         """
         Retrieves a single user by email or login_id within the tenant boundary, loading permissions.
         """
+        clean_id = identifier.strip().lower()
         stmt = select(User).where(
-            or_(func.lower(User.email) == identifier.lower(), func.lower(User.login_id) == identifier.lower()),
+            or_(func.lower(User.email) == clean_id, func.lower(User.login_id) == clean_id),
             User.tenant_id == tenant_id,
             User.deleted_at.is_(None)
         ).options(
@@ -78,12 +79,28 @@ class UserRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_all_by_email_or_login_id(self, identifier: str) -> List[User]:
+        """
+        Retrieves users matching email or login_id across all tenants (excluding soft-deleted),
+        loading roles, permissions, and schools.
+        """
+        clean_id = identifier.strip().lower()
+        stmt = select(User).where(
+            or_(func.lower(User.email) == clean_id, func.lower(User.login_id) == clean_id),
+            User.deleted_at.is_(None)
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_by_email_platform(self, email: str) -> Optional[User]:
         """
         Retrieves a single user by email globally without tenant restriction, loading permissions.
         """
         stmt = select(User).where(
-            User.email == email,
+            User.email.ilike(email.strip()),
             User.deleted_at.is_(None)
         ).options(
             selectinload(User.roles).selectinload(Role.permissions),

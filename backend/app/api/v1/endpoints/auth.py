@@ -2,7 +2,7 @@ import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Request, Header, Query, status, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
-from app.api.dependencies.common import get_tenant_id
+from app.api.dependencies.common import get_tenant_id, get_optional_tenant_id
 from app.api.dependencies.auth import get_auth_service, get_current_user, require_permission
 from app.services.auth import AuthService
 from app.models.user import User
@@ -33,7 +33,7 @@ class RefreshRequest(BaseModel):
 async def login(
     request: Request,
     login_in: LoginRequest,
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    tenant_id: Optional[uuid.UUID] = Depends(get_optional_tenant_id),
     service: AuthService = Depends(get_auth_service)
 ) -> APIResponse[TokenResponse]:
     client_ip = request.client.host if request.client else None
@@ -353,7 +353,7 @@ async def bootstrap(
 async def swagger_login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    tenant_id: Optional[uuid.UUID] = Depends(get_optional_tenant_id),
     service: AuthService = Depends(get_auth_service),
 ):
     login_data = LoginRequest(

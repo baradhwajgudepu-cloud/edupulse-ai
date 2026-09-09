@@ -310,9 +310,11 @@ async def test_audit_trail_history(client: AsyncClient, setup_marks_test_data) -
     
     # Audit history check
     audit = mark_record["audit_history"]
-    assert len(audit) == 1
-    assert audit[0]["old_marks"] == 45.0
-    assert audit[0]["new_marks"] == 48.0
+    assert len(audit) == 2
+    assert audit[0]["action"] == "MARK_CREATED"
+    assert audit[1]["action"] == "MARK_UPDATED"
+    assert audit[1]["old_marks"] == 45.0
+    assert audit[1]["new_marks"] == 48.0
 
 @pytest.mark.anyio
 async def test_rollback_on_failure(client: AsyncClient, setup_marks_test_data, db_session: AsyncSession) -> None:
@@ -375,7 +377,8 @@ async def test_visibility_restrictions(client: AsyncClient, setup_marks_test_dat
         "exam_schedule_id": str(data["sched"].id),
         "teacher_subject_assignment_id": str(data["tsa_a"].id),
         "marks": [
-            {"student_id": str(data["stud1"].id), "marks_obtained": 75.0, "result_status": "PRESENT"}
+            {"student_id": str(data["stud1"].id), "marks_obtained": 75.0, "result_status": "PRESENT"},
+            {"student_id": str(data["stud2"].id), "marks_obtained": 80.0, "result_status": "PRESENT"}
         ]
     }
     await client.post(f"/api/v1/marks/bulk?school_id={school_id}", json=payload, headers=headers)
@@ -392,7 +395,21 @@ async def test_visibility_restrictions(client: AsyncClient, setup_marks_test_dat
     finally:
         del app.dependency_overrides[get_current_user]
 
-    # 3. Publish the marks
+    # 3. Transition marks: DRAFT -> SUBMITTED -> APPROVED -> PUBLISHED
+    res_sub = await client.post(
+        f"/api/v1/marks/submit-for-review?school_id={school_id}",
+        json={"exam_schedule_id": str(data["sched"].id), "notes": "Submitting for review"},
+        headers=headers
+    )
+    assert res_sub.status_code == 200
+
+    res_app = await client.post(
+        f"/api/v1/marks/approve?school_id={school_id}",
+        json={"exam_schedule_id": str(data["sched"].id), "remarks": "Approved by admin"},
+        headers=headers
+    )
+    assert res_app.status_code == 200
+
     async def mock_admin():
         return data["user_admin"]
 
@@ -401,7 +418,7 @@ async def test_visibility_restrictions(client: AsyncClient, setup_marks_test_dat
         # Check summary first
         resp_sum = await client.get(f"/api/v1/marks/publish/summary?school_id={school_id}&exam_schedule_id={data['sched'].id}", headers=headers)
         assert resp_sum.status_code == 200
-        assert resp_sum.json()["data"]["entered_count"] == 1
+        assert resp_sum.json()["data"]["entered_count"] == 2
         
         # Do publish
         resp_pub = await client.post(f"/api/v1/marks/publish?school_id={school_id}&exam_schedule_id={data['sched'].id}", headers=headers)
@@ -418,3 +435,104 @@ async def test_visibility_restrictions(client: AsyncClient, setup_marks_test_dat
         assert resp_p_filled.json()["data"][0]["marks_obtained"] == 75.0
     finally:
         del app.dependency_overrides[get_current_user]
+
+@pytest.mark.anyio
+async def test_marks_publishing_and_lock_unlock_workflow(client: AsyncClient, setup_marks_test_data, db_session: AsyncSession) -> None:
+    from app.main import app
+    from app.api.dependencies.auth import get_current_user
+
+    data = setup_marks_test_data
+    headers = data["auth_headers"]
+    school_id = data["school_a"].id
+    sched_id = str(data["sched"].id)
+    tsa_id = str(data["tsa_a"].id)
+
+    # 1. Enter marks for students in the class
+    payload = {
+        "exam_schedule_id": sched_id,
+        "teacher_subject_assignment_id": tsa_id,
+        "marks": [
+            {"student_id": str(data["stud1"].id), "marks_obtained": 85.0, "result_status": "PRESENT"},
+            {"student_id": str(data["stud2"].id), "marks_obtained": 90.0, "result_status": "PRESENT"}
+        ]
+    }
+    res_bulk = await client.post(f"/api/v1/marks/bulk?school_id={school_id}", json=payload, headers=headers)
+    assert res_bulk.status_code == 201
+
+    # 2. Submit marks for review (DRAFT -> SUBMITTED)
+    res_sub = await client.post(
+        f"/api/v1/marks/submit-for-review?school_id={school_id}",
+        json={"exam_schedule_id": sched_id, "notes": "Marks submission for publishing"},
+        headers=headers
+    )
+    assert res_sub.status_code == 200
+    sub_data = res_sub.json()["data"]
+    assert len(sub_data) == 2
+    assert all(m["status"] == "SUBMITTED" for m in sub_data)
+
+    # 3. Canonical flow: Approve marks before publishing (SUBMITTED -> APPROVED)
+    res_app = await client.post(
+        f"/api/v1/marks/approve?school_id={school_id}",
+        json={"exam_schedule_id": sched_id, "remarks": "Approved for publishing"},
+        headers=headers
+    )
+    assert res_app.status_code == 200
+    app_data = res_app.json()["data"]
+    assert len(app_data) == 2
+    assert all(m["status"] == "APPROVED" for m in app_data)
+
+    # 4. Publish marks (APPROVED -> PUBLISHED)
+    res_pub = await client.post(
+        f"/api/v1/marks/publish?school_id={school_id}&exam_schedule_id={sched_id}",
+        headers=headers
+    )
+    assert res_pub.status_code == 200
+    pub_data = res_pub.json()["data"]
+    assert len(pub_data) == 2
+    assert all(m["status"] == "PUBLISHED" for m in pub_data)
+
+    # 4. Idempotent publish (PUBLISHED -> PUBLISHED)
+    res_pub_again = await client.post(
+        f"/api/v1/marks/publish?school_id={school_id}&exam_schedule_id={sched_id}",
+        headers=headers
+    )
+    assert res_pub_again.status_code == 200
+    assert all(m["status"] == "PUBLISHED" for m in res_pub_again.json()["data"])
+
+    # 5. Lock marks (PUBLISHED -> LOCKED)
+    res_lock = await client.post(
+        f"/api/v1/marks/lock?school_id={school_id}",
+        json={"exam_schedule_id": sched_id},
+        headers=headers
+    )
+    assert res_lock.status_code == 200
+    lock_data = res_lock.json()["data"]
+    assert all(m["status"] == "LOCKED" for m in lock_data)
+
+    # 6. Rejection of illegal transition (LOCKED -> PUBLISHED should return 422)
+    res_illegal = await client.post(
+        f"/api/v1/marks/publish?school_id={school_id}&exam_schedule_id={sched_id}",
+        headers=headers
+    )
+    assert res_illegal.status_code == 422
+    assert "Illegal workflow transition from LOCKED to PUBLISHED" in str(res_illegal.json())
+
+    # 7. Mandatory unlock reason validation (empty reason should return 422)
+    res_bad_unlock = await client.post(
+        f"/api/v1/marks/unlock?school_id={school_id}",
+        json={"exam_schedule_id": sched_id, "reason": "   "},
+        headers=headers
+    )
+    assert res_bad_unlock.status_code == 422
+
+    # 8. Unlock marks with valid reason (LOCKED -> DRAFT)
+    res_good_unlock = await client.post(
+        f"/api/v1/marks/unlock?school_id={school_id}",
+        json={"exam_schedule_id": sched_id, "reason": "Principal requested re-evaluation"},
+        headers=headers
+    )
+    assert res_good_unlock.status_code == 200
+    unlock_data = res_good_unlock.json()["data"]
+    assert all(m["status"] == "DRAFT" for m in unlock_data)
+
+

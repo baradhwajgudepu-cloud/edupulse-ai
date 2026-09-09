@@ -247,6 +247,17 @@ class MarksExcelUploadSummary(BaseModel):
     errors: List[str] = Field(default_factory=list)
     marks: List[MarksResponse] = Field(default_factory=list)
 
+class ClassAllSubjectsUploadSummary(BaseModel):
+    total_students_processed: int
+    total_subjects_detected: int
+    total_marks_created: int
+    total_marks_updated: int
+    failed_rows: int
+    validation_errors: List[str] = Field(default_factory=list)
+    examination_name: str
+    class_name: str
+    section_name: str
+
 # ==================================================
 # Exam-Wide Bulk Upload Schemas
 # ==================================================

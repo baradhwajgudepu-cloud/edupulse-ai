@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.constants import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 from app.db.session import get_db
-from app.api.dependencies.auth import get_current_user
+from app.api.dependencies.auth import get_current_user, LEGACY_PLAY_STORE_TENANT_ID
 from app.models.user import User
 from app.models.school import School
 
@@ -29,24 +29,37 @@ async def get_tenant_id(
     Shared dependency to extract and validate the active Tenant UUID from request headers
     or from verified JWT token claims.
     """
+    parsed_header_tenant: Optional[uuid.UUID] = None
     if x_tenant_id and x_tenant_id.strip() and x_tenant_id != "None":
         try:
-            return uuid.UUID(x_tenant_id.strip())
+            parsed_header_tenant = uuid.UUID(x_tenant_id.strip())
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid X-Tenant-ID header format. Must be a valid UUID."
             )
 
+    token_tenant: Optional[uuid.UUID] = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
         try:
             payload = decode_access_token(token)
             t_id = payload.get("tenant_id")
             if t_id and t_id != "None":
-                return uuid.UUID(t_id)
+                token_tenant = uuid.UUID(t_id)
         except Exception:
             pass
+
+    # Legacy Play Store compatibility bridge:
+    # If legacy Play Store header is sent with an authenticated token, ignore legacy header and use JWT tenant_id
+    if parsed_header_tenant == LEGACY_PLAY_STORE_TENANT_ID and token_tenant:
+        return token_tenant
+
+    if parsed_header_tenant:
+        return parsed_header_tenant
+
+    if token_tenant:
+        return token_tenant
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

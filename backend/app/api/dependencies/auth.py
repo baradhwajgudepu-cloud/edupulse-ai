@@ -50,6 +50,10 @@ async def get_auth_service(
 
 # --- AUTHENTICATION DEPENDENCY ---
 
+LEGACY_PLAY_STORE_TENANT_ID = uuid.UUID(
+    "09f2d4e7-2877-4e42-9e95-e97d52775687"
+)
+
 from fastapi import Header
 
 async def get_optional_tenant_id_wrapper(
@@ -93,53 +97,44 @@ async def get_current_user(
             detail="Malformed authentication token claims."
         )
 
-    # Distinguish platform session from tenant-scoped session
-    is_platform = (tenant_id_str is None or tenant_id_str == "None")
+    # Load user globally first to check platform roles and permissions
+    user = await user_repo.get_by_id_platform(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or has been deleted."
+        )
 
-    if is_platform:
-        # Platform administration session
-        user = await user_repo.get_by_id_platform(user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or has been deleted."
-            )
-            
-        # Verify user has platform admin role (SUPER_ADMIN or is_superuser)
-        is_platform_admin = user.is_superuser or any(role.code == "SUPER_ADMIN" for role in user.roles)
-        if not is_platform_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. Insufficient platform permissions."
-            )
-        
-        # Attach platform flag (does not persist in db)
+    # Distinguish platform super administrators (who have global / cross-tenant switching authority)
+    is_platform_admin = user.is_superuser or any(
+        role.code in ("SUPER_ADMIN", "SYSTEM_ADMIN") for role in user.roles
+    )
+
+    if is_platform_admin:
+        # Platform administration session allows dynamic tenant switching via X-Tenant-ID header
         user.is_platform_session = True
     else:
-        # Tenant-scoped session
-        try:
-            token_tenant_id = uuid.UUID(tenant_id_str)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Malformed authentication token claims."
-            )
+        # Tenant-scoped session (e.g. Principal, Teacher, Student)
+        # Enforce strict boundary check between JWT token claims and requested X-Tenant-ID
+        if tenant_id_str is not None and tenant_id_str != "None":
+            try:
+                token_tenant_id = uuid.UUID(tenant_id_str)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Malformed authentication token claims."
+                )
 
-        if not x_tenant_id:
-            # Fallback to the verified JWT tenant_id context
-            x_tenant_id = token_tenant_id
-        elif token_tenant_id != x_tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token tenant claims mismatch requested boundary."
-            )
-
-        user = await user_repo.get_by_id(user_id, token_tenant_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or has been deleted."
-            )
+            if not x_tenant_id or x_tenant_id == LEGACY_PLAY_STORE_TENANT_ID:
+                # Rule 1 & 3: If X-Tenant-ID is absent or contains the legacy Play Store ID,
+                # use the authenticated JWT tenant claim as the authoritative boundary.
+                x_tenant_id = token_tenant_id
+            elif token_tenant_id != x_tenant_id:
+                # Rule 4: If X-Tenant-ID is any other value and differs from JWT tenant_id, reject.
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token tenant claims mismatch requested boundary."
+                )
 
     if user.status != UserStatus.ACTIVE:
         raise HTTPException(
@@ -197,3 +192,12 @@ class require_permission:
                 detail="Access denied. Mismatched or insufficient system permissions."
             )
         return current_user
+
+
+def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.is_superuser or any(r.code in ("SUPER_ADMIN", "SYSTEM_ADMIN") for r in current_user.roles):
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied. Super administrator privileges required."
+    )

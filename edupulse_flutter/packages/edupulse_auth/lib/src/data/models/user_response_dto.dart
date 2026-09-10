@@ -1,6 +1,7 @@
 class UserResponseDto {
   final String id;
   final String email;
+  final String? loginId;
   final String firstName;
   final String lastName;
   final String? tenantId;
@@ -15,6 +16,7 @@ class UserResponseDto {
   const UserResponseDto({
     required this.id,
     required this.email,
+    this.loginId,
     required this.firstName,
     required this.lastName,
     required this.tenantId,
@@ -31,6 +33,7 @@ class UserResponseDto {
     return UserResponseDto(
       id: (json['id'] ?? '').toString(),
       email: (json['email'] ?? '').toString(),
+      loginId: json['login_id']?.toString() ?? json['loginId']?.toString(),
       firstName: (json['first_name'] ?? json['firstName'] ?? '').toString(),
       lastName: (json['last_name'] ?? json['lastName'] ?? '').toString(),
       tenantId: json['tenant_id']?.toString() ?? json['tenantId']?.toString(),
@@ -48,6 +51,7 @@ class UserResponseDto {
     return {
       'id': id,
       'email': email,
+      'login_id': loginId,
       'first_name': firstName,
       'last_name': lastName,
       'tenant_id': tenantId,

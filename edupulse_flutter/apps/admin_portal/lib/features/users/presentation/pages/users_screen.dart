@@ -50,6 +50,14 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     });
   }
 
+  void _onSearchSubmitted(String val) {
+    _debounceTimer?.cancel();
+    setState(() {
+      _searchQuery = val;
+    });
+    ref.read(usersListProvider.notifier).search(val);
+  }
+
   void _clearFilters() {
     _debounceTimer?.cancel();
     setState(() {
@@ -265,6 +273,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                                   : null,
                             ),
                             onChanged: _onSearchChanged,
+                            onSubmitted: _onSearchSubmitted,
                           ),
                           const SizedBox(height: 8),
                           Align(
@@ -304,6 +313,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                                         : null,
                                   ),
                                   onChanged: _onSearchChanged,
+                                  onSubmitted: _onSearchSubmitted,
                                 ),
                               ),
                               const SizedBox(width: 16),

@@ -367,7 +367,7 @@ class MockAttendanceApiClient extends BaseApiClient {
       }));
     }
 
-    if (path.contains('/attendance/imports') || path.contains('/attendances/imports')) {
+    if (path.contains('/attendance/imports') || path.contains('/attendances/imports') || path.contains('/import-jobs')) {
       return ApiResult.success(mapper({
         'data': [
           {

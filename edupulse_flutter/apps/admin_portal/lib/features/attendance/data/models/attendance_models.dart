@@ -528,18 +528,24 @@ class AttendanceImportJobDto {
   });
 
   factory AttendanceImportJobDto.fromJson(Map<String, dynamic> json) {
+    String? dateRange;
+    if (json['job_metadata'] is Map) {
+      dateRange = (json['job_metadata'] as Map)['date_range']?.toString();
+    }
+    dateRange ??= json['date_range'] as String?;
+
     return AttendanceImportJobDto(
       id: json['id'] as String,
       tenantId: json['tenant_id'] as String,
       schoolId: json['school_id'] as String,
-      filename: json['filename'] as String? ?? 'attendance_upload.csv',
+      filename: json['source_filename'] as String? ?? json['filename'] as String? ?? 'attendance_upload.csv',
       status: json['status'] as String? ?? 'COMPLETED',
       totalRows: json['total_rows'] as int? ?? 0,
       successfulRows: json['successful_rows'] as int? ?? 0,
       failedRows: json['failed_rows'] as int? ?? 0,
       skippedRows: json['skipped_rows'] as int? ?? 0,
-      dateRange: json['date_range'] as String?,
-      uploadedBy: json['uploaded_by'] as String?,
+      dateRange: dateRange,
+      uploadedBy: json['uploaded_by'] as String? ?? json['created_by'] as String?,
       uploadedByName: json['uploaded_by_name'] as String?,
       uploadedByRole: json['uploaded_by_role'] as String?,
       createdAt: json['created_at'] as String? ?? '',

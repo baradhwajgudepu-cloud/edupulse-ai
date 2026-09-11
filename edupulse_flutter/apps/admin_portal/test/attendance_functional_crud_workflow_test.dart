@@ -12,6 +12,7 @@ class MockFunctionalApiClient extends BaseApiClient {
   List<Map<String, dynamic>> sessionLogs = [];
   List<Map<String, dynamic>> auditLogs = [];
   bool failNextSubmit = false;
+  bool failAuditWith404 = false;
 
   @override
   Future<ApiResult<T>> get<T>(
@@ -127,6 +128,13 @@ class MockFunctionalApiClient extends BaseApiClient {
 
     // 8. Audit logs
     if (path.contains('/attendances/audit-logs') || path.contains('/attendance/audit-logs')) {
+      if (failAuditWith404) {
+        return ApiResult.failure(const ApiFailure(
+          message: 'Not Found',
+          statusCode: 404,
+          type: ApiFailureType.unknown,
+        ));
+      }
       return ApiResult.success(mapper({
         'data': auditLogs,
         'meta': {'total': auditLogs.length}
@@ -569,6 +577,21 @@ void main() {
       expect(dashState.isLoading, isFalse);
       expect(dashState.error, isNull);
       expect(dashState.stats, isNotNull);
+    });
+
+    test('14. AUDIT TRAIL 404 TRUTHFULNESS: gracefully reports unsupported version without fabricating records', () async {
+      mockApi.auditLogs = [];
+      mockApi.failAuditWith404 = true;
+
+      final auditNotifier = container.read(attendanceAuditLogsProvider.notifier);
+      await auditNotifier.fetchAuditLogs();
+      final auditState = container.read(attendanceAuditLogsProvider);
+
+      expect(auditState.isLoading, isFalse);
+      expect(auditState.isUnsupportedVersion, isTrue);
+      expect(auditState.unsupportedMessage, contains('Detailed audit history is not available in this production API version'));
+      expect(auditState.logs, isEmpty);
+      expect(auditState.error, isNull);
     });
   });
 }

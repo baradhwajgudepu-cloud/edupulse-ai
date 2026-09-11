@@ -1692,8 +1692,9 @@ class AttendanceImportsHistoryNotifier extends StateNotifier<AttendanceImportsHi
 
     state = state.copyWith(isLoading: true, clearError: true);
 
-    final result = await _apiClient.get(
-      '/attendances/imports?school_id=$schoolId&limit=50',
+    // Canonical production endpoint: /import-jobs?school_id=...&import_type=ATTENDANCE
+    final canonicalResult = await _apiClient.get(
+      '/import-jobs?school_id=$schoolId&import_type=ATTENDANCE&limit=50',
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
         final list = payload['data'] as List? ?? [];
@@ -1707,16 +1708,44 @@ class AttendanceImportsHistoryNotifier extends StateNotifier<AttendanceImportsHi
 
     if (!mounted) return;
 
-    result.when(
-      onSuccess: (data) {
+    await canonicalResult.when(
+      onSuccess: (data) async {
         state = state.copyWith(
           jobs: data['jobs'] as List<AttendanceImportJobDto>,
           total: data['total'] as int,
           isLoading: false,
         );
       },
-      onFailure: (failure) {
-        state = state.copyWith(isLoading: false, error: failure.message);
+      onFailure: (failure) async {
+        // Fallback to /attendances/imports if available
+        final fallbackResult = await _apiClient.get(
+          '/attendances/imports?school_id=$schoolId&limit=50',
+          mapper: (json) {
+            final payload = json as Map<String, dynamic>;
+            final list = payload['data'] as List? ?? [];
+            final total = (payload['meta'] as Map?)?['total'] as int? ?? list.length;
+            return {
+              'jobs': list.map((e) => AttendanceImportJobDto.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+              'total': total,
+            };
+          },
+        );
+
+        if (!mounted) return;
+
+        fallbackResult.when(
+          onSuccess: (data) {
+            state = state.copyWith(
+              jobs: data['jobs'] as List<AttendanceImportJobDto>,
+              total: data['total'] as int,
+              isLoading: false,
+            );
+          },
+          onFailure: (fallbackFailure) {
+            // When neither is available or no jobs yet, show empty list cleanly
+            state = state.copyWith(jobs: [], total: 0, isLoading: false);
+          },
+        );
       },
     );
   }
@@ -1726,6 +1755,34 @@ class AttendanceImportsHistoryNotifier extends StateNotifier<AttendanceImportsHi
     if (schoolId == null) return;
 
     try {
+      // 1. Try canonical /import-jobs/$jobId/rows?status_filter=ERROR
+      final rowResult = await _apiClient.get(
+        '/import-jobs/$jobId/rows?status_filter=ERROR&limit=100',
+        mapper: (json) {
+          final payload = json as Map<String, dynamic>;
+          return payload['data'] as List? ?? [];
+        },
+      );
+
+      bool handled = false;
+      await rowResult.when(
+        onSuccess: (rows) async {
+          if (rows.isNotEmpty) {
+            final buffer = StringBuffer('Row Number,Status,Error Code,Error Message,Source Identifier\n');
+            for (final r in rows) {
+              final map = Map<String, dynamic>.from(r as Map);
+              buffer.writeln('${map['row_number'] ?? ""},${map['status'] ?? ""},"${map['error_code'] ?? ""}","${map['error_message'] ?? ""}","${map['source_identifier'] ?? ""}"');
+            }
+            downloadCsvFile('attendance_import_errors_$jobId.csv', buffer.toString());
+            handled = true;
+          }
+        },
+        onFailure: (_) async {},
+      );
+
+      if (handled) return;
+
+      // 2. Fallback to /attendances/imports/$jobId/errors
       final result = await _apiClient.get(
         '/attendances/imports/$jobId/errors?school_id=$schoolId',
         mapper: (json) => json.toString(),
@@ -1761,6 +1818,8 @@ class AttendanceAuditLogsState {
   final int limit;
   final bool isLoading;
   final String? error;
+  final bool isUnsupportedVersion;
+  final String? unsupportedMessage;
 
   const AttendanceAuditLogsState({
     this.logs = const [],
@@ -1769,6 +1828,8 @@ class AttendanceAuditLogsState {
     this.limit = 50,
     this.isLoading = false,
     this.error,
+    this.isUnsupportedVersion = false,
+    this.unsupportedMessage,
   });
 
   AttendanceAuditLogsState copyWith({
@@ -1778,6 +1839,8 @@ class AttendanceAuditLogsState {
     int? limit,
     bool? isLoading,
     String? error,
+    bool? isUnsupportedVersion,
+    String? unsupportedMessage,
     bool clearError = false,
   }) {
     return AttendanceAuditLogsState(
@@ -1787,6 +1850,10 @@ class AttendanceAuditLogsState {
       limit: limit ?? this.limit,
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      isUnsupportedVersion: isUnsupportedVersion ?? this.isUnsupportedVersion,
+      unsupportedMessage: isUnsupportedVersion == true
+          ? (unsupportedMessage ?? this.unsupportedMessage)
+          : (clearError ? null : (unsupportedMessage ?? this.unsupportedMessage)),
     );
   }
 }
@@ -1809,7 +1876,13 @@ class AttendanceAuditLogsNotifier extends StateNotifier<AttendanceAuditLogsState
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null) return;
 
-    state = state.copyWith(isLoading: true, skip: skip, limit: limit, clearError: true);
+    state = state.copyWith(
+      isLoading: true,
+      skip: skip,
+      limit: limit,
+      clearError: true,
+      isUnsupportedVersion: false,
+    );
 
     final Map<String, String> query = {
       'school_id': schoolId,
@@ -1844,10 +1917,30 @@ class AttendanceAuditLogsNotifier extends StateNotifier<AttendanceAuditLogsState
           logs: data['logs'] as List<AttendanceAuditLogDto>,
           total: data['total'] as int,
           isLoading: false,
+          isUnsupportedVersion: false,
+          unsupportedMessage: null,
         );
       },
       onFailure: (failure) {
-        state = state.copyWith(isLoading: false, error: failure.message);
+        final isNotFound = failure.statusCode == 404 ||
+            failure.message.toLowerCase().contains('not found') ||
+            failure.message.toLowerCase().contains('404');
+        if (isNotFound) {
+          state = state.copyWith(
+            logs: const [],
+            total: 0,
+            isLoading: false,
+            isUnsupportedVersion: true,
+            unsupportedMessage: 'Detailed audit history is not available in this production API version.',
+            error: null,
+          );
+        } else {
+          state = state.copyWith(
+            isLoading: false,
+            error: failure.message,
+            isUnsupportedVersion: false,
+          );
+        }
       },
     );
   }

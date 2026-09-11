@@ -175,6 +175,49 @@ class _AttendanceAuditTrailViewState extends ConsumerState<AttendanceAuditTrailV
           ),
           const SizedBox(height: 16),
 
+          // Informative banner when detailed audit trail is not active in production version
+          if (auditState.isUnsupportedVersion) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF2D2415) : const Color(0xFFFFFBEB),
+                border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, color: Color(0xFFD97706), size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          auditState.unsupportedMessage ?? 'Detailed audit history is not available in this production API version.',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: isDark ? const Color(0xFFFDE68A) : const Color(0xFF92400E),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Granular status transition deltas and actor mutation logs require backend audit-log service activation. Attendance records can be verified in the Attendance Register tab.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? const Color(0xFFD6D3D1) : const Color(0xFF78716C),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // Error banner
           if (auditState.error != null) ...[
             Container(
@@ -234,6 +277,28 @@ class _AttendanceAuditTrailViewState extends ConsumerState<AttendanceAuditTrailV
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 40),
                     child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (auditState.isUnsupportedVersion)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+                    child: Center(
+                      child: Column(
+                        children: [
+                          Icon(Icons.history_toggle_off, size: 48, color: isDark ? Colors.grey[600] : Colors.grey[400]),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Detailed Audit Trail Not Active',
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Detailed audit history is not available in this production API version.\nStudent attendance records can be verified in the Attendance Register.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
                   )
                 else if (auditState.logs.isEmpty)
                   Padding(

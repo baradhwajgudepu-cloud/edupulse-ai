@@ -15,6 +15,7 @@ class MockFunctionalApiClient extends BaseApiClient {
   bool failAuditWith404 = false;
   bool failSchoolSetup = false;
   final List<String> requestedGetPaths = [];
+  final List<String> requestedPostPaths = [];
   bool failSessionsWith404 = false;
 
   @override
@@ -268,6 +269,24 @@ class MockFunctionalApiClient extends BaseApiClient {
       }));
     }
 
+    // 12. Timetables lookup for session initiation
+    if (path.contains('/timetables')) {
+      return ApiResult.success(mapper({
+        'data': [
+          {
+            'id': 'tt_functional_1',
+            'school_id': 'school_1',
+            'academic_year_id': 'ay_1',
+            'class_id': 'class_1',
+            'section_id': 'sec_1',
+            'day_of_week': 'MONDAY',
+            'period_number': 1,
+            'is_active': true,
+          }
+        ]
+      }));
+    }
+
     return ApiResult.success(mapper({'data': []}));
   }
 
@@ -280,22 +299,68 @@ class MockFunctionalApiClient extends BaseApiClient {
     CancelToken? cancelToken,
     required T Function(dynamic json) mapper,
   }) async {
+    requestedPostPaths.add(path);
+
     if (failNextSubmit) {
       return ApiResult.failure(const ApiFailure(message: 'Simulated network submission failure', type: ApiFailureType.unknown, statusCode: 500));
     }
 
-    // Daily mark submission
+    // Obsolete daily mark endpoint returns 404 (matches production)
     if (path.contains('/attendances/daily/mark') || path.contains('/attendance/daily/mark')) {
+      return ApiResult.failure(const ApiFailure(
+        message: 'Not Found',
+        statusCode: 404,
+        type: ApiFailureType.unknown,
+      ));
+    }
+
+    // Canonical session creation: POST /attendances/session
+    if (path == '/attendances/session' || path.startsWith('/attendances/session?')) {
       final payload = data as Map<String, dynamic>;
-      final records = payload['records'] as List<dynamic>;
+      final sessionId = activeSession?['id'] ?? 'sess_functional_test_1';
+      activeSession = {
+        'id': sessionId,
+        'tenant_id': 'tenant_1',
+        'school_id': payload['school_id'] ?? 'school_1',
+        'class_id': 'class_1',
+        'section_id': 'sec_1',
+        'academic_year_id': payload['academic_year_id'] ?? 'ay_1',
+        'timetable_id': payload['timetable_id'],
+        'attendance_date': payload['attendance_date'] ?? '2026-09-11',
+        'session_type': 'FULL_DAY',
+        'status': 'DRAFT',
+        'total_students': 3,
+        'present_count': 0,
+        'absent_count': 0,
+        'late_count': 0,
+        'excused_count': 0,
+        'is_locked': false,
+        'attendances': [],
+      };
+      return ApiResult.success(mapper({'success': true, 'data': activeSession}));
+    }
+
+    // Canonical session marking: POST /attendances/session/{sessionId}/mark
+    if (path.contains('/attendances/session/') && path.contains('/mark')) {
+      final payload = data as Map<String, dynamic>;
+      final records = (payload['records'] as List<dynamic>?) ?? [];
 
       final isLocked = activeSession != null && activeSession!['status'] == 'LOCKED';
       if (isLocked) {
-        return ApiResult.failure(const ApiFailure(message: 'This attendance session is locked and cannot be edited.', type: ApiFailureType.unknown, statusCode: 422));
+        return ApiResult.failure(const ApiFailure(
+          message: 'This attendance session is locked and cannot be edited.',
+          type: ApiFailureType.unknown,
+          statusCode: 422,
+        ));
       }
 
-      final sessionId = activeSession?['id'] ?? 'sess_functional_test_1';
-      final todayStr = payload['attendance_date'] as String;
+      final parts = path.split('/');
+      final sessIdx = parts.indexOf('session');
+      final sessionId = (sessIdx != -1 && sessIdx + 1 < parts.length)
+          ? parts[sessIdx + 1].split('?').first
+          : (activeSession?['id'] ?? 'sess_functional_test_1');
+
+      final todayStr = activeSession?['attendance_date'] ?? '2026-09-11';
 
       final updatedLogs = <Map<String, dynamic>>[];
       for (final rec in records) {
@@ -304,15 +369,15 @@ class MockFunctionalApiClient extends BaseApiClient {
           'id': 'log_${r['student_id']}',
           'tenant_id': 'tenant_1',
           'school_id': 'school_1',
-          'academic_year_id': payload['academic_year_id'],
+          'academic_year_id': activeSession?['academic_year_id'] ?? 'ay_1',
           'attendance_session_id': sessionId,
           'student_id': r['student_id'],
-          'class_id': payload['class_id'],
-          'section_id': payload['section_id'],
+          'class_id': activeSession?['class_id'] ?? 'class_1',
+          'section_id': activeSession?['section_id'] ?? 'sec_1',
           'attendance_date': todayStr,
-          'session_type': payload['session_type'],
+          'session_type': activeSession?['session_type'] ?? 'FULL_DAY',
           'attendance_status': r['attendance_status'],
-          'attendance_source': 'MANUAL',
+          'attendance_source': r['attendance_source'] ?? 'MANUAL',
           'attendance_reason': r['attendance_reason'] ?? 'UNKNOWN',
           'remarks': r['remarks'] ?? '',
           'is_active': true,
@@ -327,12 +392,12 @@ class MockFunctionalApiClient extends BaseApiClient {
         'id': sessionId,
         'tenant_id': 'tenant_1',
         'school_id': 'school_1',
-        'class_id': payload['class_id'],
-        'section_id': payload['section_id'],
-        'academic_year_id': payload['academic_year_id'],
+        'class_id': activeSession?['class_id'] ?? 'class_1',
+        'section_id': activeSession?['section_id'] ?? 'sec_1',
+        'academic_year_id': activeSession?['academic_year_id'] ?? 'ay_1',
         'attendance_date': todayStr,
-        'session_type': payload['session_type'],
-        'status': 'SUBMITTED',
+        'session_type': activeSession?['session_type'] ?? 'FULL_DAY',
+        'status': payload['attendance_session_status'] ?? 'SUBMITTED',
         'total_students': records.length,
         'present_count': records.where((r) => r['attendance_status'] == 'PRESENT').length,
         'absent_count': records.where((r) => r['attendance_status'] == 'ABSENT').length,
@@ -1041,6 +1106,171 @@ void main() {
         expect(state.sessionId, isNull);
 
         mockApi.failSessionsWith404 = false;
+      });
+
+      test('TEST 16: submitAttendance creates session via /attendances/session and marks via canonical /attendances/session/{session_id}/mark, never calling obsolete /attendances/daily/mark', () async {
+        mockApi.requestedPostPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        final submitSuccess = await markNotifier.submitAttendance();
+        expect(submitSuccess, isTrue);
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.errorMessage, isNull);
+        expect(state.successMessage, contains('Attendance marked successfully'));
+        expect(state.sessionId, isNotNull);
+
+        // Verify obsolete endpoint is NEVER requested
+        expect(
+          mockApi.requestedPostPaths.any((p) => p.contains('/attendances/daily/mark') || p.contains('/attendance/daily/mark')),
+          isFalse,
+          reason: 'Must NOT call obsolete /attendances/daily/mark endpoint',
+        );
+
+        // Verify canonical session creation was requested
+        expect(
+          mockApi.requestedPostPaths.any((p) => p == '/attendances/session' || p.startsWith('/attendances/session?')),
+          isTrue,
+          reason: 'Must call /attendances/session when session does not exist yet',
+        );
+
+        // Verify canonical session marking endpoint was requested
+        expect(
+          mockApi.requestedPostPaths.any((p) => p.contains('/attendances/session/') && p.contains('/mark')),
+          isTrue,
+          reason: 'Must call canonical /attendances/session/{id}/mark endpoint',
+        );
+      });
+
+      test('TEST 17: submitAttendance preserves all status variants (PRESENT, ABSENT, LATE, HALF_DAY, EXCUSED) and reasons/remarks', () async {
+        mockApi.requestedPostPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        markNotifier.updateStudentStatus('stud_001', 'PRESENT');
+        markNotifier.updateStudentStatus('stud_002', 'ABSENT', reason: 'ILLNESS', remarks: 'Medical note');
+        markNotifier.updateStudentStatus('stud_003', 'EXCUSED', reason: 'FAMILY_EMERGENCY', remarks: 'Approved leave');
+
+        final submitSuccess = await markNotifier.submitAttendance();
+        expect(submitSuccess, isTrue);
+
+        expect(mockApi.activeSession!['present_count'], equals(1));
+        expect(mockApi.activeSession!['absent_count'], equals(1));
+        expect(mockApi.activeSession!['excused_count'], equals(1));
+
+        final stud2Log = mockApi.sessionLogs.firstWhere((l) => l['student_id'] == 'stud_002');
+        expect(stud2Log['attendance_status'], equals('ABSENT'));
+        expect(stud2Log['attendance_reason'], equals('SICK'));
+        expect(stud2Log['remarks'], equals('Medical note'));
+
+        final stud3Log = mockApi.sessionLogs.firstWhere((l) => l['student_id'] == 'stud_003');
+        expect(stud3Log['attendance_status'], equals('EXCUSED'));
+        expect(stud3Log['attendance_reason'], equals('PERSONAL'));
+        expect(stud3Log['remarks'], equals('Approved leave'));
+      });
+
+      test('TEST 18: submitAttendance bulk actions Mark Selected and Mark All Present work correctly end-to-end', () async {
+        mockApi.requestedPostPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        // 1. Mark All Present
+        markNotifier.markAllPresent();
+        final successAllPresent = await markNotifier.submitAttendance();
+        expect(successAllPresent, isTrue);
+        expect(mockApi.activeSession!['present_count'], equals(3));
+        expect(mockApi.activeSession!['absent_count'], equals(0));
+
+        // 2. Select first 2 and mark LATE
+        markNotifier.toggleSelectStudent('stud_001');
+        markNotifier.toggleSelectStudent('stud_002');
+        markNotifier.markSelectedStatus('LATE');
+
+        final successBulk = await markNotifier.submitAttendance();
+        expect(successBulk, isTrue);
+        expect(mockApi.activeSession!['late_count'], equals(2));
+        expect(mockApi.activeSession!['present_count'], equals(1));
+      });
+
+      test('TEST 19: submitAttendance failure handles gracefully without leaving stale success state', () async {
+        mockApi.requestedPostPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        mockApi.failNextSubmit = true;
+        final submitSuccess = await markNotifier.submitAttendance();
+        expect(submitSuccess, isFalse);
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.isSaving, isFalse);
+        expect(state.errorMessage, contains('Simulated network submission failure'));
+        expect(state.successMessage, isNull);
+
+        mockApi.failNextSubmit = false;
+      });
+
+      test('TEST 20: submitAttendance preserves success message while loadRoster refreshes roster and session state', () async {
+        mockApi.requestedPostPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+        markNotifier.markAllPresent();
+
+        final submitSuccess = await markNotifier.submitAttendance();
+        expect(submitSuccess, isTrue);
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        // Success banner is intact
+        expect(state.successMessage, contains('Attendance marked successfully for 3 students.'));
+        // Roster has updated marked values
+        expect(state.roster.every((s) => s.status == 'PRESENT'), isTrue);
+        // Session ID is preserved
+        expect(state.sessionId, isNotNull);
       });
     });
   });

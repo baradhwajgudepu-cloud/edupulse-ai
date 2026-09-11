@@ -997,6 +997,9 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
         : (sectionId ?? state.sectionId);
 
     final bool shouldClearRoster = nextClassId == null || nextSectionId == null;
+    final bool dateChanged = (attendanceDate != null && attendanceDate != state.attendanceDate);
+    final bool sessionTypeChanged = (sessionType != null && sessionType != state.sessionType);
+    final bool shouldClearSession = shouldClearRoster || dateChanged || sessionTypeChanged;
 
     state = state.copyWith(
       academicYearId: nextAyId,
@@ -1009,7 +1012,7 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
       clearClass: nextClassId == null,
       clearSection: nextSectionId == null,
       clearRoster: shouldClearRoster,
-      clearSession: shouldClearRoster,
+      clearSession: shouldClearSession,
       clearError: true,
       clearSuccess: true,
     );
@@ -1023,11 +1026,15 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
     state = DailyAttendanceMarkState();
   }
 
-  Future<void> loadRoster() async {
+  Future<void> loadRoster({bool preserveSuccess = false}) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null || state.classId == null || state.sectionId == null) return;
 
-    state = state.copyWith(isLoading: true, clearError: true, clearSuccess: true);
+    state = state.copyWith(
+      isLoading: true,
+      clearError: true,
+      clearSuccess: !preserveSuccess,
+    );
 
     try {
       // 1. Fetch Students via chunked pagination loop (safe limit <= 50)
@@ -1083,16 +1090,22 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
       // 2. Check if existing session via canonical /attendances/sessions endpoint
       AttendanceSessionDto? existingSession;
       final sessionRes = await _apiClient.get(
-        '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=1',
+        '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=10',
         mapper: (json) {
           if (json is! Map) return null;
           final dynamic rawData = json['data'];
           if (rawData == null || rawData is! List || rawData.isEmpty) {
             return null;
           }
-          final first = rawData.first;
-          if (first is! Map) return null;
-          return AttendanceSessionDto.fromJson(Map<String, dynamic>.from(first));
+          final sessions = rawData
+              .whereType<Map>()
+              .map((m) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(m)))
+              .toList();
+          if (sessions.isEmpty) return null;
+          return sessions.firstWhere(
+            (s) => s.sessionType.toUpperCase() == state.sessionType.toUpperCase(),
+            orElse: () => sessions.first,
+          );
         },
       );
 
@@ -1220,28 +1233,152 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
       state = state.copyWith(errorMessage: 'Student roster is empty.');
       return false;
     }
+    if (state.isLocked) {
+      state = state.copyWith(errorMessage: 'This attendance session is locked and cannot be edited.');
+      return false;
+    }
 
     state = state.copyWith(isSaving: true, clearError: true, clearSuccess: true);
 
-    final payload = {
-      'school_id': schoolId,
-      'academic_year_id': state.academicYearId,
-      'class_id': state.classId,
-      'section_id': state.sectionId,
-      'attendance_date': state.attendanceDate.toIso8601String().substring(0, 10),
-      'session_type': state.sessionType,
-      'attendance_source': 'MANUAL',
+    final dateStr = state.attendanceDate.toIso8601String().substring(0, 10);
+    String? sessionId = state.sessionId;
+
+    // 1. Resolve session if not already set in state
+    if (sessionId == null || sessionId.isEmpty) {
+      final sessionRes = await _apiClient.get(
+        '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=10',
+        mapper: (json) {
+          if (json is! Map) return null;
+          final dynamic rawData = json['data'];
+          if (rawData == null || rawData is! List || rawData.isEmpty) return null;
+          final sessions = rawData
+              .whereType<Map>()
+              .map((m) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(m)))
+              .toList();
+          if (sessions.isEmpty) return null;
+          return sessions.firstWhere(
+            (s) => s.sessionType.toUpperCase() == state.sessionType.toUpperCase(),
+            orElse: () => sessions.first,
+          );
+        },
+      );
+
+      sessionRes.when(
+        onSuccess: (session) => sessionId = session?.id,
+        onFailure: (_) {},
+      );
+    }
+
+    // 2. If session still does not exist, resolve timetable slot and create/start session
+    if (sessionId == null || sessionId!.isEmpty) {
+      final timetableRes = await _apiClient.get(
+        '/timetables?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}${state.academicYearId != null ? '&academic_year_id=${state.academicYearId}' : ''}&limit=1',
+        mapper: (json) {
+          if (json is! Map) return null;
+          final dynamic rawData = json['data'];
+          if (rawData == null || rawData is! List || rawData.isEmpty) return null;
+          final first = rawData.first;
+          if (first is! Map) return null;
+          return first['id'] as String?;
+        },
+      );
+
+      String? timetableId;
+      timetableRes.when(
+        onSuccess: (id) => timetableId = id,
+        onFailure: (_) {},
+      );
+
+      if (timetableId == null || timetableId!.isEmpty) {
+        if (mounted) {
+          state = state.copyWith(
+            isSaving: false,
+            errorMessage: 'No active timetable slot found for this class and section.',
+          );
+        }
+        return false;
+      }
+
+      final createRes = await _apiClient.post(
+        '/attendances/session',
+        data: {
+          'school_id': schoolId,
+          'academic_year_id': state.academicYearId,
+          'timetable_id': timetableId,
+          'attendance_date': dateStr,
+          'settings': {},
+        },
+        mapper: (json) {
+          if (json is! Map) return null;
+          final dynamic data = json['data'];
+          if (data is Map && data['id'] != null) {
+            return data['id'] as String;
+          }
+          return null;
+        },
+      );
+
+      String? createError;
+      createRes.when(
+        onSuccess: (id) => sessionId = id,
+        onFailure: (failure) => createError = failure.message,
+      );
+
+      // If creation failed (e.g. session already exists), re-query /attendances/sessions
+      if (sessionId == null || sessionId!.isEmpty) {
+        final retryRes = await _apiClient.get(
+          '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=10',
+          mapper: (json) {
+            if (json is! Map) return null;
+            final dynamic rawData = json['data'];
+            if (rawData == null || rawData is! List || rawData.isEmpty) return null;
+            final sessions = rawData
+                .whereType<Map>()
+                .map((m) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(m)))
+                .toList();
+            if (sessions.isEmpty) return null;
+            return sessions.firstWhere(
+              (s) => s.sessionType.toUpperCase() == state.sessionType.toUpperCase(),
+              orElse: () => sessions.first,
+            );
+          },
+        );
+        retryRes.when(
+          onSuccess: (session) => sessionId = session?.id,
+          onFailure: (_) {},
+        );
+      }
+
+      if (sessionId == null || sessionId!.isEmpty) {
+        if (mounted) {
+          state = state.copyWith(
+            isSaving: false,
+            errorMessage: createError ?? 'Failed to initiate attendance session.',
+          );
+        }
+        return false;
+      }
+    }
+
+    final targetSessionId = sessionId!;
+
+    // 3. Mark attendance using canonical session/{session_id}/mark endpoint
+    final markPayload = {
+      'attendance_session_status': 'SUBMITTED',
       'records': state.roster.map((r) => {
         'student_id': r.studentId,
         'attendance_status': r.status,
-        'attendance_reason': r.status == 'PRESENT' ? DropdownSafety.reasonUnknown : DropdownSafety.normalizeAttendanceReason(r.reason),
-        'remarks': r.remarks,
+        'attendance_source': 'MANUAL',
+        'attendance_reason': r.status == 'PRESENT'
+            ? DropdownSafety.reasonUnknown
+            : DropdownSafety.normalizeAttendanceReason(r.reason),
+        'remarks': r.remarks.trim().isEmpty ? null : r.remarks.trim(),
       }).toList(),
     };
 
     final result = await _apiClient.post(
-      '/attendances/daily/mark?school_id=$schoolId',
-      data: payload,
+      '/attendances/session/$targetSessionId/mark?school_id=$schoolId',
+      data: markPayload,
       mapper: (json) => json,
     );
 
@@ -1251,9 +1388,12 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
       onSuccess: (_) {
         state = state.copyWith(
           isSaving: false,
+          sessionId: sessionId,
           successMessage: 'Attendance marked successfully for ${state.roster.length} students.',
         );
         _ref.read(attendanceDashboardProvider.notifier).fetchDashboard();
+        _ref.read(attendanceSessionsProvider.notifier).fetchSessions();
+        loadRoster(preserveSuccess: true);
         return true;
       },
       onFailure: (failure) {

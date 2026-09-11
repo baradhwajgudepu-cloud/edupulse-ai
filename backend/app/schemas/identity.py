@@ -21,6 +21,20 @@ class IdentityResetPasswordResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class PrincipalProvisionRequest(BaseModel):
+    """
+    Schema for provisioning an authenticated Principal User account.
+    """
+    email: EmailStr
+    first_name: str
+    last_name: Optional[str] = ""
+    phone: Optional[str] = None
+    password: Optional[str] = None
+    school_id: uuid.UUID
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 
 from app.schemas.auth import UserResponse
 from app.schemas.teacher import TeacherResponse

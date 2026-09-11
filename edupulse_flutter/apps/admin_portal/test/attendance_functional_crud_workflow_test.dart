@@ -14,6 +14,8 @@ class MockFunctionalApiClient extends BaseApiClient {
   bool failNextSubmit = false;
   bool failAuditWith404 = false;
   bool failSchoolSetup = false;
+  final List<String> requestedGetPaths = [];
+  bool failSessionsWith404 = false;
 
   @override
   Future<ApiResult<T>> get<T>(
@@ -23,6 +25,8 @@ class MockFunctionalApiClient extends BaseApiClient {
     CancelToken? cancelToken,
     required T Function(dynamic json) mapper,
   }) async {
+    requestedGetPaths.add(path);
+
     // 1. Enrolled student roster
     if (path.contains('/students')) {
       return ApiResult.success(mapper({
@@ -88,15 +92,24 @@ class MockFunctionalApiClient extends BaseApiClient {
       }));
     }
 
-    // 2. Daily session lookup
+    // 2. Daily session lookup (obsolete endpoint simulation)
     if (path.contains('/attendances/daily/session') || path.contains('/attendance/daily/session')) {
-      return ApiResult.success(mapper({
-        'data': activeSession,
-      }));
+      return ApiResult.failure(const ApiFailure(
+        message: 'Not Found',
+        statusCode: 404,
+        type: ApiFailureType.unknown,
+      ));
     }
 
     // 3. Canonical /attendances/sessions lookup
     if (path.contains('/attendances/sessions')) {
+      if (failSessionsWith404) {
+        return ApiResult.failure(const ApiFailure(
+          message: 'Not Found',
+          statusCode: 404,
+          type: ApiFailureType.unknown,
+        ));
+      }
       final list = activeSession != null ? [activeSession!] : [];
       return ApiResult.success(mapper({'data': list}));
     }
@@ -889,6 +902,145 @@ void main() {
         await ayNotifier.fetchYears();
         expect(container.read(academicYearsProvider('school_1')).error, isNull);
         expect(container.read(academicYearsProvider('school_1')).years.length, equals(2));
+      });
+    });
+
+    group('Attendance Mark Canonical Session Endpoint Regression Tests', () {
+      test('TEST 12: Roster loads successfully and uses canonical /attendances/sessions for existing session lookup', () async {
+        mockApi.requestedGetPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.isLoading, isFalse);
+        expect(state.roster.length, equals(3));
+        expect(state.errorMessage, isNull);
+
+        // Verify canonical endpoint is used
+        expect(
+          mockApi.requestedGetPaths.any((p) => p.startsWith('/attendances/sessions')),
+          isTrue,
+          reason: 'Must use canonical /attendances/sessions endpoint',
+        );
+
+        // Verify obsolete endpoint is NOT used
+        expect(
+          mockApi.requestedGetPaths.any((p) => p.contains('/attendances/daily/session')),
+          isFalse,
+          reason: 'Must NOT call obsolete /attendances/daily/session endpoint',
+        );
+      });
+
+      test('TEST 13: Empty session result (normal state) does not produce an error banner', () async {
+        mockApi.requestedGetPaths.clear();
+        mockApi.activeSession = null;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.errorMessage, isNull);
+        expect(state.sessionId, isNull);
+        expect(state.isLocked, isFalse);
+        expect(state.roster.isNotEmpty, isTrue);
+      });
+
+      test('TEST 14: Existing session via canonical /attendances/sessions correctly pre-populates attendance', () async {
+        mockApi.requestedGetPaths.clear();
+        mockApi.activeSession = {
+          'id': 'session_prepop_1',
+          'tenant_id': 'tenant_1',
+          'school_id': 'school_1',
+          'class_id': 'class_1',
+          'section_id': 'sec_1',
+          'academic_year_id': 'ay_1',
+          'attendance_date': '2026-09-11',
+          'session_type': 'FULL_DAY',
+          'status': 'SUBMITTED',
+          'total_students': 3,
+          'present_count': 2,
+          'absent_count': 1,
+          'late_count': 0,
+          'excused_count': 0,
+          'is_locked': false,
+          'attendances': [
+            {
+              'id': 'att_prepop_1',
+              'student_id': 'stud_001',
+              'attendance_status': 'PRESENT',
+              'attendance_reason': 'UNKNOWN',
+              'remarks': 'On time',
+            },
+            {
+              'id': 'att_prepop_2',
+              'student_id': 'stud_002',
+              'attendance_status': 'ABSENT',
+              'attendance_reason': 'ILLNESS',
+              'remarks': 'Fever',
+            },
+          ],
+        };
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.errorMessage, isNull);
+        expect(state.sessionId, equals('session_prepop_1'));
+        expect(state.isLocked, isFalse);
+        expect(state.roster[0].status, equals('PRESENT'));
+        expect(state.roster[0].remarks, equals('On time'));
+        expect(state.roster[1].status, equals('ABSENT'));
+        expect(state.roster[1].reason, equals('SICK'));
+        expect(state.roster[1].remarks, equals('Fever'));
+      });
+
+      test('TEST 15: Optional session lookup failure handles gracefully without error banner and keeps roster', () async {
+        mockApi.requestedGetPaths.clear();
+        mockApi.failSessionsWith404 = true;
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(
+          academicYearId: 'ay_1',
+          classId: 'class_1',
+          sectionId: 'sec_1',
+          attendanceDate: DateTime(2026, 9, 11),
+        );
+
+        await markNotifier.loadRoster();
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        // Roster is preserved and displayed
+        expect(state.roster.length, equals(3));
+        expect(state.isLoading, isFalse);
+        // Error message is not populated for optional session lookup failure
+        expect(state.errorMessage, isNull);
+        expect(state.sessionId, isNull);
+
+        mockApi.failSessionsWith404 = false;
       });
     });
   });

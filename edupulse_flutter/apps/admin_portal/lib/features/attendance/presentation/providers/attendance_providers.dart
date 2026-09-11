@@ -1080,44 +1080,31 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
 
       final dateStr = state.attendanceDate.toIso8601String().substring(0, 10);
 
-      // 2. Check if existing session
+      // 2. Check if existing session via canonical /attendances/sessions endpoint
       AttendanceSessionDto? existingSession;
       final sessionRes = await _apiClient.get(
-        '/attendances/daily/session?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&session_type=${state.sessionType}',
+        '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=1',
         mapper: (json) {
-          final payload = json as Map<String, dynamic>;
-          if (payload['data'] == null) return null;
-          return AttendanceSessionDto.fromJson(Map<String, dynamic>.from(payload['data'] as Map));
+          if (json is! Map) return null;
+          final dynamic rawData = json['data'];
+          if (rawData == null || rawData is! List || rawData.isEmpty) {
+            return null;
+          }
+          final first = rawData.first;
+          if (first is! Map) return null;
+          return AttendanceSessionDto.fromJson(Map<String, dynamic>.from(first));
         },
       );
 
       if (!mounted) return;
 
       sessionRes.when(
-        onSuccess: (s) => existingSession = s,
-        onFailure: (_) {},
+        onSuccess: (session) => existingSession = session,
+        onFailure: (_) {
+          // Normal state when no session exists or if optional lookup fails
+          existingSession = null;
+        },
       );
-
-      // Canonical fallback to /attendances/sessions
-      if (existingSession == null) {
-        final fallbackRes = await _apiClient.get(
-          '/attendances/sessions?school_id=$schoolId&class_id=${state.classId}&section_id=${state.sectionId}&attendance_date=$dateStr&limit=1',
-          mapper: (json) {
-            final payload = json as Map<String, dynamic>;
-            final list = payload['data'] as List? ?? [];
-            return list.map((e) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          },
-        );
-        if (!mounted) return;
-        fallbackRes.when(
-          onSuccess: (sessions) {
-            if (sessions.isNotEmpty) {
-              existingSession = sessions.first;
-            }
-          },
-          onFailure: (_) {},
-        );
-      }
 
       final Map<String, AttendanceLogDto> markedMap = {};
       if (existingSession != null) {
@@ -1145,6 +1132,7 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
         isLoading: false,
         sessionId: existingSession?.id,
         isLocked: existingSession?.status == 'LOCKED',
+        clearError: true,
       );
     } catch (e) {
       if (mounted) {

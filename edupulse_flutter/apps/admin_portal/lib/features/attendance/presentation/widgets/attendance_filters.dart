@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../providers/attendance_providers.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
 class AttendanceFilters extends ConsumerWidget {
   const AttendanceFilters({super.key});
@@ -45,7 +46,7 @@ class AttendanceFilters extends ConsumerWidget {
             // Academic Year Filter
             SizedBox(
               width: 200,
-              child: DropdownButtonFormField<String>(
+              child: SafeDropdownButtonFormField<String>(
                 isExpanded: true,
                 value: filters.academicYearId,
                 decoration: const InputDecoration(
@@ -72,7 +73,7 @@ class AttendanceFilters extends ConsumerWidget {
             // Class Filter
             SizedBox(
               width: 180,
-              child: DropdownButtonFormField<String>(
+              child: SafeDropdownButtonFormField<String>(
                 isExpanded: true,
                 value: filters.classId,
                 decoration: const InputDecoration(
@@ -99,7 +100,7 @@ class AttendanceFilters extends ConsumerWidget {
             // Section Filter
             SizedBox(
               width: 150,
-              child: DropdownButtonFormField<String>(
+              child: SafeDropdownButtonFormField<String>(
                 isExpanded: true,
                 value: filters.sectionId,
                 decoration: const InputDecoration(
@@ -126,7 +127,7 @@ class AttendanceFilters extends ConsumerWidget {
             // Status Filter
             SizedBox(
               width: 180,
-              child: DropdownButtonFormField<String>(
+              child: SafeDropdownButtonFormField<String>(
                 isExpanded: true,
                 value: filters.status,
                 decoration: const InputDecoration(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/attendance_providers.dart';
+import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
 class AttendanceCorrectionDialog extends StatefulWidget {
   final String sessionId;
@@ -62,7 +63,7 @@ class _AttendanceCorrectionDialogState extends State<AttendanceCorrectionDialog>
                   const SizedBox(height: 16),
 
                   // New Status Dropdown
-                  DropdownButtonFormField<String>(
+                  SafeDropdownButtonFormField<String>(
                     isExpanded: true,
                     key: const Key('correction_new_status_dropdown'),
                     value: _newStatus,

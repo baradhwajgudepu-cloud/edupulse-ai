@@ -935,14 +935,18 @@ class DailyAttendanceMarkState {
     bool clearError = false,
     bool clearSuccess = false,
     bool clearSession = false,
+    bool clearAcademicYear = false,
+    bool clearClass = false,
+    bool clearSection = false,
+    bool clearRoster = false,
   }) {
     return DailyAttendanceMarkState(
-      academicYearId: academicYearId ?? this.academicYearId,
-      classId: classId ?? this.classId,
-      sectionId: sectionId ?? this.sectionId,
+      academicYearId: clearAcademicYear ? null : (academicYearId ?? this.academicYearId),
+      classId: clearClass ? null : (classId ?? this.classId),
+      sectionId: clearSection ? null : (sectionId ?? this.sectionId),
       attendanceDate: attendanceDate ?? this.attendanceDate,
       sessionType: sessionType ?? this.sessionType,
-      roster: roster ?? this.roster,
+      roster: clearRoster ? const [] : (roster ?? this.roster),
       isLoading: isLoading ?? this.isLoading,
       isSaving: isSaving ?? this.isSaving,
       isLocked: isLocked ?? this.isLocked,
@@ -966,19 +970,57 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
     String? sectionId,
     DateTime? attendanceDate,
     String? sessionType,
+    bool clearAcademicYear = false,
+    bool clearClass = false,
+    bool clearSection = false,
   }) {
+    final bool ayChanged = (academicYearId != null && academicYearId != state.academicYearId);
+    final bool classChanged = (classId != null && classId != state.classId);
+
+    // Determine new academicYearId
+    final String? nextAyId = clearAcademicYear
+        ? null
+        : (academicYearId ?? state.academicYearId);
+
+    // Determine new classId:
+    // If AY is cleared or AY changed and no new classId was passed, classId is cleared.
+    final bool shouldClearClass = clearAcademicYear || clearClass || (ayChanged && classId == null);
+    final String? nextClassId = shouldClearClass
+        ? null
+        : (classId ?? state.classId);
+
+    // Determine new sectionId:
+    // If Class is cleared/changed, or Section is cleared, or AY changed and no new sectionId passed, clear sectionId.
+    final bool shouldClearSection = shouldClearClass || clearSection || (classChanged && sectionId == null);
+    final String? nextSectionId = shouldClearSection
+        ? null
+        : (sectionId ?? state.sectionId);
+
+    final bool shouldClearRoster = nextClassId == null || nextSectionId == null;
+
     state = state.copyWith(
-      academicYearId: academicYearId ?? state.academicYearId,
-      classId: classId ?? state.classId,
-      sectionId: sectionId ?? state.sectionId,
+      academicYearId: nextAyId,
+      classId: nextClassId,
+      sectionId: nextSectionId,
       attendanceDate: attendanceDate ?? state.attendanceDate,
       sessionType: sessionType ?? state.sessionType,
+      roster: shouldClearRoster ? const [] : state.roster,
+      clearAcademicYear: nextAyId == null,
+      clearClass: nextClassId == null,
+      clearSection: nextSectionId == null,
+      clearRoster: shouldClearRoster,
+      clearSession: shouldClearRoster,
       clearError: true,
       clearSuccess: true,
     );
+
     if (state.classId != null && state.sectionId != null) {
       loadRoster();
     }
+  }
+
+  void reset() {
+    state = DailyAttendanceMarkState();
   }
 
   Future<void> loadRoster() async {

@@ -61,7 +61,18 @@ class MockAttendanceApiClient extends BaseApiClient {
     if (path.contains('/academic-years')) {
       return ApiResult.success(mapper({
         'data': [
-          {'id': 'ay_1', 'tenant_id': 'tenant_1', 'school_id': 'school_1', 'name': '2026-2027', 'code': 'AY26', 'is_current': true, 'status': 'ACTIVE', 'version': 1}
+          {
+            'id': 'ay_1',
+            'tenant_id': 'tenant_1',
+            'school_id': 'school_1',
+            'name': '2026-2027',
+            'code': 'AY26',
+            'start_date': '2026-06-01',
+            'end_date': '2027-04-30',
+            'is_current': true,
+            'status': 'ACTIVE',
+            'version': 1,
+          }
         ]
       }));
     }
@@ -78,7 +89,7 @@ class MockAttendanceApiClient extends BaseApiClient {
     if (path.contains('/sections')) {
       return ApiResult.success(mapper({
         'data': [
-          {'id': 'sec_1', 'tenant_id': 'tenant_1', 'school_id': 'school_1', 'class_id': 'class_1', 'name': 'Section A', 'code': 'G10-A', 'capacity': 40, 'status': 'ACTIVE', 'is_active': true, 'version': 1}
+          {'id': 'sec_1', 'tenant_id': 'tenant_1', 'school_id': 'school_1', 'academic_year_id': 'ay_1', 'class_id': 'class_1', 'name': 'Section A', 'code': 'G10-A', 'capacity': 40, 'status': 'ACTIVE', 'is_active': true, 'version': 1}
         ]
       }));
     }

@@ -41,11 +41,53 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSchoolSetupData();
+    });
+  }
+
+  void _loadSchoolSetupData([String? targetSchoolId]) {
+    final schoolId = targetSchoolId ?? ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+
+    final ayState = ref.read(academicYearsProvider(schoolId));
+    if (!ayState.isLoading && ayState.years.isEmpty) {
+      ref.read(academicYearsProvider(schoolId).notifier).fetchYears();
+    }
+    final classesState = ref.read(classesProvider(schoolId));
+    if (!classesState.isLoading && classesState.classes.isEmpty) {
+      ref.read(classesProvider(schoolId).notifier).fetchClasses();
+    }
+    final sectionsState = ref.read(sectionsProvider(schoolId));
+    if (!sectionsState.isLoading && sectionsState.sections.isEmpty) {
+      ref.read(sectionsProvider(schoolId).notifier).fetchSections();
+    }
+  }
+
+  void _retrySchoolSetup() {
+    final schoolId = ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+    ref.read(academicYearsProvider(schoolId).notifier).fetchYears();
+    ref.read(classesProvider(schoolId).notifier).fetchClasses();
+    ref.read(sectionsProvider(schoolId).notifier).fetchSections();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final schoolId = ref.watch(selectedSchoolIdProvider);
     if (schoolId == null) {
       return const Center(child: Text('Please select a school campus.'));
     }
+
+    // Listen for campus switch: clear attendance mark state and re-fetch setup data
+    ref.listen<String?>(selectedSchoolIdProvider, (prev, next) {
+      if (next != null && next != prev) {
+        ref.read(dailyAttendanceMarkProvider.notifier).reset();
+        _loadSchoolSetupData(next);
+      }
+    });
 
     final permissions = ref.watch(portalPermissionsProvider);
     final isTeacher = permissions.isTeacher;
@@ -57,19 +99,17 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
     final classesState = ref.watch(classesProvider(schoolId));
     final sectionsState = ref.watch(sectionsProvider(schoolId));
 
-    // Auto-select active academic year if not yet selected
+    // Auto-select active academic year if not yet selected and years are loaded
     final selectedAyId = ref.watch(selectedAcademicYearIdProvider);
-    if (markState.academicYearId == null) {
-      if (selectedAyId != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          markNotifier.setSelection(academicYearId: selectedAyId);
-        });
-      } else if (ayState.years.isNotEmpty) {
-        final current = ayState.years.firstWhere((y) => y.isCurrent, orElse: () => ayState.years.first);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          markNotifier.setSelection(academicYearId: current.id);
-        });
-      }
+    if (markState.academicYearId == null && ayState.years.isNotEmpty) {
+      final defaultAy = (selectedAyId != null && ayState.years.any((y) => y.id == selectedAyId))
+          ? selectedAyId
+          : (ayState.years.firstWhere((y) => y.isCurrent, orElse: () => ayState.years.first).id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ref.read(dailyAttendanceMarkProvider).academicYearId == null) {
+          markNotifier.setSelection(academicYearId: defaultAy);
+        }
+      });
     }
 
     // Teacher assignment scoping
@@ -182,6 +222,44 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                     style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
+
+                  // School setup error banner with retry
+                  if (ayState.error != null || classesState.error != null || sectionsState.error != null) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF3B1E1E) : const Color(0xFFFEE2E2),
+                        border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Unable to load academic setup: ${ayState.error ?? classesState.error ?? sectionsState.error}',
+                              style: TextStyle(
+                                color: isDark ? Colors.red[200] : Colors.red[900],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: _retrySchoolSetup,
+                            icon: const Icon(Icons.refresh, size: 14),
+                            label: const Text('Retry', style: TextStyle(fontSize: 12)),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   Wrap(
                     spacing: 16,
                     runSpacing: 16,
@@ -189,14 +267,26 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                     children: [
                       // Academic Year
                       SizedBox(
-                        width: 180,
+                        width: 190,
                         child: SafeDropdownButtonFormField<String>(
                           isExpanded: true,
                           value: markState.academicYearId,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Academic Year',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            suffixIcon: ayState.isLoading
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  )
+                                : null,
+                          ),
+                          hint: const Text('Select Year'),
+                          disabledHint: Text(
+                            ayState.isLoading
+                                ? 'Loading years...'
+                                : (ayState.years.isEmpty ? 'No years available' : 'Select Year'),
                           ),
                           items: ayState.years.map((y) {
                             return DropdownMenuItem<String>(
@@ -204,22 +294,42 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                               child: Text(y.name),
                             );
                           }).toList(),
-                          onChanged: (val) {
-                            markNotifier.setSelection(academicYearId: val, classId: null, sectionId: null);
-                          },
+                          onChanged: ayState.years.isEmpty
+                              ? null
+                              : (val) {
+                                  markNotifier.setSelection(
+                                    academicYearId: val,
+                                    clearClass: true,
+                                    clearSection: true,
+                                  );
+                                },
                         ),
                       ),
 
                       // Class
                       SizedBox(
-                        width: 170,
+                        width: 180,
                         child: SafeDropdownButtonFormField<String>(
                           isExpanded: true,
                           value: markState.classId,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Class',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            suffixIcon: classesState.isLoading
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  )
+                                : null,
+                          ),
+                          hint: const Text('Select Class'),
+                          disabledHint: Text(
+                            markState.academicYearId == null
+                                ? 'Select Academic Year first'
+                                : (classesState.isLoading
+                                    ? 'Loading classes...'
+                                    : 'No classes available'),
                           ),
                           items: availableClasses.map((c) {
                             return DropdownMenuItem<String>(
@@ -227,22 +337,41 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                               child: Text(c.name),
                             );
                           }).toList(),
-                          onChanged: (val) {
-                            markNotifier.setSelection(classId: val, sectionId: null);
-                          },
+                          onChanged: (markState.academicYearId == null || availableClasses.isEmpty)
+                              ? null
+                              : (val) {
+                                  markNotifier.setSelection(
+                                    classId: val,
+                                    clearSection: true,
+                                  );
+                                },
                         ),
                       ),
 
                       // Section
                       SizedBox(
-                        width: 160,
+                        width: 170,
                         child: SafeDropdownButtonFormField<String>(
                           isExpanded: true,
                           value: markState.sectionId,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Section',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            suffixIcon: sectionsState.isLoading
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  )
+                                : null,
+                          ),
+                          hint: const Text('Select Section'),
+                          disabledHint: Text(
+                            markState.classId == null
+                                ? 'Select Class first'
+                                : (sectionsState.isLoading
+                                    ? 'Loading sections...'
+                                    : 'No sections available'),
                           ),
                           items: availableSections.map((s) {
                             return DropdownMenuItem<String>(
@@ -250,9 +379,11 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                               child: Text(s.name),
                             );
                           }).toList(),
-                          onChanged: (val) {
-                            markNotifier.setSelection(sectionId: val);
-                          },
+                          onChanged: (markState.classId == null || availableSections.isEmpty)
+                              ? null
+                              : (val) {
+                                  markNotifier.setSelection(sectionId: val);
+                                },
                         ),
                       ),
 

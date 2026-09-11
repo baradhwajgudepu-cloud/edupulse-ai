@@ -62,6 +62,21 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> with Single
 
     ref.read(attendanceDashboardProvider.notifier).fetchDashboard();
     ref.read(attendanceRegisterProvider.notifier).fetchRegister();
+
+    // Ensure school setup data is populated for Mark Attendance, filters, and wizards
+    final ayState = ref.read(academicYearsProvider(schoolId));
+    if (!ayState.isLoading && ayState.years.isEmpty) {
+      ref.read(academicYearsProvider(schoolId).notifier).fetchYears();
+    }
+    final classesState = ref.read(classesProvider(schoolId));
+    if (!classesState.isLoading && classesState.classes.isEmpty) {
+      ref.read(classesProvider(schoolId).notifier).fetchClasses();
+    }
+    final sectionsState = ref.read(sectionsProvider(schoolId));
+    if (!sectionsState.isLoading && sectionsState.sections.isEmpty) {
+      ref.read(sectionsProvider(schoolId).notifier).fetchSections();
+    }
+
     if (_canManageBulk) {
       ref.read(attendanceImportsHistoryProvider.notifier).fetchHistory();
       ref.read(attendanceAuditLogsProvider.notifier).fetchAuditLogs();

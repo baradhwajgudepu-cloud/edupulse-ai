@@ -13,6 +13,7 @@ class MockFunctionalApiClient extends BaseApiClient {
   List<Map<String, dynamic>> auditLogs = [];
   bool failNextSubmit = false;
   bool failAuditWith404 = false;
+  bool failSchoolSetup = false;
 
   @override
   Future<ApiResult<T>> get<T>(
@@ -141,11 +142,115 @@ class MockFunctionalApiClient extends BaseApiClient {
       }));
     }
 
-    // 9. Classes lookup for dashboard
-    if (path.contains('/classes')) {
+    // 9. Academic years lookup
+    if (path.contains('/academic-years')) {
+      if (failSchoolSetup) {
+        return ApiResult.failure(const ApiFailure(message: 'Academic years failed to load', type: ApiFailureType.unknown, statusCode: 500));
+      }
       return ApiResult.success(mapper({
         'data': [
-          {'id': 'class_1', 'name': 'Class 10', 'school_id': 'school_1'}
+          {
+            'id': 'ay_1',
+            'name': '2025-2026',
+            'code': 'AY2526',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'start_date': '2025-06-01',
+            'end_date': '2026-04-30',
+            'status': 'ACTIVE',
+            'is_current': true,
+            'version': 1,
+          },
+          {
+            'id': 'ay_2',
+            'name': '2026-2027',
+            'code': 'AY2627',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'start_date': '2026-06-01',
+            'end_date': '2027-04-30',
+            'status': 'UPCOMING',
+            'is_current': false,
+            'version': 1,
+          },
+        ]
+      }));
+    }
+
+    // 10. Classes lookup
+    if (path.contains('/classes')) {
+      if (failSchoolSetup) {
+        return ApiResult.failure(const ApiFailure(message: 'Classes failed to load', type: ApiFailureType.unknown, statusCode: 500));
+      }
+      return ApiResult.success(mapper({
+        'data': [
+          {
+            'id': 'class_1',
+            'name': 'Class 10',
+            'code': 'CLS10',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'academic_year_id': 'ay_1',
+            'level': 10,
+            'category': 'SECONDARY',
+            'capacity': 40,
+            'status': 'ACTIVE',
+            'is_active': true,
+            'version': 1,
+          },
+          {
+            'id': 'class_2',
+            'name': 'Class 9',
+            'code': 'CLS9',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'academic_year_id': 'ay_2',
+            'level': 9,
+            'category': 'SECONDARY',
+            'capacity': 40,
+            'status': 'ACTIVE',
+            'is_active': true,
+            'version': 1,
+          },
+        ]
+      }));
+    }
+
+    // 11. Sections lookup
+    if (path.contains('/sections')) {
+      if (failSchoolSetup) {
+        return ApiResult.failure(const ApiFailure(message: 'Sections failed to load', type: ApiFailureType.unknown, statusCode: 500));
+      }
+      return ApiResult.success(mapper({
+        'data': [
+          {
+            'id': 'sec_1',
+            'name': 'Section A',
+            'code': '10A',
+            'class_id': 'class_1',
+            'academic_year_id': 'ay_1',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'capacity': 40,
+            'sort_order': 1,
+            'status': 'ACTIVE',
+            'is_active': true,
+            'version': 1,
+          },
+          {
+            'id': 'sec_2',
+            'name': 'Section B',
+            'code': '9B',
+            'class_id': 'class_2',
+            'academic_year_id': 'ay_2',
+            'school_id': 'school_1',
+            'tenant_id': 'tenant_1',
+            'capacity': 40,
+            'sort_order': 2,
+            'status': 'ACTIVE',
+            'is_active': true,
+            'version': 1,
+          },
         ]
       }));
     }
@@ -592,6 +697,199 @@ void main() {
       expect(auditState.unsupportedMessage, contains('Detailed audit history is not available in this production API version'));
       expect(auditState.logs, isEmpty);
       expect(auditState.error, isNull);
+    });
+
+    group('Attendance Mark Selectors & Cascading Workflow Tests', () {
+      test('TEST 1: Academic Year options load successfully and selecting an Academic Year updates DailyAttendanceMarkState', () async {
+        final ayNotifier = container.read(academicYearsProvider('school_1').notifier);
+        await ayNotifier.fetchYears();
+        final ayState = container.read(academicYearsProvider('school_1'));
+        expect(ayState.years.length, equals(2));
+        expect(ayState.years.first.id, equals('ay_1'));
+
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', clearClass: true, clearSection: true);
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.academicYearId, equals('ay_1'));
+        expect(state.classId, isNull);
+        expect(state.sectionId, isNull);
+        expect(state.roster, isEmpty);
+      });
+
+      test('TEST 2: Class remains disabled before Academic Year selection', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.reset();
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.academicYearId, isNull);
+        expect(state.classId, isNull);
+
+        // When academicYearId is null, class selection is disallowed/cleared
+        final classesNotifier = container.read(classesProvider('school_1').notifier);
+        await classesNotifier.fetchClasses();
+        final classesState = container.read(classesProvider('school_1'));
+
+        final availableClasses = classesState.classes.where((c) {
+          if (state.academicYearId != null && c.academicYearId != state.academicYearId) return false;
+          return state.academicYearId != null;
+        }).toList();
+
+        expect(availableClasses, isEmpty);
+      });
+
+      test('TEST 3: Class becomes enabled after Academic Year selection and only classes belonging to that Academic Year are displayed', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', clearClass: true, clearSection: true);
+
+        final classesNotifier = container.read(classesProvider('school_1').notifier);
+        await classesNotifier.fetchClasses();
+        final classesState = container.read(classesProvider('school_1'));
+
+        final availableForAy1 = classesState.classes.where((c) => c.academicYearId == 'ay_1').toList();
+        final availableForAy2 = classesState.classes.where((c) => c.academicYearId == 'ay_2').toList();
+
+        expect(availableForAy1.length, equals(1));
+        expect(availableForAy1.first.name, equals('Class 10'));
+        expect(availableForAy2.length, equals(1));
+        expect(availableForAy2.first.name, equals('Class 9'));
+      });
+
+      test('TEST 4: Changing Academic Year clears the previously selected Class, Section, and roster', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', classId: 'class_1', sectionId: 'sec_1');
+        await markNotifier.loadRoster();
+
+        var state = container.read(dailyAttendanceMarkProvider);
+        expect(state.academicYearId, equals('ay_1'));
+        expect(state.classId, equals('class_1'));
+        expect(state.sectionId, equals('sec_1'));
+        expect(state.roster.isNotEmpty, isTrue);
+
+        // Change academic year
+        markNotifier.setSelection(academicYearId: 'ay_2', clearClass: true, clearSection: true);
+        state = container.read(dailyAttendanceMarkProvider);
+
+        expect(state.academicYearId, equals('ay_2'));
+        expect(state.classId, isNull);
+        expect(state.sectionId, isNull);
+        expect(state.roster, isEmpty);
+      });
+
+      test('TEST 5: Section remains disabled before Class selection', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.reset();
+        markNotifier.setSelection(academicYearId: 'ay_1');
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.classId, isNull);
+
+        final sectionsNotifier = container.read(sectionsProvider('school_1').notifier);
+        await sectionsNotifier.fetchSections();
+        final sectionsState = container.read(sectionsProvider('school_1'));
+
+        final availableSections = sectionsState.sections.where((s) {
+          if (state.classId != null && s.classId != state.classId) return false;
+          return state.classId != null;
+        }).toList();
+
+        expect(availableSections, isEmpty);
+      });
+
+      test('TEST 6: Section becomes enabled after Class selection and only sections belonging to that Class are displayed', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', classId: 'class_1', clearSection: true);
+
+        final sectionsNotifier = container.read(sectionsProvider('school_1').notifier);
+        await sectionsNotifier.fetchSections();
+        final sectionsState = container.read(sectionsProvider('school_1'));
+
+        final sectionsForClass1 = sectionsState.sections.where((s) => s.classId == 'class_1').toList();
+        final sectionsForClass2 = sectionsState.sections.where((s) => s.classId == 'class_2').toList();
+
+        expect(sectionsForClass1.length, equals(1));
+        expect(sectionsForClass1.first.name, equals('Section A'));
+        expect(sectionsForClass2.length, equals(1));
+        expect(sectionsForClass2.first.name, equals('Section B'));
+      });
+
+      test('TEST 7: Changing Class clears Section and roster', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', classId: 'class_1', sectionId: 'sec_1');
+        await markNotifier.loadRoster();
+
+        var state = container.read(dailyAttendanceMarkProvider);
+        expect(state.sectionId, equals('sec_1'));
+        expect(state.roster.isNotEmpty, isTrue);
+
+        // Change class
+        markNotifier.setSelection(classId: 'class_2', clearSection: true);
+        state = container.read(dailyAttendanceMarkProvider);
+
+        expect(state.classId, equals('class_2'));
+        expect(state.sectionId, isNull);
+        expect(state.roster, isEmpty);
+      });
+
+      test('TEST 8: Selecting Section triggers student roster loading', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(academicYearId: 'ay_1', classId: 'class_1', sectionId: 'sec_1');
+        await markNotifier.loadRoster();
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.isLoading, isFalse);
+        expect(state.roster.length, equals(3));
+        expect(state.roster[0].studentName, equals('Aarav Reddy'));
+        expect(state.roster[1].studentName, equals('Diya Patel'));
+        expect(state.roster[2].studentName, equals('Karan Singh'));
+      });
+
+      test('TEST 9: Date picker remains functional', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        final targetDate = DateTime(2026, 10, 15);
+        markNotifier.setSelection(attendanceDate: targetDate);
+
+        final state = container.read(dailyAttendanceMarkProvider);
+        expect(state.attendanceDate, equals(targetDate));
+      });
+
+      test('TEST 10: Session dropdown remains functional', () async {
+        final markNotifier = container.read(dailyAttendanceMarkProvider.notifier);
+        markNotifier.setSelection(sessionType: 'MORNING');
+        expect(container.read(dailyAttendanceMarkProvider).sessionType, equals('MORNING'));
+
+        markNotifier.setSelection(sessionType: 'AFTERNOON');
+        expect(container.read(dailyAttendanceMarkProvider).sessionType, equals('AFTERNOON'));
+
+        markNotifier.setSelection(sessionType: 'FULL_DAY');
+        expect(container.read(dailyAttendanceMarkProvider).sessionType, equals('FULL_DAY'));
+      });
+
+      test('TEST 11: Provider loading/error states do not cause crashes', () async {
+        mockApi.failSchoolSetup = true;
+
+        final ayNotifier = container.read(academicYearsProvider('school_1').notifier);
+        await ayNotifier.fetchYears();
+        final ayState = container.read(academicYearsProvider('school_1'));
+        expect(ayState.error, isNotNull);
+        expect(ayState.isLoading, isFalse);
+
+        final classesNotifier = container.read(classesProvider('school_1').notifier);
+        await classesNotifier.fetchClasses();
+        final classesState = container.read(classesProvider('school_1'));
+        expect(classesState.error, isNotNull);
+        expect(classesState.isLoading, isFalse);
+
+        final sectionsNotifier = container.read(sectionsProvider('school_1').notifier);
+        await sectionsNotifier.fetchSections();
+        final sectionsState = container.read(sectionsProvider('school_1'));
+        expect(sectionsState.error, isNotNull);
+        expect(sectionsState.isLoading, isFalse);
+
+        // Reset fail flag and verify clean recovery
+        mockApi.failSchoolSetup = false;
+        await ayNotifier.fetchYears();
+        expect(container.read(academicYearsProvider('school_1')).error, isNull);
+        expect(container.read(academicYearsProvider('school_1')).years.length, equals(2));
+      });
     });
   });
 }

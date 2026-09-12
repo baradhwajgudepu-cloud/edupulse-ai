@@ -46,13 +46,18 @@ class AttendanceSessionDto {
   });
 
   factory AttendanceSessionDto.fromJson(Map<String, dynamic> json) {
+    final settingsMap = Map<String, dynamic>.from(json['settings'] as Map? ?? {});
+    final rawSessionType = json['session_type'] as String? ??
+        settingsMap['session_type'] as String?;
     return AttendanceSessionDto(
       id: json['id'] as String? ?? '',
       tenantId: json['tenant_id'] as String? ?? '',
       schoolId: json['school_id'] as String? ?? '',
       academicYearId: json['academic_year_id'] as String? ?? '',
       timetableId: json['timetable_id'] as String?,
-      sessionType: json['session_type'] as String? ?? 'FULL_DAY',
+      sessionType: (rawSessionType != null && rawSessionType.isNotEmpty)
+          ? rawSessionType
+          : 'FULL_DAY',
       classId: json['class_id'] as String? ?? '',
       sectionId: json['section_id'] as String? ?? '',
       teacherId: json['teacher_id'] as String?,
@@ -63,7 +68,7 @@ class AttendanceSessionDto {
       markedByName: json['marked_by_name'] as String?,
       markedAt: json['marked_at'] as String?,
       isActive: json['is_active'] as bool? ?? true,
-      settings: Map<String, dynamic>.from(json['settings'] as Map? ?? {}),
+      settings: settingsMap,
       version: json['version'] as int? ?? 1,
       className: json['class_name'] as String?,
       sectionName: json['section_name'] as String?,
@@ -138,15 +143,44 @@ class AttendanceLogDto {
   });
 
   factory AttendanceLogDto.fromJson(Map<String, dynamic> json) {
-    String? roll = json['roll_number'] as String?;
-    String? name = json['student_name'] as String?;
-    String? adm = json['admission_number'] as String?;
-    if (json['student'] != null) {
+    final settingsMap = Map<String, dynamic>.from(json['settings'] as Map? ?? {});
+    final sessionMap = json['attendance_session'] is Map
+        ? Map<String, dynamic>.from(json['attendance_session'] as Map)
+        : null;
+
+    String? roll = json['roll_number'] as String? ?? settingsMap['roll_number'] as String?;
+    String? name = json['student_name'] as String? ?? settingsMap['student_name'] as String?;
+    String? adm = json['admission_number'] as String? ?? json['adm_no'] as String? ?? settingsMap['admission_number'] as String?;
+
+    if (json['student'] != null && json['student'] is Map) {
       final student = json['student'] as Map;
       roll ??= student['roll_number'] as String?;
-      adm ??= student['admission_number'] as String?;
-      name ??= '${student['first_name'] ?? ""} ${student['last_name'] ?? ""}'.trim();
+      adm ??= student['admission_number'] as String? ?? student['adm_no'] as String?;
+      final first = student['first_name'] as String? ?? '';
+      final last = student['last_name'] as String? ?? '';
+      final fullName = '$first $last'.trim();
+      if (fullName.isNotEmpty) {
+        name ??= fullName;
+      } else if (student['name'] != null) {
+        name ??= student['name'] as String?;
+      }
     }
+
+    // Direct first_name / last_name if present at root
+    if (name == null || name.isEmpty) {
+      final rootFirst = json['first_name'] as String? ?? '';
+      final rootLast = json['last_name'] as String? ?? '';
+      final rootFull = '$rootFirst $rootLast'.trim();
+      if (rootFull.isNotEmpty) {
+        name = rootFull;
+      }
+    }
+
+    final rawSessionType = json['session_type'] as String? ??
+        settingsMap['session_type'] as String? ??
+        sessionMap?['session_type'] as String? ??
+        (sessionMap?['settings'] is Map ? sessionMap!['settings']['session_type'] as String? : null);
+
     return AttendanceLogDto(
       id: json['id'] as String? ?? '',
       tenantId: json['tenant_id'] as String? ?? '',
@@ -155,28 +189,94 @@ class AttendanceLogDto {
       attendanceSessionId: json['attendance_session_id'] as String? ?? '',
       studentId: json['student_id'] as String? ?? '',
       timetableId: json['timetable_id'] as String?,
-      sessionType: json['session_type'] as String? ?? 'FULL_DAY',
-      classId: json['class_id'] as String? ?? '',
-      sectionId: json['section_id'] as String? ?? '',
-      teacherId: json['teacher_id'] as String?,
-      subjectId: json['subject_id'] as String?,
-      attendanceDate: json['attendance_date'] as String? ?? '',
-      attendanceStatus: json['attendance_status'] as String? ?? 'ABSENT',
+      sessionType: (rawSessionType != null && rawSessionType.isNotEmpty)
+          ? rawSessionType
+          : 'FULL_DAY',
+      classId: json['class_id'] as String? ?? sessionMap?['class_id'] as String? ?? '',
+      sectionId: json['section_id'] as String? ?? sessionMap?['section_id'] as String? ?? '',
+      teacherId: json['teacher_id'] as String? ?? sessionMap?['teacher_id'] as String?,
+      subjectId: json['subject_id'] as String? ?? sessionMap?['subject_id'] as String?,
+      attendanceDate: json['attendance_date'] as String? ?? sessionMap?['attendance_date'] as String? ?? '',
+      attendanceStatus: json['attendance_status'] as String? ?? json['status'] as String? ?? 'ABSENT',
       attendanceSource: json['attendance_source'] as String? ?? 'MANUAL',
       attendanceReason: json['attendance_reason'] as String? ?? 'UNKNOWN',
       remarks: json['remarks'] as String?,
       parentViewed: json['parent_viewed'] as bool? ?? false,
       parentViewedAt: json['parent_viewed_at'] as String?,
       isActive: json['is_active'] as bool? ?? true,
-      settings: Map<String, dynamic>.from(json['settings'] as Map? ?? {}),
+      settings: settingsMap,
       aiMetrics: Map<String, dynamic>.from(json['ai_metrics'] as Map? ?? {}),
       version: json['version'] as int? ?? 1,
       studentRollNumber: roll,
-      studentName: name,
-      admissionNumber: adm,
-      className: json['class_name'] as String?,
-      sectionName: json['section_name'] as String?,
-      markedByName: json['marked_by_name'] as String?,
+      studentName: (name != null && name.isNotEmpty) ? name : null,
+      admissionNumber: (adm != null && adm.isNotEmpty) ? adm : null,
+      className: json['class_name'] as String? ?? sessionMap?['class_name'] as String?,
+      sectionName: json['section_name'] as String? ?? sessionMap?['section_name'] as String?,
+      markedByName: json['marked_by_name'] as String? ?? sessionMap?['marked_by_name'] as String?,
+    );
+  }
+
+  AttendanceLogDto copyWith({
+    String? id,
+    String? tenantId,
+    String? schoolId,
+    String? academicYearId,
+    String? attendanceSessionId,
+    String? studentId,
+    String? timetableId,
+    String? sessionType,
+    String? classId,
+    String? sectionId,
+    String? teacherId,
+    String? subjectId,
+    String? attendanceDate,
+    String? attendanceStatus,
+    String? attendanceSource,
+    String? attendanceReason,
+    String? remarks,
+    bool? parentViewed,
+    String? parentViewedAt,
+    bool? isActive,
+    Map<String, dynamic>? settings,
+    Map<String, dynamic>? aiMetrics,
+    int? version,
+    String? studentRollNumber,
+    String? studentName,
+    String? admissionNumber,
+    String? className,
+    String? sectionName,
+    String? markedByName,
+  }) {
+    return AttendanceLogDto(
+      id: id ?? this.id,
+      tenantId: tenantId ?? this.tenantId,
+      schoolId: schoolId ?? this.schoolId,
+      academicYearId: academicYearId ?? this.academicYearId,
+      attendanceSessionId: attendanceSessionId ?? this.attendanceSessionId,
+      studentId: studentId ?? this.studentId,
+      timetableId: timetableId ?? this.timetableId,
+      sessionType: sessionType ?? this.sessionType,
+      classId: classId ?? this.classId,
+      sectionId: sectionId ?? this.sectionId,
+      teacherId: teacherId ?? this.teacherId,
+      subjectId: subjectId ?? this.subjectId,
+      attendanceDate: attendanceDate ?? this.attendanceDate,
+      attendanceStatus: attendanceStatus ?? this.attendanceStatus,
+      attendanceSource: attendanceSource ?? this.attendanceSource,
+      attendanceReason: attendanceReason ?? this.attendanceReason,
+      remarks: remarks ?? this.remarks,
+      parentViewed: parentViewed ?? this.parentViewed,
+      parentViewedAt: parentViewedAt ?? this.parentViewedAt,
+      isActive: isActive ?? this.isActive,
+      settings: settings ?? this.settings,
+      aiMetrics: aiMetrics ?? this.aiMetrics,
+      version: version ?? this.version,
+      studentRollNumber: studentRollNumber ?? this.studentRollNumber,
+      studentName: studentName ?? this.studentName,
+      admissionNumber: admissionNumber ?? this.admissionNumber,
+      className: className ?? this.className,
+      sectionName: sectionName ?? this.sectionName,
+      markedByName: markedByName ?? this.markedByName,
     );
   }
 

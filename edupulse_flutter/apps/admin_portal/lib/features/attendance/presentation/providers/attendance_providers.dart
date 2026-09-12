@@ -1306,7 +1306,10 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
           'academic_year_id': state.academicYearId,
           'timetable_id': timetableId,
           'attendance_date': dateStr,
-          'settings': {},
+          'session_type': state.sessionType,
+          'settings': {
+            'session_type': state.sessionType,
+          },
         },
         mapper: (json) {
           if (json is! Map) return null;
@@ -1478,9 +1481,49 @@ class AttendanceRegisterState {
   }
 }
 
+class _AttendanceStudentIdentity {
+  final String id;
+  final String firstName;
+  final String lastName;
+  final String admissionNumber;
+  final String? rollNumber;
+  final String? className;
+  final String? sectionName;
+
+  const _AttendanceStudentIdentity({
+    required this.id,
+    required this.firstName,
+    required this.lastName,
+    required this.admissionNumber,
+    this.rollNumber,
+    this.className,
+    this.sectionName,
+  });
+
+  factory _AttendanceStudentIdentity.fromJson(Map<String, dynamic> json) {
+    final first = (json['first_name'] ?? json['firstName'] ?? '').toString();
+    final last = (json['last_name'] ?? json['lastName'] ?? '').toString();
+    final adm = (json['admission_number'] ?? json['admission_no'] ?? json['admissionNumber'] ?? '').toString();
+    final roll = (json['roll_number'] ?? json['roll_no'] ?? json['rollNumber'])?.toString();
+    final cls = (json['class_name'] ?? json['className'])?.toString();
+    final sec = (json['section_name'] ?? json['sectionName'])?.toString();
+    return _AttendanceStudentIdentity(
+      id: (json['id'] ?? '').toString(),
+      firstName: first,
+      lastName: last,
+      admissionNumber: adm,
+      rollNumber: roll,
+      className: cls,
+      sectionName: sec,
+    );
+  }
+}
+
 class AttendanceRegisterNotifier extends StateNotifier<AttendanceRegisterState> {
   final BaseApiClient _apiClient;
   final Ref _ref;
+  final Map<String, _AttendanceStudentIdentity> _studentCache = {};
+  final Map<String, String> _sessionTypeCache = {};
 
   AttendanceRegisterNotifier(this._apiClient, this._ref)
       : super(const AttendanceRegisterState());
@@ -1550,17 +1593,17 @@ class AttendanceRegisterNotifier extends StateNotifier<AttendanceRegisterState> 
 
     if (!mounted) return;
 
-    bool needsFallback = false;
+    bool isFallback = false;
     result.when(
       onSuccess: (_) {},
       onFailure: (f) {
         if (f.statusCode == 404 || f.message.contains('404')) {
-          needsFallback = true;
+          isFallback = true;
         }
       },
     );
 
-    if (needsFallback) {
+    if (isFallback) {
       final fallbackQuery = Map<String, String>.from(query);
       if (state.startDate != null) {
         fallbackQuery['attendance_date'] = state.startDate!.toIso8601String().substring(0, 10);
@@ -1575,27 +1618,248 @@ class AttendanceRegisterNotifier extends StateNotifier<AttendanceRegisterState> 
         mapper: (json) {
           final payload = json as Map<String, dynamic>;
           final list = payload['data'] as List? ?? [];
+          final total = (payload['meta'] as Map?)?['total'] as int? ?? list.length;
           return {
             'records': list.map((e) => AttendanceLogDto.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
-            'total': list.length,
+            'total': total,
           };
         },
       );
       if (!mounted) return;
     }
 
-    result.when(
-      onSuccess: (data) {
+    await result.when(
+      onSuccess: (data) async {
+        final List<AttendanceLogDto> rawRecords = data['records'] as List<AttendanceLogDto>;
+        int total = data['total'] as int;
+
+        // Enrich records with student names, admission numbers, class/section names, and session types
+        final enrichedRecords = await _enrichRecords(schoolId, rawRecords, isFallback: isFallback);
+
+        if (!mounted) return;
+
+        List<AttendanceLogDto> finalRecords = enrichedRecords;
+
+        // Apply client-side search/filtering ONLY when fallback is used, avoiding duplicate filtering when register endpoint supports it
+        if (isFallback) {
+          if (state.search.trim().isNotEmpty) {
+            final queryLower = state.search.trim().toLowerCase();
+            finalRecords = finalRecords.where((r) {
+              final nameMatch = r.studentName?.toLowerCase().contains(queryLower) ?? false;
+              final admMatch = r.admissionNumber?.toLowerCase().contains(queryLower) ?? false;
+              final rollMatch = r.studentRollNumber?.toLowerCase().contains(queryLower) ?? false;
+              return nameMatch || admMatch || rollMatch;
+            }).toList();
+          }
+
+          if (state.status != null && state.status!.isNotEmpty) {
+            final statusUpper = state.status!.toUpperCase();
+            finalRecords = finalRecords.where((r) => r.attendanceStatus.toUpperCase() == statusUpper).toList();
+          }
+
+          if (state.startDate != null) {
+            final startStr = state.startDate!.toIso8601String().substring(0, 10);
+            finalRecords = finalRecords.where((r) => r.attendanceDate.compareTo(startStr) >= 0).toList();
+          }
+
+          if (state.endDate != null) {
+            final endStr = state.endDate!.toIso8601String().substring(0, 10);
+            finalRecords = finalRecords.where((r) => r.attendanceDate.compareTo(endStr) <= 0).toList();
+          }
+
+          total = finalRecords.length;
+        }
+
         state = state.copyWith(
-          records: data['records'] as List<AttendanceLogDto>,
-          total: data['total'] as int,
+          records: finalRecords,
+          total: total,
           isLoading: false,
         );
       },
-      onFailure: (failure) {
+      onFailure: (failure) async {
         state = state.copyWith(isLoading: false, error: failure.message);
       },
     );
+  }
+
+  Future<List<AttendanceLogDto>> _enrichRecords(
+    String schoolId,
+    List<AttendanceLogDto> records, {
+    required bool isFallback,
+  }) async {
+    if (records.isEmpty) return records;
+
+    // 1. Resolve Class and Section names
+    final classesState = _ref.read(classesProvider(schoolId));
+    final sectionsState = _ref.read(sectionsProvider(schoolId));
+    final classMap = {for (final c in classesState.classes) c.id: c.name};
+    final sectionMap = {for (final s in sectionsState.sections) s.id: s.name};
+
+    // 2. Resolve Session Types
+    final existingSessions = _ref.read(attendanceSessionsProvider).sessions;
+    for (final s in existingSessions) {
+      if (s.id.isNotEmpty && s.sessionType.isNotEmpty) {
+        _sessionTypeCache[s.id] = s.sessionType;
+      }
+    }
+
+    final missingSessionIds = records
+        .where((r) => r.attendanceSessionId.isNotEmpty && !_sessionTypeCache.containsKey(r.attendanceSessionId))
+        .map((r) => r.attendanceSessionId)
+        .toSet();
+
+    if (missingSessionIds.isNotEmpty) {
+      final sessionRes = await _apiClient.get(
+        '/attendances/sessions?school_id=$schoolId&limit=50',
+        mapper: (json) {
+          final payload = json as Map<String, dynamic>;
+          final list = payload['data'] as List? ?? [];
+          return list.map((e) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+        },
+      );
+      sessionRes.when(
+        onSuccess: (sessions) {
+          for (final s in sessions) {
+            if (s.id.isNotEmpty && s.sessionType.isNotEmpty) {
+              _sessionTypeCache[s.id] = s.sessionType;
+            }
+          }
+        },
+        onFailure: (_) {},
+      );
+    }
+
+    // 3. Resolve Student Identity (name, adm no, roll no)
+    final needsStudentResolution = records.where((r) {
+      final nameMissing = r.studentName == null || r.studentName!.isEmpty || r.studentName == '-';
+      final admMissing = r.admissionNumber == null || r.admissionNumber!.isEmpty || r.admissionNumber == '-';
+      return (nameMissing || admMissing) && r.studentId.isNotEmpty;
+    }).toList();
+
+    final missingStudentIds = needsStudentResolution
+        .map((r) => r.studentId)
+        .where((id) => !_studentCache.containsKey(id))
+        .toSet();
+
+    if (missingStudentIds.isNotEmpty) {
+      // Bulk fetch students for class/section or school
+      final queryParams = <String>[
+        'school_id=$schoolId',
+        if (state.classId != null) 'class_id=${state.classId}',
+        if (state.sectionId != null) 'section_id=${state.sectionId}',
+        'limit=100',
+      ];
+      final studentsRes = await _apiClient.get(
+        '/students?${queryParams.join('&')}',
+        mapper: (json) {
+          final payload = json as Map<String, dynamic>;
+          final list = payload['data'] as List? ?? [];
+          final result = <_AttendanceStudentIdentity>[];
+          for (final e in list) {
+            if (e is Map) {
+              result.add(_AttendanceStudentIdentity.fromJson(Map<String, dynamic>.from(e)));
+            }
+          }
+          return result;
+        },
+      );
+      studentsRes.when(
+        onSuccess: (students) {
+          for (final s in students) {
+            _studentCache[s.id] = s;
+          }
+        },
+        onFailure: (_) {},
+      );
+
+      // If specific students still missing, fetch individually
+      final stillMissing = missingStudentIds.where((id) => !_studentCache.containsKey(id)).take(15);
+      for (final id in stillMissing) {
+        final singleRes = await _apiClient.get(
+          '/students/$id?school_id=$schoolId',
+          mapper: (json) {
+            final payload = json as Map<String, dynamic>;
+            final dynamic data = payload['data'];
+            if (data is Map) {
+              return _AttendanceStudentIdentity.fromJson(Map<String, dynamic>.from(data));
+            }
+            return null;
+          },
+        );
+        singleRes.when(
+          onSuccess: (s) {
+            if (s != null) {
+              _studentCache[s.id] = s;
+            }
+          },
+          onFailure: (_) {},
+        );
+      }
+    }
+
+    // 4. If search query is active during fallback, pre-load matching students if needed
+    if (isFallback && state.search.trim().isNotEmpty) {
+      final searchStudentsRes = await _apiClient.get(
+        '/students?school_id=$schoolId&search=${Uri.encodeComponent(state.search.trim())}&limit=50',
+        mapper: (json) {
+          final payload = json as Map<String, dynamic>;
+          final list = payload['data'] as List? ?? [];
+          final result = <_AttendanceStudentIdentity>[];
+          for (final e in list) {
+            if (e is Map) {
+              result.add(_AttendanceStudentIdentity.fromJson(Map<String, dynamic>.from(e)));
+            }
+          }
+          return result;
+        },
+      );
+      searchStudentsRes.when(
+        onSuccess: (students) {
+          for (final s in students) {
+            _studentCache[s.id] = s;
+          }
+        },
+        onFailure: (_) {},
+      );
+    }
+
+    // 5. Enrich records without mutating original DTO
+    return records.map((r) {
+      final student = _studentCache[r.studentId];
+
+      final resolvedName = (r.studentName != null && r.studentName!.isNotEmpty && r.studentName != '-')
+          ? r.studentName
+          : (student != null ? '${student.firstName} ${student.lastName}'.trim() : null);
+
+      final resolvedAdm = (r.admissionNumber != null && r.admissionNumber!.isNotEmpty && r.admissionNumber != '-')
+          ? r.admissionNumber
+          : student?.admissionNumber;
+
+      final resolvedRoll = (r.studentRollNumber != null && r.studentRollNumber!.isNotEmpty)
+          ? r.studentRollNumber
+          : student?.rollNumber;
+
+      final resolvedClass = (r.className != null && r.className!.isNotEmpty)
+          ? r.className
+          : (classMap[r.classId] ?? student?.className);
+
+      final resolvedSection = (r.sectionName != null && r.sectionName!.isNotEmpty)
+          ? r.sectionName
+          : (sectionMap[r.sectionId] ?? student?.sectionName);
+
+      final resolvedSession = (r.sessionType.isNotEmpty && r.sessionType != 'FULL_DAY')
+          ? r.sessionType
+          : (_sessionTypeCache[r.attendanceSessionId] ?? r.sessionType);
+
+      return r.copyWith(
+        studentName: resolvedName,
+        admissionNumber: resolvedAdm,
+        studentRollNumber: resolvedRoll,
+        className: resolvedClass,
+        sectionName: resolvedSection,
+        sessionType: resolvedSession,
+      );
+    }).toList();
   }
 
   void exportCsv() {

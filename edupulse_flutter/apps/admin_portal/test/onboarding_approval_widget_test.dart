@@ -60,10 +60,20 @@ void main() {
       await tester.pumpAndSettle();
 
       // Load synthetic data
-      final genBtn = find.text('Load Synthetic Dev Data');
+      final genBtn = find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == 'Load Synthetic Dev Data' || widget.data == 'Load Synthetic Demo Data'),
+      );
       expect(genBtn, findsOneWidget);
       await tester.tap(genBtn);
       await tester.pumpAndSettle();
+
+      final confirmBtn = find.text('Load Demo Data');
+      if (confirmBtn.evaluate().isNotEmpty) {
+        await tester.tap(confirmBtn);
+        await tester.pumpAndSettle();
+      }
 
       // Navigate to Import step (which is index 18 inside OnboardingStep.values)
       final notifier = appContainer.read(schoolOnboardingProvider.notifier);
@@ -159,6 +169,25 @@ class CustomizableFakeSessionManager implements SessionManager {
 
   String? _schoolId = 'school_1';
 
+  String? _schoolName = 'DPS Hyderabad';
+  String? _tenantName = 'DPS Society';
+
+  @override
+  Future<String?> getSchoolName() async => _schoolName;
+
+  @override
+  Future<void> saveSchoolName(String schoolName) async {
+    _schoolName = schoolName;
+  }
+
+  @override
+  Future<String?> getTenantName() async => _tenantName;
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {
+    _tenantName = tenantName;
+  }
+
   @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
@@ -166,7 +195,7 @@ class CustomizableFakeSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override

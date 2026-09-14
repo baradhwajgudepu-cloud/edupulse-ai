@@ -1,17 +1,21 @@
 import 'dart:typed_data';
-import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'package:edupulse_core/edupulse_core.dart';
+import 'package:edupulse_config/edupulse_config.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../data/models/school_onboarding_models.dart';
 import '../../data/models/school_onboarding_validators.dart';
 import '../../data/models/synthetic_onboarding_data_generator.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../tenant_setup/presentation/providers/tenant_providers.dart';
 import '../../../students/presentation/providers/student_providers.dart';
 import '../../../guardians/presentation/providers/guardian_providers.dart';
 import '../../../teachers/presentation/providers/teachers_providers.dart';
 import '../../../users/presentation/providers/user_provider.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 
 final schoolOnboardingProvider = StateNotifierProvider<SchoolOnboardingNotifier, OnboardingState>((ref) {
   final notifier = SchoolOnboardingNotifier(ref);
@@ -26,16 +30,69 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
   final Ref _ref;
   static bool bypassApproval = false;
 
-  SchoolOnboardingNotifier(this._ref) : super(OnboardingState.initial());
+  SchoolOnboardingNotifier(this._ref) : super(OnboardingState.initial()) {
+    _initFromExistingContext();
+  }
+
+  void _initFromExistingContext() {
+    final selectedTenantId = _ref.read(selectedTenantIdProvider);
+    final activeTenantId = _ref.read(activeTenantIdProvider);
+    final tenantId = (selectedTenantId != null && selectedTenantId.isNotEmpty)
+        ? selectedTenantId
+        : ((activeTenantId != null && activeTenantId.isNotEmpty) ? activeTenantId : null);
+
+    if (tenantId != null && tenantId.isNotEmpty) {
+      final tenants = _ref.read(tenantsListProvider).tenants;
+      if (tenants.isNotEmpty) {
+        final match = tenants.where((t) => t.id == tenantId && t.isActive && t.status == 'ACTIVE').firstOrNull;
+        if (match != null) {
+          state = state.copyWith(
+            createNewTenant: false,
+            selectedTenantId: match.id,
+            resolvedTenantId: match.id,
+            resolvedTenantName: match.name,
+          );
+          return;
+        } else {
+          // Explicitly deleted or missing tenant
+          state = state.copyWith(
+            createNewTenant: true,
+            selectedTenantId: null,
+            resolvedTenantId: null,
+            resolvedTenantName: null,
+          );
+          return;
+        }
+      } else {
+        // Initial state or tenants list loading
+        state = state.copyWith(
+          createNewTenant: false,
+          selectedTenantId: tenantId,
+        );
+        return;
+      }
+    }
+
+    state = state.copyWith(
+      createNewTenant: true,
+      selectedTenantId: null,
+      resolvedTenantId: null,
+      resolvedTenantName: null,
+      newTenantName: null,
+      newTenantCode: null,
+      newTenantEmail: null,
+    );
+  }
 
   void onSchoolContextChanged() {
-    if (!state.isProcessing) {
+    if (!state.isProcessing && !state.isCompleted) {
       reset();
     }
   }
 
   void reset() {
     state = OnboardingState.initial();
+    _initFromExistingContext();
   }
 
   void setTenantMode({
@@ -45,18 +102,40 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     String? newTenantEmail,
     String? selectedTenantId,
   }) {
+    final effectiveName = newTenantName ?? state.newTenantName;
+    final effectiveCode = newTenantCode ??
+        ((newTenantName != null && newTenantName.trim().isNotEmpty)
+            ? SchoolOnboardingValidators.generateTenantCode(newTenantName.trim())
+            : state.newTenantCode);
+    final effectiveEmail = newTenantEmail ?? state.newTenantEmail;
+
     state = state.copyWith(
       createNewTenant: createNewTenant,
-      newTenantName: newTenantName ?? state.newTenantName,
-      newTenantCode: newTenantCode ?? state.newTenantCode,
-      newTenantEmail: newTenantEmail ?? state.newTenantEmail,
+      newTenantName: effectiveName,
+      newTenantCode: effectiveCode,
+      newTenantEmail: effectiveEmail,
       selectedTenantId: selectedTenantId ?? state.selectedTenantId,
+    );
+  }
+
+  void setPrincipalDetails({
+    String? principalName,
+    String? principalEmail,
+    String? principalPhone,
+    String? principalPassword,
+  }) {
+    state = state.copyWith(
+      principalName: principalName ?? state.principalName,
+      principalEmail: principalEmail ?? state.principalEmail,
+      principalPhone: principalPhone ?? state.principalPhone,
+      principalPassword: principalPassword ?? state.principalPassword,
     );
   }
 
   void setStep(OnboardingStep step) {
     state = state.copyWith(currentStep: step);
   }
+
 
   void approveAndStartImport(String schoolId, BaseApiClient apiClient, {required String approvedBy}) {
     state = state.copyWith(
@@ -165,6 +244,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             sheets: updatedSheets,
             globalErrorMessage: null,
           );
+          _syncTenantDefaultsFromSchoolSheet(sheetData);
           _runCrossSheetValidation();
           updateApprovalStatus();
         },
@@ -237,8 +317,34 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       sheets: updatedSheets,
       globalErrorMessage: null,
     );
+    _syncTenantDefaultsFromSchoolSheet(sheetData);
     _runCrossSheetValidation();
     updateApprovalStatus();
+  }
+
+  void _syncTenantDefaultsFromSchoolSheet(OnboardingSheetData sheetData) {
+    if (sheetData.step != OnboardingStep.school || sheetData.rows.isEmpty) return;
+    final row = sheetData.rows.first;
+    final schoolName = (row.data['school_name'] ?? row.data['name'] ?? '').trim();
+    final schoolEmail = (row.data['email'] ?? '').trim();
+
+    if (schoolName.isNotEmpty) {
+      final shouldUpdateTenantName = state.createNewTenant && (state.newTenantName == null || state.newTenantName!.trim().isEmpty);
+      final tName = shouldUpdateTenantName ? schoolName : (state.newTenantName ?? schoolName);
+      final generatedCode = (state.newTenantCode == null || state.newTenantCode!.trim().isEmpty)
+          ? SchoolOnboardingValidators.generateTenantCode(tName)
+          : state.newTenantCode;
+      final generatedEmail = (state.newTenantEmail == null || state.newTenantEmail!.trim().isEmpty)
+          ? (schoolEmail.isNotEmpty ? schoolEmail : 'admin@${SchoolOnboardingValidators.normalizeTenantCode(tName)}.edu')
+          : state.newTenantEmail;
+
+      state = state.copyWith(
+        newTenantName: shouldUpdateTenantName ? schoolName : state.newTenantName,
+        newTenantCode: generatedCode,
+        newTenantEmail: generatedEmail,
+        resolvedSchoolName: schoolName,
+      );
+    }
   }
 
   void removeCsvFile(OnboardingStep step) {
@@ -254,7 +360,26 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
   }
 
   // Populate pre-configured synthetic data for demo/tests
-  void loadSyntheticFixture() {
+  void loadSyntheticFixture({bool force = false}) {
+    final buildConfig = _ref.read(buildConfigProvider);
+    if (!force && buildConfig.env == AppEnvironment.prod) {
+      final authState = _ref.read(authStateProvider);
+      final isAuthorizedAdmin = authState is Authenticated &&
+          (authState.user.isSuperuser ||
+              authState.user.roles.any((r) =>
+                  r.toUpperCase() == 'SUPER_ADMIN' ||
+                  r.toUpperCase() == 'SYSTEM_ADMIN' ||
+                  r.toUpperCase() == 'TENANT_ADMIN' ||
+                  r.toUpperCase() == 'CHAIRMAN' ||
+                  r.toUpperCase() == 'ADMIN' ||
+                  r.toUpperCase() == 'ADMINISTRATOR'));
+
+      if (!isAuthorizedAdmin) {
+        // In production, synthetic fixture loading is strictly forbidden for non-admin users
+        return;
+      }
+    }
+
     // Determine active school context if available
     final selectedSchoolId = _ref.read(selectedSchoolIdProvider);
     final schoolsState = _ref.read(schoolsListProvider);
@@ -267,10 +392,33 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
     final schoolCode = (activeSchool?.code.isNotEmpty == true)
         ? activeSchool!.code
-        : (state.resolvedSchools.isNotEmpty ? state.resolvedSchools.keys.first : 'DPSH');
-    final schoolName = (activeSchool?.name.isNotEmpty == true) ? activeSchool!.name : 'Delhi Public School Hyderabad';
-    final schoolEmail = (activeSchool?.email.isNotEmpty == true) ? activeSchool!.email : 'principal@dpsh.in';
+        : (state.resolvedSchools.isNotEmpty ? state.resolvedSchools.keys.first : 'TS001');
+    final schoolName = (activeSchool?.name.isNotEmpty == true)
+        ? activeSchool!.name
+        : (state.resolvedSchoolName?.isNotEmpty == true
+            ? state.resolvedSchoolName!
+            : (state.newTenantName?.isNotEmpty == true
+                ? state.newTenantName!
+                : 'Telangana Model School & Junior College'));
+    final schoolEmail = (activeSchool?.email.isNotEmpty == true) ? activeSchool!.email : 'principal.ts001@telanganaschool.edu';
     final board = (activeSchool?.board.isNotEmpty == true) ? activeSchool!.board : 'CBSE';
+
+    final tName = (state.newTenantName != null && state.newTenantName!.isNotEmpty)
+        ? state.newTenantName!
+        : schoolName;
+    final tCode = (state.newTenantCode != null && state.newTenantCode!.isNotEmpty)
+        ? state.newTenantCode!
+        : SchoolOnboardingValidators.generateTenantCode(tName);
+    final tEmail = (state.newTenantEmail != null && state.newTenantEmail!.isNotEmpty)
+        ? state.newTenantEmail!
+        : 'admin@${SchoolOnboardingValidators.normalizeTenantCode(tName)}.edu';
+
+    state = state.copyWith(
+      newTenantName: tName,
+      newTenantCode: tCode,
+      newTenantEmail: tEmail,
+      resolvedSchoolName: schoolName,
+    );
 
     final csvMap = SyntheticOnboardingDataGenerator.generateAllCsvs(
       schoolCode: schoolCode,
@@ -376,69 +524,134 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       String? activeTenantName;
 
       if (state.createNewTenant) {
-        final tName = (state.newTenantName != null && state.newTenantName!.trim().isNotEmpty)
+        String tName = (state.newTenantName != null && state.newTenantName!.trim().isNotEmpty)
             ? state.newTenantName!.trim()
-            : 'Telangana Educational Society';
+            : '';
+
+        // Fallback: extract school name from school sheet if user didn't enter tenant name
+        if (tName.isEmpty) {
+          final schoolSheet = state.sheets[OnboardingStep.school];
+          if (schoolSheet != null && schoolSheet.rows.isNotEmpty) {
+            tName = (schoolSheet.rows.first.data['school_name'] ?? schoolSheet.rows.first.data['name'] ?? '').trim();
+          }
+        }
+        if (tName.isEmpty) {
+          tName = 'New Educational Organization';
+        }
+
         final rawCode = (state.newTenantCode != null && state.newTenantCode!.trim().isNotEmpty)
             ? state.newTenantCode!.trim()
-            : 'ts-edu';
-        final tCode = rawCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\-]'), '-');
+            : SchoolOnboardingValidators.generateTenantCode(tName);
+        final baseCode = SchoolOnboardingValidators.normalizeTenantCode(rawCode);
+
         final tEmail = (state.newTenantEmail != null && state.newTenantEmail!.trim().isNotEmpty)
             ? state.newTenantEmail!.trim()
-            : 'admin@telanganaedu.org';
-        final subdomain = tCode;
+            : 'admin@${baseCode.isNotEmpty ? baseCode : "organization"}.edu';
 
-        final tenantResult = await apiClient.post(
-          '/tenants',
-          data: {
-            'name': tName,
-            'code': tCode,
-            'subdomain': subdomain,
-            'email': tEmail,
-            'is_active': true,
-            'status': 'ACTIVE',
-          },
-          mapper: (json) {
-            final payload = json as Map<String, dynamic>;
-            return payload['data'] as Map<String, dynamic>;
-          },
-        );
+        // Attempt tenant creation with dynamic collision resolution
+        String currentCode = baseCode;
+        String currentSubdomain = baseCode;
+        int collisionAttempt = 0;
+        // Check if an existing active tenant with baseCode already exists
+        try {
+          final preCheck = await apiClient.get<List<dynamic>>(
+            '/tenants?code=${Uri.encodeComponent(baseCode)}',
+            mapper: (json) {
+              final payload = json as Map<String, dynamic>;
+              return (payload['data'] as List<dynamic>?) ?? const [];
+            },
+          );
+          if (preCheck is Success<List<dynamic>> && preCheck.data.isNotEmpty) {
+            final existing = preCheck.data.first as Map<String, dynamic>;
+            final isActive = existing['is_active'] as bool? ?? true;
+            final status = existing['status'] as String? ?? 'ACTIVE';
+            if (isActive && status == 'ACTIVE') {
+              activeTenantId = existing['id'] as String;
+              activeTenantName = (existing['name'] as String?) ?? tName;
+            }
+          }
+        } catch (_) {}
 
-        if (tenantResult is Success<Map<String, dynamic>>) {
-          activeTenantId = tenantResult.data['id'] as String;
-          activeTenantName = (tenantResult.data['name'] as String?) ?? tName;
-        } else {
+        const int maxCollisionRetries = 5;
+        while (collisionAttempt < maxCollisionRetries && activeTenantId == null) {
+          final tenantResult = await apiClient.post(
+            '/tenants?idempotent=true',
+            data: {
+              'name': tName,
+              'code': currentCode,
+              'subdomain': currentSubdomain,
+              'email': tEmail,
+              'is_active': true,
+              'status': 'ACTIVE',
+            },
+            mapper: (json) {
+              final payload = json as Map<String, dynamic>;
+              return payload['data'] as Map<String, dynamic>;
+            },
+          );
+
+          if (tenantResult is Success<Map<String, dynamic>>) {
+            activeTenantId = tenantResult.data['id'] as String;
+            activeTenantName = (tenantResult.data['name'] as String?) ?? tName;
+            break;
+          }
+
           final failure = (tenantResult as Failure<Map<String, dynamic>>).failure;
           if (failure.statusCode == 409) {
+            // Check if an existing tenant with this exact code can be resolved
             final listRes = await apiClient.get<List<dynamic>>(
-              '/tenants?limit=100',
+              '/tenants?code=${Uri.encodeComponent(currentCode)}',
               mapper: (json) {
                 final payload = json as Map<String, dynamic>;
                 return (payload['data'] as List<dynamic>?) ?? const [];
               },
             );
+            bool resolvedFromList = false;
             listRes.when(
               onSuccess: (list) {
                 for (final item in list) {
                   final map = item as Map<String, dynamic>;
-                  if (map['code'] == tCode) {
+                  if (map['code'] == currentCode) {
                     activeTenantId = map['id'] as String;
                     activeTenantName = (map['name'] as String?) ?? tName;
+                    resolvedFromList = true;
                     break;
                   }
                 }
               },
               onFailure: (_) {},
             );
-          }
-          if (activeTenantId == null) {
+
+            if (resolvedFromList) {
+              break;
+            }
+
+            // Generate next collision suffix
+            collisionAttempt++;
+            currentCode = SchoolOnboardingValidators.generateTenantCode(baseCode, attempt: collisionAttempt + 1);
+            currentSubdomain = currentCode;
+          } else {
+            // Non-409 error
             state = state.copyWith(
               isProcessing: false,
-              globalErrorMessage: 'Failed to create or resolve organization/tenant: ${failure.message}',
+              isCompleted: false,
+              currentStep: OnboardingStep.report,
+              globalErrorMessage: 'Onboarding could not start because tenant context initialization failed: ${failure.message}',
               approvalStatus: OnboardingApprovalStatus.failed,
             );
             return;
           }
+        }
+
+        if (activeTenantId == null) {
+          state = state.copyWith(
+            isProcessing: false,
+            isCompleted: false,
+            currentStep: OnboardingStep.report,
+            globalErrorMessage: 'Onboarding could not start because tenant context could not be created or resolved after collision retries.',
+            approvalStatus: OnboardingApprovalStatus.failed,
+          );
+          return;
         }
       } else {
         activeTenantId = state.selectedTenantId ??
@@ -450,7 +663,8 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       if (finalTenantId == null || finalTenantId.isEmpty) {
         state = state.copyWith(
           isProcessing: false,
-          globalErrorMessage: 'No active organization/tenant context found. Operation stopped.',
+          isCompleted: false,
+          globalErrorMessage: 'Onboarding could not start because no active organization/tenant context was resolved.',
           approvalStatus: OnboardingApprovalStatus.failed,
         );
         return;
@@ -465,11 +679,24 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           await sessionManager.saveTenantName(tName);
         }
       } catch (_) {}
+      _ref.read(tenantsListProvider.notifier).fetchTenants();
 
       state = state.copyWith(
         resolvedTenantId: finalTenantId,
         resolvedTenantName: activeTenantName,
       );
+
+      final hasSchoolSheet = state.sheets.containsKey(OnboardingStep.school) &&
+          (state.sheets[OnboardingStep.school]?.rows.isNotEmpty ?? false);
+      if (targetSchoolId.isEmpty && !hasSchoolSheet) {
+        state = state.copyWith(
+          isProcessing: false,
+          isCompleted: false,
+          globalErrorMessage: 'Onboarding could not start because no school context was provided or found in the onboarding sheets.',
+          approvalStatus: OnboardingApprovalStatus.failed,
+        );
+        return;
+      }
 
       await _prepopulateResolutionMaps(
         incomingSchoolId.isNotEmpty ? incomingSchoolId : initialSchoolId,
@@ -483,6 +710,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         if (initialSchoolId.isNotEmpty && currentSelected.isNotEmpty && currentSelected != initialSchoolId && currentSelected != targetSchoolId) {
           state = state.copyWith(
             isProcessing: false,
+            isCompleted: false,
             globalErrorMessage: 'Active school context modified during execution. Import stopped.',
             approvalStatus: OnboardingApprovalStatus.failed,
           );
@@ -556,6 +784,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
                 } catch (_) {}
                 _ref.read(selectedSchoolIdProvider.notifier).state = newlyCreatedId;
                 _ref.read(schoolsListProvider.notifier).fetchSchools();
+                state = state.copyWith(resolvedSchoolName: sName);
               } else {
                 final failureRow = res.copyWith(
                   status: OnboardingRowStatus.failed,
@@ -567,10 +796,24 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
                   sheets: updatedSheets,
                   failureCount: state.failureCount + 1,
                   currentProgressRow: i + 1,
+                  isProcessing: false,
+                  isCompleted: false,
+                  globalErrorMessage: 'Onboarding could not start because school context creation failed: ${res.apiErrorMessage ?? "Failed to create school"}',
+                  approvalStatus: OnboardingApprovalStatus.failed,
                 );
+                return;
               }
             }
           } else if (res.status == OnboardingRowStatus.failed) {
+            if (step == OnboardingStep.school) {
+              state = state.copyWith(
+                isProcessing: false,
+                isCompleted: false,
+                globalErrorMessage: 'Onboarding could not start because school context creation failed: ${res.apiErrorMessage ?? "Failed to create school"}',
+                approvalStatus: OnboardingApprovalStatus.failed,
+              );
+              return;
+            }
             final tenantId = _ref.read(activeTenantIdProvider) ?? '';
             // ignore: avoid_print
             print('[IMPORT]\nModule: ${step.label}\nRow: ${i + 1}/${sheet.rows.length}\nTenant ID: $tenantId\nSchool ID: $activeSchoolId\nStatus: FAILED\nReason: ${res.apiErrorMessage ?? res.dependencyFailureReason ?? "Unknown"}');
@@ -587,24 +830,51 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     } on PrepopulationException catch (e) {
       // ignore: avoid_print
       print('=== [ONBOARDING PREPOPULATION FAILURE] ===: $e');
-      state = state.copyWith(globalErrorMessage: e.toString());
+      state = state.copyWith(
+        isCompleted: false,
+        globalErrorMessage: e.toString(),
+        approvalStatus: OnboardingApprovalStatus.failed,
+      );
     } catch (e) {
       // ignore: avoid_print
       print('=== [ONBOARDING EXCEPTION IN PIPELINE] ===: $e');
-      state = state.copyWith(globalErrorMessage: 'Execution failed: $e');
+      state = state.copyWith(
+        isCompleted: false,
+        globalErrorMessage: 'Execution failed: $e',
+        approvalStatus: OnboardingApprovalStatus.failed,
+      );
     } finally {
+      final bool hasFailed = state.globalErrorMessage != null ||
+          state.approvalStatus == OnboardingApprovalStatus.failed;
+      _ref.read(tenantsListProvider.notifier).fetchTenants();
+      _ref.read(schoolsListProvider.notifier).fetchSchools();
+      if (targetSchoolId.isNotEmpty) {
+        _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
+        try {
+          final sessionManager = _ref.read(sessionManagerProvider);
+          await sessionManager.saveSchoolId(targetSchoolId);
+          if (state.resolvedSchoolName != null) {
+            await sessionManager.saveSchoolName(state.resolvedSchoolName!);
+          }
+        } catch (_) {}
+      }
+      _invalidateRelevantProviders(targetSchoolId);
+
       state = state.copyWith(
         isProcessing: false,
-        isCompleted: true,
-        currentStep: OnboardingStep.report,
+        isCompleted: !hasFailed && !state.isCancelled,
+        currentStep: hasFailed ? state.currentStep : OnboardingStep.report,
         activeImportStep: null,
-        approvalStatus: state.globalErrorMessage != null
+        approvalStatus: hasFailed
             ? OnboardingApprovalStatus.failed
-            : OnboardingApprovalStatus.completed,
+            : (state.isCancelled ? state.approvalStatus : OnboardingApprovalStatus.completed),
       );
-      _ref.read(schoolsListProvider.notifier).fetchSchools();
-      _invalidateRelevantProviders(targetSchoolId);
     }
+  }
+
+  @visibleForTesting
+  Future<OnboardingParsedRow> processRowForTesting(OnboardingStep step, OnboardingParsedRow row, String schoolId, BaseApiClient apiClient) {
+    return _processRow(step, row, schoolId, apiClient);
   }
 
   Future<OnboardingParsedRow> _processRow(OnboardingStep step, OnboardingParsedRow row, String schoolId, BaseApiClient apiClient) async {
@@ -654,10 +924,21 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     switch (step) {
       case OnboardingStep.school:
         final code = (row.data['school_code'] ?? row.data['code'] ?? '').trim();
+        final schoolName = (row.data['school_name'] ?? row.data['name'] ?? '').trim();
+        if (schoolId.isNotEmpty) {
+          state = state.copyWith(
+            resolvedSchools: Map.from(state.resolvedSchools)..[code] = schoolId,
+          );
+          return row.copyWith(
+            status: OnboardingRowStatus.success,
+            resolvedId: schoolId,
+            displayName: state.resolvedSchoolName ?? schoolName,
+          );
+        }
+
         final cleanPhone = SchoolOnboardingValidators.normalizePhoneNumber(row.data['phone']);
         final cleanPostal = SchoolOnboardingValidators.normalizePostalCode(row.data['postal_code']);
         final email = (row.data['email'] ?? 'contact@school.edu').trim();
-        final schoolName = (row.data['school_name'] ?? row.data['name'] ?? '').trim();
         final board = (row.data['board'] ?? 'CBSE').trim().toUpperCase();
         final schoolType = (row.data['school_type'] ?? 'HIGH_SCHOOL').trim().toUpperCase();
 
@@ -689,6 +970,52 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             resolvedSchools: Map.from(state.resolvedSchools)..[code] = uuid,
             resolvedSchoolName: sName,
           );
+
+          // Automatically provision Principal User account
+          String? pEmail = (state.principalEmail ?? row.data['principal_email'])?.trim();
+          String? pName = (state.principalName ?? row.data['principal_name'])?.trim();
+          String? pPhone = (state.principalPhone ?? row.data['principal_phone'])?.trim();
+          String? pPass = (state.principalPassword ?? row.data['principal_password'] ?? 'EduPulse@123').trim();
+          if ((pEmail == null || pEmail.isEmpty) && email.toLowerCase().startsWith('principal.')) {
+            pEmail = email;
+          }
+          if (pEmail != null && pEmail.isNotEmpty) {
+            String pFirstName = 'Principal';
+            String pLastName = code;
+            if (pName != null && pName.isNotEmpty) {
+              final parts = pName.split(RegExp(r'\s+'));
+              if (parts.isNotEmpty) {
+                pFirstName = parts.first;
+                if (parts.length > 1) {
+                  pLastName = parts.sublist(1).join(' ');
+                } else {
+                  pLastName = '';
+                }
+              }
+            }
+            final pRes = await provisionPrincipal(
+              schoolId: uuid,
+              email: pEmail,
+              firstName: pFirstName,
+              lastName: pLastName,
+              phone: pPhone,
+              password: pPass,
+            );
+            if (pRes is Success<Map<String, dynamic>>) {
+              final pData = pRes.data;
+              state = state.copyWith(
+                resolvedPrincipalUser: {
+                  'id': pData['id'],
+                  'email': pData['email'] ?? pEmail,
+                  'name': '$pFirstName $pLastName'.trim(),
+                  'status': pData['status'] ?? 'ACTIVE',
+                  'temp_password': pPass,
+                  'school_id': uuid,
+                },
+              );
+            }
+          }
+
           return row.copyWith(
             status: OnboardingRowStatus.success,
             resolvedId: uuid,
@@ -705,6 +1032,52 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             );
             if (existingId != null) {
               state = state.copyWith(resolvedSchools: Map.from(state.resolvedSchools)..[code] = existingId);
+
+              // Automatically provision Principal User account for resolved existing school
+              String? pEmail = (state.principalEmail ?? row.data['principal_email'])?.trim();
+              String? pName = (state.principalName ?? row.data['principal_name'])?.trim();
+              String? pPhone = (state.principalPhone ?? row.data['principal_phone'])?.trim();
+              String? pPass = (state.principalPassword ?? row.data['principal_password'] ?? 'EduPulse@123').trim();
+              if ((pEmail == null || pEmail.isEmpty) && email.toLowerCase().startsWith('principal.')) {
+                pEmail = email;
+              }
+              if (pEmail != null && pEmail.isNotEmpty) {
+                String pFirstName = 'Principal';
+                String pLastName = code;
+                if (pName != null && pName.isNotEmpty) {
+                  final parts = pName.split(RegExp(r'\s+'));
+                  if (parts.isNotEmpty) {
+                    pFirstName = parts.first;
+                    if (parts.length > 1) {
+                      pLastName = parts.sublist(1).join(' ');
+                    } else {
+                      pLastName = '';
+                    }
+                  }
+                }
+                final pRes = await provisionPrincipal(
+                  schoolId: existingId,
+                  email: pEmail,
+                  firstName: pFirstName,
+                  lastName: pLastName,
+                  phone: pPhone,
+                  password: pPass,
+                );
+                if (pRes is Success<Map<String, dynamic>>) {
+                  final pData = pRes.data;
+                  state = state.copyWith(
+                    resolvedPrincipalUser: {
+                      'id': pData['id'],
+                      'email': pData['email'] ?? pEmail,
+                      'name': '$pFirstName $pLastName'.trim(),
+                      'status': pData['status'] ?? 'ACTIVE',
+                      'temp_password': pPass,
+                      'school_id': existingId,
+                    },
+                  );
+                }
+              }
+
               return row.copyWith(status: OnboardingRowStatus.success, resolvedId: existingId);
             } else {
               return _handleFailure(
@@ -1511,16 +1884,18 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
       case OnboardingStep.exams:
         final ayCode = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
-        final cCode = row.data['class_code'] ?? '';
-        final sCode = row.data['subject_code'] ?? '';
-        final examTypeRaw = row.data['exam_type'] ?? '';
+        final cCode = (row.data['class_code'] ?? '').trim();
+        final sCode = (row.data['subject_code'] ?? '').trim();
+        final examCode = (row.data['exam_code'] ?? '').trim().toUpperCase();
+        final examName = (row.data['exam_name'] ?? '').trim();
+        final examTypeRaw = (row.data['exam_type'] ?? '').trim();
         if (examTypeRaw.isEmpty) {
           return row.copyWith(
             status: OnboardingRowStatus.failed,
             apiErrorMessage: 'exam_type is required for Exams & Documents.',
           );
         }
-        final examDateRaw = row.data['exam_date'] ?? '';
+        final examDateRaw = (row.data['exam_date'] ?? '').trim();
         if (examDateRaw.isEmpty) {
           return row.copyWith(
             status: OnboardingRowStatus.failed,
@@ -1533,14 +1908,27 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         if (cId == null) return _createDependencySkipRow(row, OnboardingStep.classes, 'class_code', cCode, 'class');
         final sId = state.resolvedSubjects[sCode];
         if (sId == null) return _createDependencySkipRow(row, OnboardingStep.subjects, 'subject_code', sCode, 'subject');
+
+        // Master composite key for exam master deduplication during onboarding execution:
+        // academic_year_code + exam_code + class_code
+        final masterKey = '$ayCode|$examCode|$cCode';
+        final cachedExamId = state.resolvedExaminations[masterKey] ??
+            state.resolvedExaminations['$ayCode-$examCode-$cCode'] ??
+            (examCode.isNotEmpty ? state.resolvedExaminations[examCode] : null);
+        if (cachedExamId != null && cachedExamId.isNotEmpty) {
+          // Exam master already created or resolved for this exam code and class!
+          // Reuse existing exam master ID and mark row as successful without duplicate API call.
+          return row.copyWith(status: OnboardingRowStatus.success, resolvedId: cachedExamId);
+        }
+
         final result = await apiClient.post(
           '/examinations',
           data: {
-            'exam_name': row.data['exam_name'],
+            'exam_name': examName,
             'exam_type': examTypeRaw.toUpperCase(),
             'start_date': examDateRaw,
             'end_date': examDateRaw,
-            'exam_code': row.data['exam_code'],
+            'exam_code': examCode,
             'max_marks': int.tryParse(row.data['maximum_marks'] ?? '100') ?? 100,
             'duration_minutes': int.tryParse(row.data['duration_minutes'] ?? '180') ?? 180,
             'school_id': schoolId,
@@ -1555,10 +1943,13 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         );
         if (result is Success<Map<String, dynamic>>) {
           final uuid = result.data['id'] as String;
-          final examCode = row.data['exam_code'] ?? '';
+          final updatedResolved = Map<String, String>.from(state.resolvedExaminations)
+            ..[masterKey] = uuid
+            ..['$ayCode-$examCode-$cCode'] = uuid;
           if (examCode.isNotEmpty) {
-            state = state.copyWith(resolvedExaminations: Map.from(state.resolvedExaminations)..[examCode] = uuid);
+            updatedResolved[examCode] = uuid;
           }
+          state = state.copyWith(resolvedExaminations: updatedResolved);
           return row.copyWith(status: OnboardingRowStatus.success, resolvedId: uuid);
         } else {
           final failure = (result as Failure<Map<String, dynamic>>).failure;
@@ -1572,10 +1963,13 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
               apiClient: apiClient,
             );
             if (existingId != null) {
-              final examCode = row.data['exam_code'] ?? '';
+              final updatedResolved = Map<String, String>.from(state.resolvedExaminations)
+                ..[masterKey] = existingId
+                ..['$ayCode-$examCode-$cCode'] = existingId;
               if (examCode.isNotEmpty) {
-                state = state.copyWith(resolvedExaminations: Map.from(state.resolvedExaminations)..[examCode] = existingId);
+                updatedResolved[examCode] = existingId;
               }
+              state = state.copyWith(resolvedExaminations: updatedResolved);
               return row.copyWith(status: OnboardingRowStatus.success, resolvedId: existingId);
             } else {
               return _handleFailure(
@@ -1964,13 +2358,18 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
       case OnboardingStep.exams:
         final ayCode = (rowData['academic_year_code'] ?? '').trim().toUpperCase();
         final ayId = state.resolvedAcademicYears[ayCode] ?? '';
-        final examName = rowData['exam_name'] ?? '';
-        if (ayId.isEmpty || examName.isEmpty) return null;
+        final examName = (rowData['exam_name'] ?? '').trim();
+        final examCode = (rowData['exam_code'] ?? '').trim().toUpperCase();
+        final classCode = (rowData['class_code'] ?? '').trim();
+        final classId = state.resolvedClasses[classCode];
+        if (ayId.isEmpty || (examName.isEmpty && examCode.isEmpty)) return null;
+
         int skip = 0;
         const int limit = 100;
+        final classQueryParam = (classId != null && classId.isNotEmpty) ? '&class_id=$classId' : '';
         while (true) {
           final listResult = await apiClient.get(
-            '/examinations?school_id=$schoolId&academic_year_id=$ayId&skip=$skip&limit=$limit',
+            '/examinations?school_id=$schoolId&academic_year_id=$ayId$classQueryParam&skip=$skip&limit=$limit',
             mapper: (json) {
               if (json is List) {
                 return json;
@@ -1989,21 +2388,37 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
           );
           if (list.isEmpty) break;
           for (final item in list) {
+            // Check if class matches (if classId provided and item has participating_class_ids)
+            if (classId != null && classId.isNotEmpty) {
+              final rawPartClasses = item['participating_class_ids'];
+              if (rawPartClasses is List && rawPartClasses.isNotEmpty) {
+                final partClassList = rawPartClasses.map((e) => e.toString()).toList();
+                if (!partClassList.contains(classId)) {
+                  continue; // Does not belong to this class
+                }
+              }
+            }
+
+            // Priority 1: Match by exam_code in settings
+            if (examCode.isNotEmpty) {
+              final settings = item['settings'] is Map ? (item['settings'] as Map) : null;
+              final itemCode = (settings?['exam_code']?.toString() ?? settings?['code']?.toString() ?? '').trim().toUpperCase();
+              if (itemCode.isNotEmpty && itemCode == examCode) {
+                return item['id'] as String;
+              }
+            }
+
+            // Priority 2: Match by exam_name + exam_type
             final existingName = (item['exam_name']?.toString() ?? '').trim().toLowerCase();
-            final targetName = examName.trim().toLowerCase();
+            final targetName = examName.toLowerCase();
 
             final existingType = (item['exam_type']?.toString() ?? '').trim().toUpperCase();
             final targetType = (rowData['exam_type']?.toString() ?? '').trim().toUpperCase();
 
-            final rawExistStart = item['start_date']?.toString() ?? '';
-            final existingStart = rawExistStart.length >= 10 ? rawExistStart.substring(0, 10) : rawExistStart.trim();
-            final rawTargetStart = rowData['exam_date']?.toString() ?? '';
-            final targetStart = rawTargetStart.length >= 10 ? rawTargetStart.substring(0, 10) : rawTargetStart.trim();
-
-            if (existingName == targetName &&
-                existingType == targetType &&
-                existingStart == targetStart) {
-              return item['id'] as String;
+            if (existingName == targetName) {
+              if (targetType.isEmpty || existingType == targetType) {
+                return item['id'] as String;
+              }
             }
           }
           if (list.length < limit) break;
@@ -2654,36 +3069,34 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
     }
   }
 
-  Future<ApiResult<Map<String, dynamic>>> provisionPrincipal(String schoolId) async {
-    final r = Random.secure();
-    const hexDigits = '0123456789abcdef';
-    final chars = List<String>.generate(36, (index) {
-      if (index == 8 || index == 13 || index == 18 || index == 23) {
-        return '-';
-      }
-      if (index == 14) {
-        return '4';
-      }
-      final val = r.nextInt(16);
-      if (index == 19) {
-        return hexDigits[(val & 0x3) | 0x8];
-      }
-      return hexDigits[val];
-    });
-    final principalId = chars.join();
-
+  Future<ApiResult<Map<String, dynamic>>> provisionPrincipal({
+    required String schoolId,
+    required String email,
+    required String firstName,
+    String? lastName,
+    String? phone,
+    String? password,
+  }) async {
     final apiClient = _ref.read(apiClientProvider);
     final result = await apiClient.post(
-      '/identity/provision/principal/$principalId',
-      queryParameters: {'school_id': schoolId},
+      '/identity/provision/principal',
+      data: {
+        'school_id': schoolId,
+        'email': email.trim().toLowerCase(),
+        'first_name': firstName.trim(),
+        'last_name': (lastName != null && lastName.trim().isNotEmpty) ? lastName.trim() : '',
+        if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+        if (password != null && password.trim().isNotEmpty) 'password': password.trim(),
+      },
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
-        return payload['data'] as Map<String, dynamic>;
+        return (payload['data'] as Map<String, dynamic>?) ?? {};
       },
     );
     return result;
   }
 }
+
 
 class PrepopulationException implements Exception {
   final String endpoint;

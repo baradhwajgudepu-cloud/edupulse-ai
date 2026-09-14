@@ -61,6 +61,14 @@ class FakeOnboardingRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeOnboardingSessionManager implements SessionManager {
@@ -100,7 +108,7 @@ class FakeOnboardingSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
@@ -696,10 +704,20 @@ void main() {
       expect(find.text('2. Academic Structure'), findsOneWidget);
 
       // Tap synthetic dev generator button
-      final genBtn = find.text('Load Synthetic Dev Data');
+      final genBtn = find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == 'Load Synthetic Dev Data' || widget.data == 'Load Synthetic Demo Data'),
+      );
       expect(genBtn, findsOneWidget);
       await tester.tap(genBtn);
       await tester.pumpAndSettle();
+
+      final confirmBtn = find.text('Load Demo Data');
+      if (confirmBtn.evaluate().isNotEmpty) {
+        await tester.tap(confirmBtn);
+        await tester.pumpAndSettle();
+      }
 
       // Check validation step navigation and error listing review
       appContainer.read(schoolOnboardingProvider.notifier).setStep(OnboardingStep.validation);
@@ -3423,6 +3441,222 @@ void main() {
       final state = container.read(schoolOnboardingProvider);
       final ttSheet = state.sheets[OnboardingStep.timetable]!;
       expect(ttSheet.rows.first.unresolvedReferences.any((r) => r.contains('Workload limit reached')), isTrue);
+    });
+
+    test('DB. Exam subject validation accepts one exam with multiple subjects without false duplicates', () {
+      final csv = 'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,ENG,2026-09-16,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,TEL,2026-09-17,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,HIN,2026-09-18,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,SCI,2026-09-19,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,SOC,2026-09-20,100,180';
+
+      final csvRows = csv.split('\n').map((line) => line.split(',')).toList();
+      final sheetData = SchoolOnboardingValidators.validateSheet(OnboardingStep.exams, 'exams.csv', csvRows);
+
+      expect(sheetData.rows.length, equals(6));
+      for (final r in sheetData.rows) {
+        expect(r.duplicates, isEmpty, reason: 'Row ${r.rowIndex} with subject ${r.data['subject_code']} should not be marked duplicate');
+        expect(r.status, isNot(equals(OnboardingRowStatus.duplicate)));
+      }
+    });
+
+    test('DC. Exam subject validation flags genuine duplicate when same subject repeats under same exam and class', () {
+      final csv = 'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180';
+
+      final csvRows = csv.split('\n').map((line) => line.split(',')).toList();
+      final sheetData = SchoolOnboardingValidators.validateSheet(OnboardingStep.exams, 'exams.csv', csvRows);
+
+      expect(sheetData.rows.length, equals(2));
+      expect(sheetData.rows[0].duplicates, isEmpty);
+      expect(sheetData.rows[1].duplicates, isNotEmpty);
+      expect(sheetData.rows[1].duplicates.first.contains('Duplicate record'), isTrue);
+      expect(sheetData.rows[1].status, equals(OnboardingRowStatus.duplicate));
+    });
+
+    test('DD. Exam subject validation allows multiple classes to have same exam code pattern and exam name', () {
+      final csv = 'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+          'AY2026-2027,EXAM_QUARTERLY_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_2026,Quarterly Examination 2026,QUARTERLY,C6,MATH,2026-09-15,100,180';
+
+      final csvRows = csv.split('\n').map((line) => line.split(',')).toList();
+      final sheetData = SchoolOnboardingValidators.validateSheet(OnboardingStep.exams, 'exams.csv', csvRows);
+
+      expect(sheetData.rows.length, equals(2));
+      expect(sheetData.rows[0].duplicates, isEmpty);
+      expect(sheetData.rows[1].duplicates, isEmpty);
+    });
+
+    testWidgets('DE. Exam preview groups subjects under parent exam master and resolves subject names without raw UUIDs', (tester) async {
+      tester.view.physicalSize = const Size(1600, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      // Load subjects catalog
+      notifier.loadCsvFile(
+        OnboardingStep.subjects,
+        'subjects.csv',
+        'subject_code,subject_name,category,subject_type,academic_year_code\n'
+        'MATH,Mathematics,CORE,THEORY,AY2026-2027\n'
+        'ENG,English Literature,LANGUAGE,THEORY,AY2026-2027',
+      );
+
+      // Load classes
+      notifier.loadCsvFile(
+        OnboardingStep.classes,
+        'classes.csv',
+        'academic_year_code,class_code,display_label,level,grade_category,max_capacity,status\n'
+        'AY2026-2027,C5,Class 5,5,PRIMARY,40,ACTIVE',
+      );
+
+      // Load 2 exam subjects under same exam code
+      notifier.loadCsvFile(
+        OnboardingStep.exams,
+        'exams.csv',
+        'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+        'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+        'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,ENG,2026-09-16,100,180',
+      );
+
+      notifier.setStep(OnboardingStep.validation);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: Scaffold(body: SchoolOnboardingScreen())),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Find "Review" button for Exams & Documents step and click it
+      final reviewButtons = find.text('Review');
+      expect(reviewButtons, findsWidgets);
+      await tester.ensureVisible(reviewButtons.last);
+      await tester.pumpAndSettle();
+      await tester.tap(reviewButtons.last);
+      await tester.pumpAndSettle();
+
+      // Verify Exam Master grouping
+      expect(find.text('Quarterly Examination 2026'), findsOneWidget);
+      expect(find.text('Code: EXAM_QUARTERLY_C5_2026'), findsOneWidget);
+      expect(find.text('Class 5'), findsOneWidget);
+      expect(find.text('2 Subjects'), findsOneWidget);
+      expect(find.text('Valid'), findsOneWidget);
+
+      // Verify resolved subject names (not just raw codes, and never UUIDs)
+      expect(find.text('Mathematics'), findsOneWidget);
+      expect(find.text('English Literature'), findsOneWidget);
+      expect(find.text('MATH'), findsOneWidget);
+      expect(find.text('ENG'), findsOneWidget);
+    });
+
+    test('DF. Onboarding execution reuses existing resolved exam master across multiple subject rows', () async {
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+
+      // Pre-seed resolved academic year, class, and subjects
+      notifier.state = notifier.state.copyWith(
+        resolvedAcademicYears: {'AY2026-2027': 'ay-uuid-123'},
+        resolvedClasses: {'C5': 'class-uuid-555'},
+        resolvedSubjects: {'MATH': 'sub-uuid-math', 'ENG': 'sub-uuid-eng'},
+      );
+
+      // Load exams sheet
+      notifier.loadCsvFile(
+        OnboardingStep.exams,
+        'exams.csv',
+        'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+        'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+        'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,ENG,2026-09-16,100,180',
+      );
+
+      // Simulate first row resolved to exam ID 'exam-master-uuid-999'
+      notifier.state = notifier.state.copyWith(
+        resolvedExaminations: {
+          'AY2026-2027-EXAM_QUARTERLY_C5_2026-C5': 'exam-master-uuid-999',
+          'EXAM_QUARTERLY_C5_2026': 'exam-master-uuid-999',
+        },
+      );
+
+      // Process row 2 (English) directly via processRowForTesting
+      final row2 = notifier.state.sheets[OnboardingStep.exams]!.rows[1];
+      final processedRow2 = await notifier.processRowForTesting(OnboardingStep.exams, row2, 'school_1', fakeApiClient);
+
+      expect(processedRow2.status, equals(OnboardingRowStatus.success));
+      expect(processedRow2.resolvedId, equals('exam-master-uuid-999'));
+    });
+
+    test('DG. Different subject dates across multiple subjects do not cause duplicates and reuse single exam master', () async {
+      final csv = 'academic_year_code,exam_code,exam_name,exam_type,class_code,subject_code,exam_date,maximum_marks,duration_minutes\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,MATH,2026-09-15,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,ENG,2026-09-16,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,TEL,2026-09-17,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,HIN,2026-09-18,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,SCI,2026-09-19,100,180\n'
+          'AY2026-2027,EXAM_QUARTERLY_C5_2026,Quarterly Examination 2026,QUARTERLY,C5,SOC,2026-09-20,100,180';
+
+      final csvRows = csv.split('\n').map((line) => line.split(',')).toList();
+      final sheetData = SchoolOnboardingValidators.validateSheet(OnboardingStep.exams, 'exams.csv', csvRows);
+
+      expect(sheetData.rows.length, equals(6));
+      for (final r in sheetData.rows) {
+        expect(r.duplicates, isEmpty);
+        expect(r.status, isNot(equals(OnboardingRowStatus.duplicate)));
+      }
+
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+          selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+        ],
+      );
+      final notifier = container.read(schoolOnboardingProvider.notifier);
+      notifier.state = notifier.state.copyWith(
+        resolvedAcademicYears: {'AY2026-2027': 'ay-uuid-123'},
+        resolvedClasses: {'C5': 'class-uuid-555'},
+        resolvedSubjects: {
+          'MATH': 'sub-math',
+          'ENG': 'sub-eng',
+          'TEL': 'sub-tel',
+          'HIN': 'sub-hin',
+          'SCI': 'sub-sci',
+          'SOC': 'sub-soc',
+        },
+        resolvedExaminations: {
+          'AY2026-2027|EXAM_QUARTERLY_C5_2026|C5': 'exam-master-uuid-999',
+        },
+      );
+
+      // Verify all 6 subject rows with different dates resolve to the exact same exam master
+      for (int i = 0; i < 6; i++) {
+        final processed = await notifier.processRowForTesting(
+          OnboardingStep.exams,
+          sheetData.rows[i],
+          'school_1',
+          fakeApiClient,
+        );
+        expect(processed.status, equals(OnboardingRowStatus.success));
+        expect(processed.resolvedId, equals('exam-master-uuid-999'));
+      }
     });
   });
 }

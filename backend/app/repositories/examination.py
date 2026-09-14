@@ -307,23 +307,75 @@ class ExaminationRepository:
         return exams
 
     async def get_duplicate(
-        self, name: str, academic_year_id: uuid.UUID, school_id: uuid.UUID, tenant_id: uuid.UUID
+        self,
+        name: str,
+        academic_year_id: uuid.UUID,
+        school_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        exam_type: Optional[str] = None,
+        class_id: Optional[uuid.UUID] = None,
+        participating_class_ids: Optional[List[uuid.UUID]] = None,
+        exam_code: Optional[str] = None,
     ) -> Optional[Examination]:
         stmt = select(Examination).where(
-            Examination.exam_name.ilike(name),
             Examination.academic_year_id == academic_year_id,
             Examination.school_id == school_id,
             Examination.tenant_id == tenant_id,
             Examination.deleted_at.is_(None)
+        ).options(
+            selectinload(Examination.participating_classes)
         )
         result = await self.db.execute(stmt)
-        return result.unique().scalar_one_or_none()
+        candidates = list(result.unique().scalars().all())
+
+        # Determine target class IDs
+        target_classes = set()
+        if participating_class_ids:
+            target_classes.update(participating_class_ids)
+        if class_id:
+            target_classes.add(class_id)
+
+        clean_code = exam_code.strip().upper() if exam_code else None
+        clean_name = name.strip().lower() if name else ""
+        clean_type = exam_type.strip().upper() if exam_type else None
+
+        # Priority 1: Match by exam_code (when available) scoped by class
+        if clean_code:
+            for exam in candidates:
+                exam_classes = {pc.class_id for pc in exam.participating_classes}
+                # If both have class restrictions, they must overlap
+                if target_classes and exam_classes and not target_classes.intersection(exam_classes):
+                    continue
+                code_in_settings = (exam.settings or {}).get("exam_code") or (exam.settings or {}).get("code")
+                if code_in_settings and str(code_in_settings).strip().upper() == clean_code:
+                    return exam
+
+        # Priority 2: Match by exam_name + exam_type (scoped by class)
+        for exam in candidates:
+            exam_classes = {pc.class_id for pc in exam.participating_classes}
+            # If both have class restrictions, they must overlap
+            if target_classes and exam_classes and not target_classes.intersection(exam_classes):
+                continue
+
+            if exam.exam_name.strip().lower() == clean_name:
+                if clean_type:
+                    cand_type = getattr(exam.exam_type, "value", str(exam.exam_type)).upper()
+                    if cand_type == clean_type:
+                        return exam
+                else:
+                    return exam
+
+        return None
 
     async def get_parent_schedules(
-        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID, limit: int = 100
+        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID, limit: int = 100, parent_user_id: Optional[uuid.UUID] = None
     ) -> List[ExamSchedule]:
+        match_conditions = [Guardian.email == parent_email]
+        if parent_user_id:
+            match_conditions.append(Guardian.user_id == parent_user_id)
+
         stmt_g = select(Guardian).where(
-            Guardian.email == parent_email,
+            or_(*match_conditions),
             Guardian.school_id == school_id,
             Guardian.tenant_id == tenant_id,
             Guardian.deleted_at.is_(None)

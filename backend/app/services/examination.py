@@ -237,11 +237,21 @@ class ExaminationService:
             )
 
         # 4. Duplicate Check
-        dup = await self.exam_repo.get_duplicate(obj_in.exam_name, obj_in.academic_year_id, school_id, tenant_id)
+        exam_type_val = obj_in.exam_type.value if hasattr(obj_in.exam_type, "value") else str(obj_in.exam_type)
+        dup = await self.exam_repo.get_duplicate(
+            name=obj_in.exam_name,
+            academic_year_id=obj_in.academic_year_id,
+            school_id=school_id,
+            tenant_id=tenant_id,
+            exam_type=exam_type_val,
+            class_id=obj_in.class_id,
+            participating_class_ids=obj_in.participating_class_ids,
+            exam_code=obj_in.exam_code or (obj_in.settings or {}).get("exam_code"),
+        )
         if dup:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An examination with this name already exists in the academic year."
+                detail="An examination with this name or code already exists in the academic year."
             )
 
         db_obj = await self.exam_repo.create(tenant_id, obj_in, created_by=current_user.id)
@@ -598,7 +608,16 @@ class ExaminationService:
             )
 
         # Duplicate check on name
-        dup = await self.exam_repo.get_duplicate(obj_in.new_exam_name, source_exam.academic_year_id, school_id, tenant_id)
+        source_class_ids = [pc.class_id for pc in source_exam.participating_classes] if source_exam.participating_classes else []
+        exam_type_val = source_exam.exam_type.value if hasattr(source_exam.exam_type, "value") else str(source_exam.exam_type)
+        dup = await self.exam_repo.get_duplicate(
+            name=obj_in.new_exam_name,
+            academic_year_id=source_exam.academic_year_id,
+            school_id=school_id,
+            tenant_id=tenant_id,
+            exam_type=exam_type_val,
+            participating_class_ids=source_class_ids,
+        )
         if dup:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -920,6 +939,7 @@ class ExaminationService:
                         section_name=tsa.section.name if tsa.section else "Section",
                         subject_id=tsa.subject_id,
                         subject_name=tsa.subject.subject_name if tsa.subject else "Subject",
+                        subject_code=tsa.subject.subject_code if tsa.subject else None,
                         teacher_subject_assignment_id=tsa.id,
                         exam_date=current_date,
                         start_time=start_time,

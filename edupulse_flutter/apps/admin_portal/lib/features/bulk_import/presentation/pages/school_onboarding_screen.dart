@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import '../../../tenant_setup/data/models/tenant_models.dart';
 import '../../../tenant_setup/presentation/providers/tenant_providers.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import 'package:edupulse_config/edupulse_config.dart';
 
 class SchoolOnboardingScreen extends ConsumerStatefulWidget {
   const SchoolOnboardingScreen({super.key});
@@ -69,184 +70,284 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
         (authState.user.isSuperuser ||
             authState.user.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN'));
     final isTenantAdmin = authState is Authenticated &&
-        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN' || r.toUpperCase() == 'CHAIRMAN');
+        !isSuperAdmin &&
+        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN' || r.toUpperCase() == 'CHAIRMAN' || r.toUpperCase() == 'ADMIN' || r.toUpperCase() == 'ADMINISTRATOR');
 
     final tenantId = ref.watch(activeTenantIdProvider);
     final tenantsState = ref.watch(tenantsListProvider);
     final matchedTenant = tenantsState.tenants.where((t) => t.id == tenantId);
-    final tenantName = matchedTenant.isNotEmpty ? matchedTenant.first.name : (tenantId == null ? 'All Tenants / None' : 'Tenant ($tenantId)');
+    final tenantName = matchedTenant.isNotEmpty ? matchedTenant.first.name : 'No Tenant Selected';
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('School Onboarding Center'),
       ),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Left Wizard Sidebar Navigation Stepper
-          Container(
-            width: 250,
-            decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: theme.dividerColor)),
-            ),
-            child: ListView.builder(
-              itemCount: OnboardingStep.values.length,
-              itemBuilder: (context, index) {
-                final step = OnboardingStep.values[index];
-                final isSelected = state.currentStep == step;
-                final isLoaded = state.sheets.containsKey(step) && state.sheets[step]?.sheetErrorMessage == null;
-                final hasError = state.sheets[step]?.sheetErrorMessage != null || (state.sheets[step]?.rows.any((r) => r.errors.isNotEmpty) ?? false);
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 800;
 
-                IconData icon = Icons.circle_outlined;
-                Color iconColor = theme.disabledColor;
-
-                if (step == OnboardingStep.validation) {
-                  icon = Icons.fact_check_outlined;
-                } else if (step == OnboardingStep.import) {
-                  icon = Icons.publish_outlined;
-                } else if (step == OnboardingStep.report) {
-                  icon = Icons.assessment_outlined;
-                } else if (isLoaded) {
-                  icon = Icons.check_circle;
-                  iconColor = Colors.green;
-                } else if (hasError) {
-                  icon = Icons.error;
-                  iconColor = theme.colorScheme.error;
-                }
-
-                const labelSuffix = '';
-
-                return ListTile(
-                  leading: Icon(icon, color: isSelected ? theme.colorScheme.primary : iconColor),
-                  title: Text(
-                    '${index + 1}. ${step.label}$labelSuffix',
-                    style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      color: isSelected ? theme.colorScheme.primary : theme.textTheme.bodyMedium?.color,
-                    ),
-                  ),
-                  selected: isSelected,
-                  onTap: state.isProcessing
-                      ? null
-                      : () {
-                          ref.read(schoolOnboardingProvider.notifier).setStep(step);
-                        },
-                );
-              },
-            ),
-          ),
-
-          // Center Workspace Area
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // School safety badge
-                  Card(
-                    color: theme.colorScheme.primaryContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Icon(Icons.school, color: theme.colorScheme.onPrimaryContainer),
-                          Text(
-                            'Active School: $schoolName',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.onPrimaryContainer,
-                            ),
+          final workspaceContent = SingleChildScrollView(
+            padding: EdgeInsets.all(isNarrow ? 12.0 : 24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // School safety badge
+                Card(
+                  color: theme.colorScheme.primaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Icon(Icons.school, color: theme.colorScheme.onPrimaryContainer),
+                        Text(
+                          'Active School: $schoolName',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onPrimaryContainer,
                           ),
+                        ),
+                        if (isSuperAdmin || isTenantAdmin || ref.watch(buildConfigProvider).env != AppEnvironment.prod)
                           TextButton.icon(
+                            key: const ValueKey('load_synthetic_demo_data_button'),
                             style: TextButton.styleFrom(
                               foregroundColor: theme.colorScheme.onPrimaryContainer,
                             ),
                             icon: const Icon(Icons.flash_on),
-                            label: const Text('Load Synthetic Dev Data'),
+                            label: const Text('Load Synthetic Demo Data'),
                             onPressed: state.isProcessing
                                 ? null
-                                : () {
-                                    ref.read(schoolOnboardingProvider.notifier).loadSyntheticFixture();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Loaded synthetic test datasets across all 13 onboarding sheets.'),
-                                        duration: Duration(seconds: 2),
+                                : () async {
+                                    final confirmed = await showDialog<bool>(
+                                      context: context,
+                                      builder: (dialogCtx) => AlertDialog(
+                                        title: const Row(
+                                          children: [
+                                            Icon(Icons.warning_amber_rounded, color: Colors.amber),
+                                            SizedBox(width: 8),
+                                            Text('Load Synthetic Demo Data?'),
+                                          ],
+                                        ),
+                                        content: const Text(
+                                          'This will stage synthetic demonstration records across all 13 onboarding sheets in memory for preview.\n\n'
+                                          'No existing production database records will be altered or deleted. Staged rows will only be imported if you proceed and execute onboarding.',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.of(dialogCtx).pop(false),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          FilledButton(
+                                            onPressed: () => Navigator.of(dialogCtx).pop(true),
+                                            child: const Text('Load Demo Data'),
+                                          ),
+                                        ],
                                       ),
                                     );
+                                    if (confirmed == true && context.mounted) {
+                                      ref.read(schoolOnboardingProvider.notifier).loadSyntheticFixture();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Loaded synthetic test datasets across all 13 onboarding sheets.'),
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
                                   },
                           ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
-                  if (isSuperAdmin || isTenantAdmin) ...[
-                    const SizedBox(height: 12),
-                    Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        side: BorderSide(color: theme.dividerColor),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: ExpansionTile(
-                        leading: const Icon(Icons.info_outline, size: 20),
-                        title: const Text(
-                          'Context Details & System Identifiers',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        subtitle: Text(
-                          'Tenant: $tenantName | School: $schoolName',
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                        children: [
-                          _buildDiagnosticRow(context, 'Tenant Name', tenantName),
-                          _buildDiagnosticRow(context, 'Tenant ID', tenantId ?? 'None', isCopyable: tenantId != null),
-                          const Divider(height: 16),
-                          _buildDiagnosticRow(context, 'School Name', schoolName),
-                          _buildDiagnosticRow(context, 'School ID', schoolId ?? 'None', isCopyable: schoolId != null),
-                          const Divider(height: 16),
-                          _buildDiagnosticRow(context, 'Current selectedSchoolId', schoolId ?? 'None', isCopyable: schoolId != null),
-                          _buildDiagnosticRow(context, 'API Header (X-Tenant-ID)', tenantId ?? 'None', isCopyable: tenantId != null),
-                        ],
-                      ),
+                ),
+                if (isSuperAdmin || isTenantAdmin) ...[
+                  const SizedBox(height: 12),
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      side: BorderSide(color: theme.dividerColor),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                  ],
-                  const SizedBox(height: 24),
-
-                  if (state.globalErrorMessage != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer,
-                        borderRadius: BorderRadius.circular(8),
+                    child: ExpansionTile(
+                      leading: const Icon(Icons.info_outline, size: 20),
+                      title: const Text(
+                        'Context Details & System Identifiers',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.error_outline, color: theme.colorScheme.error),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              state.globalErrorMessage!,
-                              style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                            ),
-                          ),
-                        ],
+                      subtitle: Text(
+                        'Tenant: $tenantName | School: $schoolName',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
+                        overflow: TextOverflow.ellipsis,
                       ),
+                      childrenPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      children: [
+                        _buildDiagnosticRow(context, 'Tenant Name', tenantName),
+                        _buildDiagnosticRow(context, 'Tenant ID', tenantId ?? 'None', isCopyable: tenantId != null),
+                        const Divider(height: 16),
+                        _buildDiagnosticRow(context, 'School Name', schoolName),
+                        _buildDiagnosticRow(context, 'School ID', schoolId ?? 'None', isCopyable: schoolId != null),
+                        const Divider(height: 16),
+                        _buildDiagnosticRow(context, 'Current selectedSchoolId', schoolId ?? 'None', isCopyable: schoolId != null),
+                        _buildDiagnosticRow(context, 'API Header (X-Tenant-ID)', tenantId ?? 'None', isCopyable: tenantId != null),
+                      ],
                     ),
-                    const SizedBox(height: 24),
-                  ],
-
-                  _buildStepWorkspace(state, theme),
+                  ),
                 ],
-              ),
+                const SizedBox(height: 24),
+
+                if (state.globalErrorMessage != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error_outline, color: theme.colorScheme.error),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            state.globalErrorMessage!,
+                            style: TextStyle(color: theme.colorScheme.onErrorContainer),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
+                _buildStepWorkspace(state, theme),
+              ],
             ),
-          ),
-        ],
+          );
+
+          if (isNarrow) {
+            return Column(
+              children: [
+                Container(
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    border: Border(bottom: BorderSide(color: theme.dividerColor)),
+                  ),
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    itemCount: OnboardingStep.values.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final step = OnboardingStep.values[index];
+                      final isSelected = state.currentStep == step;
+                      final isLoaded = state.sheets.containsKey(step) && state.sheets[step]?.sheetErrorMessage == null;
+                      final hasError = state.sheets[step]?.sheetErrorMessage != null || (state.sheets[step]?.rows.any((r) => r.errors.isNotEmpty) ?? false);
+
+                      IconData icon = Icons.circle_outlined;
+                      Color iconColor = theme.disabledColor;
+
+                      if (step == OnboardingStep.validation) {
+                        icon = Icons.fact_check_outlined;
+                      } else if (step == OnboardingStep.import) {
+                        icon = Icons.publish_outlined;
+                      } else if (step == OnboardingStep.report) {
+                        icon = Icons.assessment_outlined;
+                      } else if (isLoaded) {
+                        icon = Icons.check_circle;
+                        iconColor = Colors.green;
+                      } else if (hasError) {
+                        icon = Icons.error;
+                        iconColor = theme.colorScheme.error;
+                      }
+
+                      return FilterChip(
+                        selected: isSelected,
+                        showCheckmark: false,
+                        avatar: Icon(icon, size: 16, color: isSelected ? theme.colorScheme.onPrimary : iconColor),
+                        label: Text('${index + 1}. ${step.label}'),
+                        labelStyle: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          color: isSelected ? theme.colorScheme.onPrimary : null,
+                        ),
+                        backgroundColor: theme.colorScheme.surface,
+                        selectedColor: theme.colorScheme.primary,
+                        onSelected: state.isProcessing
+                            ? null
+                            : (_) {
+                                ref.read(schoolOnboardingProvider.notifier).setStep(step);
+                              },
+                      );
+                    },
+                  ),
+                ),
+                Expanded(child: workspaceContent),
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Left Wizard Sidebar Navigation Stepper
+              Container(
+                width: 250,
+                decoration: BoxDecoration(
+                  border: Border(right: BorderSide(color: theme.dividerColor)),
+                ),
+                child: ListView.builder(
+                  itemCount: OnboardingStep.values.length,
+                  itemBuilder: (context, index) {
+                    final step = OnboardingStep.values[index];
+                    final isSelected = state.currentStep == step;
+                    final isLoaded = state.sheets.containsKey(step) && state.sheets[step]?.sheetErrorMessage == null;
+                    final hasError = state.sheets[step]?.sheetErrorMessage != null || (state.sheets[step]?.rows.any((r) => r.errors.isNotEmpty) ?? false);
+
+                    IconData icon = Icons.circle_outlined;
+                    Color iconColor = theme.disabledColor;
+
+                    if (step == OnboardingStep.validation) {
+                      icon = Icons.fact_check_outlined;
+                    } else if (step == OnboardingStep.import) {
+                      icon = Icons.publish_outlined;
+                    } else if (step == OnboardingStep.report) {
+                      icon = Icons.assessment_outlined;
+                    } else if (isLoaded) {
+                      icon = Icons.check_circle;
+                      iconColor = Colors.green;
+                    } else if (hasError) {
+                      icon = Icons.error;
+                      iconColor = theme.colorScheme.error;
+                    }
+
+                    const labelSuffix = '';
+
+                    return ListTile(
+                      leading: Icon(icon, color: isSelected ? theme.colorScheme.primary : iconColor),
+                      title: Text(
+                        '${index + 1}. ${step.label}$labelSuffix',
+                        style: TextStyle(
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          color: isSelected ? theme.colorScheme.primary : theme.textTheme.bodyMedium?.color,
+                        ),
+                      ),
+                      selected: isSelected,
+                      onTap: state.isProcessing
+                          ? null
+                          : () {
+                              ref.read(schoolOnboardingProvider.notifier).setStep(step);
+                            },
+                    );
+                  },
+                ),
+              ),
+
+              // Center Workspace Area
+              Expanded(child: workspaceContent),
+            ],
+          );
+        },
       ),
     );
   }
@@ -332,7 +433,7 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                       initialValue: state.newTenantName,
                       decoration: const InputDecoration(
                         labelText: 'Organization / Society Name *',
-                        hintText: 'e.g. Telangana Educational Society',
+                        hintText: 'e.g. Model Educational Society',
                         prefixIcon: Icon(Icons.corporate_fare),
                         border: OutlineInputBorder(),
                         isDense: true,
@@ -351,8 +452,8 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                           child: TextFormField(
                             initialValue: state.newTenantCode,
                             decoration: const InputDecoration(
-                              labelText: 'Organization Code *',
-                              hintText: 'e.g. TS_EDU',
+                              labelText: 'Organization Code',
+                              hintText: 'e.g. MODEL_EDU (auto-generated if empty)',
                               prefixIcon: Icon(Icons.tag),
                               border: OutlineInputBorder(),
                               isDense: true,
@@ -370,8 +471,8 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                           child: TextFormField(
                             initialValue: state.newTenantEmail,
                             decoration: const InputDecoration(
-                              labelText: 'Contact Email *',
-                              hintText: 'e.g. admin@telanganaedu.org',
+                              labelText: 'Contact Email',
+                              hintText: 'e.g. admin@organization.edu (auto-generated if empty)',
                               prefixIcon: Icon(Icons.email),
                               border: OutlineInputBorder(),
                               isDense: true,
@@ -416,7 +517,182 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
             ),
           ),
           const SizedBox(height: 20),
+
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              side: BorderSide(color: Colors.indigo.shade200),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.admin_panel_settings, color: Colors.indigo),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Principal Authentication Account Setup',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.indigo.shade900),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Configures the authenticated Principal User account with the PRINCIPAL role (separate from generic School Contact Information).',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 16),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isNarrow = constraints.maxWidth < 650;
+                      if (isNarrow) {
+                        return Column(
+                          children: [
+                            TextFormField(
+                              initialValue: state.principalName,
+                              decoration: const InputDecoration(
+                                labelText: 'Principal Full Name',
+                                hintText: 'e.g. Dr. Ramesh Sharma',
+                                prefixIcon: Icon(Icons.person),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalName: val);
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              initialValue: state.principalEmail,
+                              decoration: const InputDecoration(
+                                labelText: 'Principal Login Email *',
+                                hintText: 'e.g. principal.ts001@telanganaschool.edu',
+                                prefixIcon: Icon(Icons.email),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalEmail: val);
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              initialValue: state.principalPhone,
+                              decoration: const InputDecoration(
+                                labelText: 'Principal Mobile',
+                                hintText: 'e.g. +919848011000',
+                                prefixIcon: Icon(Icons.phone),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalPhone: val);
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              initialValue: state.principalPassword ?? 'EduPulse@123',
+                              decoration: const InputDecoration(
+                                labelText: 'Initial / Temporary Password',
+                                hintText: 'EduPulse@123',
+                                prefixIcon: Icon(Icons.lock_outline),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalPassword: val);
+                              },
+                            ),
+                          ],
+                        );
+                      }
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: state.principalName,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Principal Full Name',
+                                    hintText: 'e.g. Dr. Ramesh Sharma',
+                                    prefixIcon: Icon(Icons.person),
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  onChanged: (val) {
+                                    ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalName: val);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: state.principalEmail,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Principal Login Email *',
+                                    hintText: 'e.g. principal.ts001@telanganaschool.edu',
+                                    prefixIcon: Icon(Icons.email),
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  onChanged: (val) {
+                                    ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalEmail: val);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: state.principalPhone,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Principal Mobile',
+                                    hintText: 'e.g. +919848011000',
+                                    prefixIcon: Icon(Icons.phone),
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  onChanged: (val) {
+                                    ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalPhone: val);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: TextFormField(
+                                  initialValue: state.principalPassword ?? 'EduPulse@123',
+                                  decoration: const InputDecoration(
+                                    labelText: 'Initial / Temporary Password',
+                                    hintText: 'EduPulse@123',
+                                    prefixIcon: Icon(Icons.lock_outline),
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  onChanged: (val) {
+                                    ref.read(schoolOnboardingProvider.notifier).setPrincipalDetails(principalPassword: val);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
+
 
         // Main Uploader box
         Card(
@@ -489,6 +765,13 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
             ),
           ),
         ),
+
+        if (isLoaded) ...[
+          const SizedBox(height: 24),
+          Text('Loaded Records Preview', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          _buildExpandedRowPreview(sheet, theme),
+        ],
 
         const SizedBox(height: 32),
         Text('Sheet Field Schema & Specifications', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
@@ -729,7 +1012,365 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
     return false;
   }
 
+  String _resolveSubjectName(String subjectCode, Map<String, String> rowData, OnboardingState state, String? schoolId) {
+    // 1. Direct row value if present
+    final nameInRow = (rowData['subject_name'] ?? '').trim();
+    if (nameInRow.isNotEmpty) return nameInRow;
+
+    // 2. Lookup in uploaded Subjects sheet
+    final subjectsSheet = state.sheets[OnboardingStep.subjects];
+    if (subjectsSheet != null) {
+      for (final sRow in subjectsSheet.rows) {
+        final code = (sRow.data['subject_code'] ?? '').trim().toUpperCase();
+        if (code == subjectCode.trim().toUpperCase()) {
+          final foundName = (sRow.data['subject_name'] ?? '').trim();
+          if (foundName.isNotEmpty) return foundName;
+        }
+      }
+    }
+
+    // 3. Lookup in school subjects catalog
+    if (schoolId != null && schoolId.isNotEmpty) {
+      try {
+        final catalog = ref.read(subjectsProvider(schoolId)).subjects;
+        for (final s in catalog) {
+          if (s.subjectCode.trim().toUpperCase() == subjectCode.trim().toUpperCase()) {
+            if (s.subjectName.isNotEmpty) return s.subjectName;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4. Fallback to clean subject_code (never UUID)
+    final cleanCode = subjectCode.trim();
+    final isUuid = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(cleanCode);
+    if (cleanCode.isNotEmpty && !isUuid) {
+      return cleanCode;
+    }
+    return 'Subject';
+  }
+
+  String _resolveClassName(String classCode, OnboardingState state, String? schoolId) {
+    final cleanClass = classCode.trim();
+    if (cleanClass.isEmpty) return 'Class';
+
+    final classesSheet = state.sheets[OnboardingStep.classes];
+    if (classesSheet != null) {
+      for (final cRow in classesSheet.rows) {
+        final code = (cRow.data['class_code'] ?? '').trim().toUpperCase();
+        if (code == cleanClass.toUpperCase()) {
+          final label = (cRow.data['display_label'] ?? cRow.data['name'] ?? '').trim();
+          if (label.isNotEmpty) return label;
+        }
+      }
+    }
+    if (schoolId != null && schoolId.isNotEmpty) {
+      try {
+        final catalog = ref.read(classesProvider(schoolId)).classes;
+        for (final c in catalog) {
+          if (c.code.trim().toUpperCase() == cleanClass.toUpperCase()) {
+            if (c.name.isNotEmpty) return c.name;
+          }
+        }
+      } catch (_) {}
+    }
+    final isUuid = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(cleanClass);
+    return isUuid ? 'Class' : 'Class $cleanClass';
+  }
+
+  Widget _buildExamsGroupedPreview(OnboardingSheetData sheet, ThemeData theme) {
+    final state = ref.watch(schoolOnboardingProvider);
+    final schoolId = ref.watch(selectedSchoolIdProvider);
+
+    // Group rows by exam master: academic_year_code + exam_code + class_code
+    final Map<String, List<OnboardingParsedRow>> groupedByMaster = {};
+    for (final row in sheet.rows) {
+      final ay = (row.data['academic_year_code'] ?? '').trim().toUpperCase();
+      final ec = (row.data['exam_code'] ?? '').trim().toUpperCase();
+      final cc = (row.data['class_code'] ?? '').trim().toUpperCase();
+      final key = '$ay|$ec|$cc';
+      groupedByMaster.putIfAbsent(key, () => []).add(row);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8.0),
+          child: Text(
+            'Exam Masters: ${groupedByMaster.length} exam master(s) detected across ${sheet.rows.length} total subject rows.',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: groupedByMaster.length,
+          separatorBuilder: (context, index) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final entry = groupedByMaster.entries.elementAt(index);
+            final subjectRows = entry.value;
+            final firstRow = subjectRows.first;
+
+            final examName = (firstRow.data['exam_name'] ?? '').trim();
+            final examCode = (firstRow.data['exam_code'] ?? '').trim();
+            final classCode = (firstRow.data['class_code'] ?? '').trim();
+            final examType = (firstRow.data['exam_type'] ?? '').trim().toUpperCase();
+            final className = _resolveClassName(classCode, state, schoolId);
+
+            final totalIssues = subjectRows.fold<int>(
+              0,
+              (prev, r) => prev + r.errors.length + r.duplicates.length + r.unresolvedReferences.length,
+            );
+            final totalWarnings = subjectRows.fold<int>(0, (prev, r) => prev + r.warnings.length);
+            final hasErrors = totalIssues > 0;
+            final hasWarnings = totalWarnings > 0;
+
+            return Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                side: BorderSide(
+                  color: hasErrors ? Colors.red.shade300 : (hasWarnings ? Colors.amber.shade300 : theme.dividerColor),
+                ),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ExpansionTile(
+                initiallyExpanded: index == 0,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                leading: Icon(
+                  hasErrors ? Icons.error_outline : Icons.assignment_turned_in,
+                  color: hasErrors ? Colors.red : (hasWarnings ? Colors.amber.shade800 : Colors.green),
+                  size: 28,
+                ),
+                title: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        examName.isNotEmpty ? examName : examCode,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Status Badge
+                    if (hasErrors)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          border: Border.all(color: Colors.red.shade300),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.cancel, size: 14, color: Colors.red.shade700),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Errors ($totalIssues)',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade700),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (hasWarnings)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          border: Border.all(color: Colors.amber.shade400),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.warning, size: 14, color: Colors.amber.shade800),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Warnings ($totalWarnings)',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber.shade800),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          border: Border.all(color: Colors.green.shade300),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle, size: 14, color: Colors.green.shade700),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Valid',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade700),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6.0),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Chip(
+                        label: Text('Code: $examCode', style: const TextStyle(fontSize: 11)),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                      Chip(
+                        avatar: const Icon(Icons.class_outlined, size: 14),
+                        label: Text(className, style: const TextStyle(fontSize: 11)),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                      if (examType.isNotEmpty)
+                        Chip(
+                          label: Text(examType, style: const TextStyle(fontSize: 11)),
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                        ),
+                      Chip(
+                        avatar: const Icon(Icons.menu_book, size: 14),
+                        label: Text('${subjectRows.length} Subjects', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                ),
+                children: [
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Table(
+                          border: TableBorder.all(color: theme.dividerColor, borderRadius: BorderRadius.circular(6)),
+                          columnWidths: const {
+                            0: FixedColumnWidth(36),
+                            1: FlexColumnWidth(3),
+                            2: FlexColumnWidth(2),
+                            3: FixedColumnWidth(105),
+                            4: FixedColumnWidth(80),
+                            5: FixedColumnWidth(95),
+                            6: FixedColumnWidth(80),
+                          },
+                          children: [
+                            TableRow(
+                              decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest),
+                              children: const [
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('#', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Subject Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Subject Code', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Exam Date', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Max Marks', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Duration', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                                Padding(padding: EdgeInsets.all(8.0), child: Text('Status', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                              ],
+                            ),
+                            ...subjectRows.asMap().entries.map((item) {
+                              final seq = item.key + 1;
+                              final r = item.value;
+                              final sCode = (r.data['subject_code'] ?? '').trim();
+                              final sName = _resolveSubjectName(sCode, r.data, state, schoolId);
+                              final eDate = (r.data['exam_date'] ?? '').trim();
+                              final maxMarks = (r.data['maximum_marks'] ?? '100').trim();
+                              final duration = (r.data['duration_minutes'] ?? '180').trim();
+                              final rIssues = [...r.errors, ...r.duplicates, ...r.unresolvedReferences];
+                              final isRowValid = rIssues.isEmpty;
+
+                              return TableRow(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text('$seq', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(sName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(sCode, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(eDate, style: const TextStyle(fontSize: 12)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(maxMarks, style: const TextStyle(fontSize: 12)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text('$duration min', style: const TextStyle(fontSize: 12)),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: isRowValid
+                                        ? const Icon(Icons.check_circle, color: Colors.green, size: 18)
+                                        : Tooltip(
+                                            message: rIssues.join('\n'),
+                                            child: const Icon(Icons.error, color: Colors.red, size: 18),
+                                          ),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ],
+                        ),
+                        if (hasErrors) ...[
+                          const SizedBox(height: 8),
+                          ...subjectRows.where((r) => r.errors.isNotEmpty || r.duplicates.isNotEmpty || r.unresolvedReferences.isNotEmpty).map((r) {
+                            final issues = [...r.errors, ...r.duplicates, ...r.unresolvedReferences];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2.0),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.error, size: 14, color: Colors.red),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      'Row ${r.rowIndex} (${r.data['subject_code']}): ${issues.join("; ")}',
+                                      style: TextStyle(fontSize: 11, color: Colors.red.shade900),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildExpandedRowPreview(OnboardingSheetData sheet, ThemeData theme) {
+    if (sheet.step == OnboardingStep.exams) {
+      return _buildExamsGroupedPreview(sheet, theme);
+    }
     final totalCount = sheet.rows.length;
     const previewLimit = 50;
     final previewRows = sheet.rows.take(previewLimit).toList();
@@ -797,14 +1438,14 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
     final schoolId = ref.watch(selectedSchoolIdProvider) ?? '';
     final schoolsState = ref.watch(schoolsListProvider);
     final schoolName = schoolId.isEmpty
-        ? 'No School Selected'
+        ? (state.resolvedSchoolName ?? 'No School Selected')
         : schoolsState.schools
             .firstWhere(
               (s) => s.id == schoolId,
               orElse: () => SchoolDto(
                 id: schoolId,
                 tenantId: '',
-                name: 'Delhi Public School Hyderabad - Campus 2',
+                name: state.resolvedSchoolName ?? 'School Campus',
                 code: '',
                 board: '',
                 schoolType: '',
@@ -819,13 +1460,13 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
     final tenantId = ref.watch(selectedTenantIdProvider) ?? '';
     final tenantsState = ref.watch(tenantsListProvider);
     final tenantName = tenantId.isEmpty
-        ? 'No Tenant Selected'
+        ? (state.resolvedTenantName ?? 'No Tenant Selected')
         : tenantsState.tenants
             .firstWhere(
               (t) => t.id == tenantId,
               orElse: () => TenantDto(
                 id: tenantId,
-                name: 'Delhi Public School Hyderabad',
+                name: state.resolvedTenantName ?? 'Organization',
                 code: '',
                 subdomain: '',
                 email: '',
@@ -1216,26 +1857,43 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
         Row(
           children: [
             Icon(
-              state.isCancelled ? Icons.warning_amber_rounded : Icons.check_circle,
-              color: state.isCancelled ? Colors.amber.shade800 : Colors.green,
+              state.approvalStatus == OnboardingApprovalStatus.failed || !state.isCompleted
+                  ? Icons.error_outline
+                  : state.isCancelled
+                      ? Icons.warning_amber_rounded
+                      : Icons.check_circle,
+              color: state.approvalStatus == OnboardingApprovalStatus.failed || !state.isCompleted
+                  ? theme.colorScheme.error
+                  : state.isCancelled
+                      ? Colors.amber.shade800
+                      : Colors.green,
               size: 32,
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                state.isCancelled
-                    ? 'Onboarding Process Stopped / Cancelled'
-                    : 'Onboarding Process Completed!',
-                style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                state.approvalStatus == OnboardingApprovalStatus.failed || !state.isCompleted
+                    ? 'Onboarding Process Failed'
+                    : state.isCancelled
+                        ? 'Onboarding Process Stopped / Cancelled'
+                        : 'Onboarding Process Completed!',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: state.approvalStatus == OnboardingApprovalStatus.failed || !state.isCompleted
+                      ? theme.colorScheme.error
+                      : null,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          state.isCancelled
-              ? 'The onboarding queue execution was manually stopped. Review execution errors, skips, and details below.'
-              : 'The onboarding queue execution has finished. Review execution errors, skips, and details below.',
+          state.approvalStatus == OnboardingApprovalStatus.failed || !state.isCompleted
+              ? (state.globalErrorMessage ?? 'Onboarding could not complete because tenant or school context initialization failed.')
+              : state.isCancelled
+                  ? 'The onboarding queue execution was manually stopped. Review execution errors, skips, and details below.'
+                  : 'The onboarding queue execution has finished. Review execution errors, skips, and details below.',
         ),
         const SizedBox(height: 24),
 
@@ -2097,71 +2755,98 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                 ),
                 // Principal Column
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Principal Account', style: TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Row(
+                  child: Builder(
+                    builder: (context) {
+                      final pUser = state.resolvedPrincipalUser;
+                      final isProv = pUser != null || _isPrincipalProvisioned;
+                      final pEmail = pUser?['email'] ?? _principalUsername ?? state.principalEmail ?? '';
+                      final pName = pUser?['name'] ?? state.principalName ?? 'Principal User';
+                      final pPass = pUser?['temp_password'] ?? _principalTempPassword ?? state.principalPassword ?? 'EduPulse@123';
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Status: '),
-                          Text(
-                            _isPrincipalProvisioned ? 'Provisioned ✓' : 'Not Provisioned',
-                            style: TextStyle(
-                              color: _isPrincipalProvisioned ? Colors.green : Colors.amber.shade800,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          const Text('Principal Account', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Text('Status: '),
+                              Text(
+                                isProv ? 'Provisioned ✓' : 'Not Provisioned',
+                                style: TextStyle(
+                                  color: isProv ? Colors.green : Colors.amber.shade800,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
+                          if (isProv && pEmail.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text('Email: $pEmail', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                            Text('Name: $pName', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                            Text('Account Setup: Password Set ($pPass)', style: TextStyle(fontSize: 11, color: Colors.teal.shade800)),
+                          ],
+                          const SizedBox(height: 8),
+                          if (!isProv)
+                            ElevatedButton(
+                              onPressed: _isPrincipalProvisioning
+                                  ? null
+                                  : () async {
+                                      final cleanSchoolId = schoolId.trim();
+                                      if (cleanSchoolId.isEmpty) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Unable to provision Principal: School ID is unavailable. Please refresh the school context.',
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      setState(() {
+                                        _isPrincipalProvisioning = true;
+                                      });
+                                      final targetEmail = (state.principalEmail != null && state.principalEmail!.isNotEmpty)
+                                          ? state.principalEmail!
+                                          : 'principal.${cleanSchoolId.substring(0, 6)}@school.edu';
+                                      final targetName = state.principalName ?? 'Principal';
+                                      final targetPass = state.principalPassword ?? 'EduPulse@123';
+
+                                      final result = await ref
+                                          .read(schoolOnboardingProvider.notifier)
+                                          .provisionPrincipal(
+                                            schoolId: cleanSchoolId,
+                                            email: targetEmail,
+                                            firstName: targetName,
+                                            password: targetPass,
+                                          );
+                                      setState(() {
+                                        _isPrincipalProvisioning = false;
+                                      });
+                                      if (result is Success<Map<String, dynamic>>) {
+                                        setState(() {
+                                          _isPrincipalProvisioned = true;
+                                          _principalUsername = result.data['email'] as String? ?? targetEmail;
+                                          final creds = result.data['credentials'] as Map<String, dynamic>?;
+                                          _principalTempPassword = creds?['temporary_password'] as String? ?? targetPass;
+                                        });
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Principal account provisioned successfully.')),
+                                        );
+                                      } else {
+                                        final fail = (result as Failure<Map<String, dynamic>>).failure;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('Failed to provision Principal: ${fail.message}')),
+                                        );
+                                      }
+                                    },
+                              child: _isPrincipalProvisioning
+                                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                  : const Text('Provision Principal Account'),
+                            ),
                         ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (!_isPrincipalProvisioned)
-                        ElevatedButton(
-                          onPressed: _isPrincipalProvisioning
-                              ? null
-                              : () async {
-                                  final cleanSchoolId = schoolId.trim();
-                                  if (cleanSchoolId.isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Unable to provision Principal: School ID is unavailable. Please refresh the school context.',
-                                        ),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  setState(() {
-                                    _isPrincipalProvisioning = true;
-                                  });
-                                  final result = await ref
-                                      .read(schoolOnboardingProvider.notifier)
-                                      .provisionPrincipal(cleanSchoolId);
-                                  setState(() {
-                                    _isPrincipalProvisioning = false;
-                                  });
-                                  if (result is Success<Map<String, dynamic>>) {
-                                    setState(() {
-                                      _isPrincipalProvisioned = true;
-                                      _principalUsername = result.data['email'] as String?;
-                                      final creds = result.data['credentials'] as Map<String, dynamic>?;
-                                      _principalTempPassword = creds?['temporary_password'] as String?;
-                                    });
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Principal account provisioned successfully.')),
-                                    );
-                                  } else {
-                                    final fail = (result as Failure<Map<String, dynamic>>).failure;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text('Failed to provision Principal: ${fail.message}')),
-                                    );
-                                  }
-                                },
-                          child: _isPrincipalProvisioning
-                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Text('Provision Principal Account'),
-                        ),
-                    ],
+                      );
+                    },
                   ),
                 ),
               ],
@@ -2202,10 +2887,14 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                       }
                       
                       // Principal
-                      if (_isPrincipalProvisioned) {
-                        final login = _principalUsername ?? '';
-                        final pass = _principalTempPassword ?? '';
-                        csvRows.add('PRINCIPAL,Principal User,$login,$login,$pass,$schoolId');
+                      final pUser = state.resolvedPrincipalUser;
+                      if (pUser != null || _isPrincipalProvisioned) {
+                        final pName = pUser?['name'] ?? 'Principal User';
+                        final login = pUser?['email'] ?? _principalUsername ?? state.principalEmail ?? '';
+                        final pass = pUser?['temp_password'] ?? _principalTempPassword ?? state.principalPassword ?? 'EduPulse@123';
+                        if (login.isNotEmpty) {
+                          csvRows.add('PRINCIPAL,$pName,$login,$login,$pass,$schoolId');
+                        }
                       }
                       
                       downloadCsvFile('uat_credentials_export.csv', csvRows.join('\n'));

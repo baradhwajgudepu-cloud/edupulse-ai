@@ -133,6 +133,10 @@ class ExaminationCreate(BaseModel):
     end_date: date
     description: Optional[str] = None
     participating_class_ids: Optional[List[uuid.UUID]] = None
+    class_id: Optional[uuid.UUID] = None
+    exam_code: Optional[str] = None
+    max_marks: Optional[int] = None
+    duration_minutes: Optional[int] = None
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "copied_from_template": False
     })
@@ -142,6 +146,18 @@ class ExaminationCreate(BaseModel):
         "student_risk_prediction": None,
         "average_expected_score": None
     })
+
+    @model_validator(mode="after")
+    def populate_onboarding_fields(self) -> "ExaminationCreate":
+        if self.class_id and not self.participating_class_ids:
+            self.participating_class_ids = [self.class_id]
+        if self.exam_code:
+            self.settings["exam_code"] = self.exam_code
+        if self.max_marks is not None:
+            self.settings.setdefault("max_marks", self.max_marks)
+        if self.duration_minutes is not None:
+            self.settings.setdefault("duration_minutes", self.duration_minutes)
+        return self
 
 class ExaminationUpdate(BaseModel):
     exam_name: Optional[str] = Field(None, max_length=200, min_length=1)
@@ -245,6 +261,7 @@ class BulkTimetablePreviewItem(BaseModel):
     section_name: str
     subject_id: uuid.UUID
     subject_name: str
+    subject_code: Optional[str] = None
     teacher_subject_assignment_id: Optional[uuid.UUID] = None
     exam_date: date
     start_time: time

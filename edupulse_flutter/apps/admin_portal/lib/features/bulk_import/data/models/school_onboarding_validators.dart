@@ -179,11 +179,30 @@ class SchoolOnboardingValidators {
         if (step == OnboardingStep.sections) {
           final classCode = data['class_code'] ?? '';
           keyValue = '$classCode-$keyValue';
+        } else if (step == OnboardingStep.exams) {
+          final academicYearCode = (data['academic_year_code'] ?? '').trim().toUpperCase();
+          final examCode = (data['exam_code'] ?? '').trim().toUpperCase();
+          final classCode = (data['class_code'] ?? '').trim().toUpperCase();
+          final subjectCode = (data['subject_code'] ?? '').trim().toUpperCase();
+          final compositeKey =
+              '${academicYearCode.trim()}|'
+              '${examCode.trim()}|'
+              '${classCode.trim()}|'
+              '${subjectCode.trim()}';
+          keyValue = compositeKey;
         }
         if (keyValue.isNotEmpty) {
           if (uniqueKeys.contains(keyValue)) {
-            final displayVal = step == OnboardingStep.sections ? keyValue.split('-').last : keyValue;
-            duplicates.add('Duplicate record inside CSV sheet on $keyColumnName "$displayVal".');
+            if (step == OnboardingStep.sections) {
+              final displayVal = keyValue.split('-').last;
+              duplicates.add('Duplicate record inside CSV sheet on $keyColumnName "$displayVal".');
+            } else if (step == OnboardingStep.exams) {
+              final examCode = data['exam_code'] ?? '';
+              final subjectCode = data['subject_code'] ?? '';
+              duplicates.add('Duplicate record inside CSV sheet for exam "$examCode" with subject "$subjectCode".');
+            } else {
+              duplicates.add('Duplicate record inside CSV sheet on $keyColumnName "$keyValue".');
+            }
           } else {
             uniqueKeys.add(keyValue);
           }
@@ -342,6 +361,10 @@ class SchoolOnboardingValidators {
           errors.add('school_type is required.');
         } else if (!validSchoolTypes.contains(schoolType.toUpperCase())) {
           errors.add('school_type must be one of PRIMARY, HIGH_SCHOOL, JR_COLLEGE, DEGREE_COLLEGE, UNIVERSITY, or OTHER (found: "$schoolType").');
+        }
+        final pEmail = data['principal_email']?.trim() ?? '';
+        if (pEmail.isNotEmpty && !_emailRegex.hasMatch(pEmail)) {
+          errors.add('Principal email format is invalid ("$pEmail").');
         }
         break;
 
@@ -595,5 +618,31 @@ class SchoolOnboardingValidators {
       default:
         break;
     }
+  }
+
+  /// Safely normalizes tenant codes into lowercase alphanumeric strings with hyphens.
+  static String normalizeTenantCode(String rawCode) {
+    var code = rawCode
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\-]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (code.length > 50) {
+      code = code.substring(0, 50).replaceAll(RegExp(r'-+$'), '');
+    }
+    return code;
+  }
+
+  /// Deterministically generates a valid slug code from an organization/school name.
+  static String generateTenantCode(String name, {int attempt = 0}) {
+    var slug = normalizeTenantCode(name);
+    if (slug.isEmpty || slug.length < 2) {
+      slug = 'org-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+    }
+    if (attempt > 0) {
+      return '$slug-$attempt';
+    }
+    return slug;
   }
 }

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/routing/routes.dart';
 import '../../data/models/examination_models.dart';
 import '../providers/examination_providers.dart';
+import '../widgets/examination_delete_archive_dialog.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 
 class ExaminationsSetupScreen extends ConsumerStatefulWidget {
@@ -61,14 +62,14 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Examinations Master Setup',
+                      'Institutional Examination Cycles',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Configure institutional examinations, map participating classes, and control lifecycle progression.',
+                      'Configure institutional examination cycles, map participating classes, and administer papers, schedules, and marks.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.grey[600],
                       ),
@@ -86,7 +87,7 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                     FilledButton.icon(
                       onPressed: () => _openCreationWizard(context),
                       icon: const Icon(Icons.add),
-                      label: const Text('New Exam Wizard'),
+                      label: const Text('New Exam Cycle'),
                     ),
                   ],
                 ),
@@ -284,17 +285,20 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                             child: DataTable(
                             headingRowColor: WidgetStateProperty.all(Colors.grey[50]),
                             columns: const [
-                              DataColumn(label: Text('Examination', style: TextStyle(fontWeight: FontWeight.bold))),
-                              DataColumn(label: Text('Exam Type', style: TextStyle(fontWeight: FontWeight.bold))),
+                              DataColumn(label: Text('Examination Cycle', style: TextStyle(fontWeight: FontWeight.bold))),
+                              DataColumn(label: Text('Type', style: TextStyle(fontWeight: FontWeight.bold))),
                               DataColumn(label: Text('Date Range', style: TextStyle(fontWeight: FontWeight.bold))),
-                              DataColumn(label: Text('Classes', style: TextStyle(fontWeight: FontWeight.bold))),
-                              DataColumn(label: Text('Schedules', style: TextStyle(fontWeight: FontWeight.bold))),
+                              DataColumn(label: Text('Participating Classes', style: TextStyle(fontWeight: FontWeight.bold))),
+                              DataColumn(label: Text('Papers', style: TextStyle(fontWeight: FontWeight.bold))),
+                              DataColumn(label: Text('Timetable Slots', style: TextStyle(fontWeight: FontWeight.bold))),
                               DataColumn(label: Text('Lifecycle Status', style: TextStyle(fontWeight: FontWeight.bold))),
                               DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                             ],
                             rows: state.examinations.map((exam) {
+                              final papersCount = exam.totalPapersCount > 0 ? exam.totalPapersCount : exam.papers.length;
+                              final schedulesCount = exam.totalSchedulesCount > 0 ? exam.totalSchedulesCount : exam.schedules.length;
                               return DataRow(
-                                onSelectChanged: (_) => _openExamDetailsModal(context, exam),
+                                onSelectChanged: (_) => context.push('${AppRoutes.examinations}/${exam.id}'),
                                 cells: [
                                   DataCell(
                                     Column(
@@ -302,6 +306,16 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
                                         Text(exam.examName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        if (exam.examCode != null && exam.examCode!.isNotEmpty)
+                                          Text(
+                                            exam.examCode!,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.indigo.shade700,
+                                              fontFamily: 'monospace',
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         if (exam.description != null && exam.description!.isNotEmpty)
                                           Text(
                                             exam.description!,
@@ -318,17 +332,26 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                                   ),
                                   DataCell(Text('${exam.startDate} → ${exam.endDate}')),
                                   DataCell(
-                                    exam.participatingClassIds.isEmpty
-                                        ? const Text('All Classes')
-                                        : Chip(
-                                            label: Text('${exam.participatingClassIds.length} Classes', style: const TextStyle(fontSize: 11)),
-                                            visualDensity: VisualDensity.compact,
-                                          ),
+                                    Chip(
+                                      label: Text(
+                                        exam.classesRangeFormatted ?? (exam.effectiveClassIds.isEmpty ? 'All Classes' : '${exam.effectiveClassIds.length} Classes'),
+                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+                                      ),
+                                      backgroundColor: Colors.indigo.shade50,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
                                   ),
                                   DataCell(
                                     Chip(
-                                      label: Text('${exam.schedules.length} Papers', style: const TextStyle(fontSize: 11)),
-                                      backgroundColor: exam.schedules.isEmpty ? Colors.amber[50] : Colors.blue[50],
+                                      label: Text('$papersCount Papers', style: const TextStyle(fontSize: 11)),
+                                      backgroundColor: papersCount == 0 ? Colors.amber.shade50 : Colors.teal.shade50,
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Chip(
+                                      label: Text('$schedulesCount Slots', style: const TextStyle(fontSize: 11)),
+                                      backgroundColor: schedulesCount == 0 ? Colors.amber.shade50 : Colors.blue.shade50,
                                       visualDensity: VisualDensity.compact,
                                     ),
                                   ),
@@ -350,11 +373,16 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.visibility_outlined, size: 18, color: Colors.blue),
-                                          tooltip: 'View Examination Details',
-                                          onPressed: () => _openExamDetailsModal(context, exam),
+                                        FilledButton.tonalIcon(
+                                          style: FilledButton.styleFrom(
+                                            visualDensity: VisualDensity.compact,
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                          ),
+                                          icon: const Icon(Icons.tune, size: 14),
+                                          label: const Text('Manage Cycle', style: TextStyle(fontSize: 11)),
+                                          onPressed: () => context.push('${AppRoutes.examinations}/${exam.id}'),
                                         ),
+                                        const SizedBox(width: 4),
                                         IconButton(
                                           icon: const Icon(Icons.calendar_month, size: 18),
                                           tooltip: 'Manage Timetable',
@@ -369,12 +397,12 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
                                         ),
                                         IconButton(
                                           icon: const Icon(Icons.copy_outlined, size: 18),
-                                          tooltip: 'Duplicate Examination',
+                                          tooltip: 'Duplicate Examination Cycle',
                                           onPressed: () => _openCopyExamDialog(context, exam),
                                         ),
                                         IconButton(
                                           icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                          tooltip: 'Delete Examination',
+                                          tooltip: 'Delete Examination Cycle',
                                           onPressed: () => _confirmDeleteExam(context, exam),
                                         ),
                                       ],
@@ -414,7 +442,7 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: color, size: 24),
@@ -437,209 +465,6 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _openExamDetailsModal(BuildContext context, ExaminationModel exam) {
-    showDialog(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: exam.status.color.withAlpha(40),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.school, color: exam.status.color.darken(), size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    exam.examName,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    '${exam.examType} • ${exam.startDate} to ${exam.endDate}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            ),
-            Chip(
-              label: Text(
-                exam.status.label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: exam.status.color.darken(),
-                ),
-              ),
-              backgroundColor: exam.status.color.withAlpha(40),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 600,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // AI Examination Readiness Banner
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.purple.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.purple.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.psychology_outlined, color: Colors.purple, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'EduPulse Intelligence Insight — Examination Readiness',
-                              style: TextStyle(fontSize: 12, color: Colors.purple, fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              exam.schedules.isEmpty
-                                  ? 'No paper schedules configured. Timetable needs to be generated before lifecycle can progress.'
-                                  : '${exam.schedules.length} examination paper slots scheduled. Ready for ongoing supervision and marks management.',
-                              style: TextStyle(fontSize: 12, color: Colors.purple.shade900),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Metrics Overview
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey[200]!),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Schedules / Papers', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            Text('${exam.schedules.length} Papers', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey[200]!),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Participating Classes', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            Text(
-                              exam.participatingClassIds.isEmpty ? 'All School Classes' : '${exam.participatingClassIds.length} Classes',
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-
-                // Quick Navigation Shortcuts
-                const Text('Functional Action Shortcuts', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.calendar_month, size: 16),
-                      label: const Text('View Timetable'),
-                      onPressed: () {
-                        Navigator.of(dialogCtx).pop();
-                        context.push('${AppRoutes.plannerExams}?examId=${exam.id}');
-                      },
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.grading, size: 16),
-                      label: const Text('Manage Marks'),
-                      onPressed: () {
-                        Navigator.of(dialogCtx).pop();
-                        context.push('${AppRoutes.marksManagement}?examId=${exam.id}');
-                      },
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.analytics_outlined, size: 16),
-                      label: const Text('View Results'),
-                      onPressed: () {
-                        Navigator.of(dialogCtx).pop();
-                        context.push('${AppRoutes.results}?examId=${exam.id}');
-                      },
-                    ),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.receipt_long, size: 16),
-                      label: const Text('Report Cards'),
-                      onPressed: () {
-                        Navigator.of(dialogCtx).pop();
-                        context.push('${AppRoutes.reportCards}?examId=${exam.id}');
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: const Text('Close'),
-          ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.sync_alt, size: 16, color: Colors.indigo),
-            label: const Text('Change Status'),
-            onPressed: () {
-              Navigator.of(dialogCtx).pop();
-              _openStatusTransitionDialog(context, exam);
-            },
-          ),
-          FilledButton.icon(
-            icon: const Icon(Icons.calendar_month, size: 16),
-            label: const Text('Open Timetable'),
-            onPressed: () {
-              Navigator.of(dialogCtx).pop();
-              context.push('${AppRoutes.plannerExams}?examId=${exam.id}');
-            },
-          ),
-        ],
       ),
     );
   }
@@ -1109,38 +934,16 @@ class _ExaminationsSetupScreenState extends ConsumerState<ExaminationsSetupScree
     );
   }
 
-  void _confirmDeleteExam(BuildContext context, ExaminationModel exam) {
-    showDialog(
-      context: context,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          title: const Text('Delete Examination?'),
-          content: Text(
-            'Are you sure you want to delete "${exam.examName}"?\n\n'
-            'All associated timetable schedules will also be removed.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogCtx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () async {
-                Navigator.of(dialogCtx).pop();
-                final ok = await ref.read(examinationsProvider.notifier).deleteExamination(exam.id);
-                if (context.mounted && ok) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Examination deleted.')),
-                  );
-                }
-              },
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
+  void _confirmDeleteExam(BuildContext context, ExaminationModel exam) async {
+    final result = await ExaminationDeleteArchiveDialog.show(context, exam);
+    if (context.mounted && result == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Examination "${exam.examName}" processed successfully.'),
+          backgroundColor: Colors.green.shade800,
+        ),
+      );
+    }
   }
 }
 

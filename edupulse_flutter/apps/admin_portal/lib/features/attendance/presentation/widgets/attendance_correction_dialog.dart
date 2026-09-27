@@ -8,6 +8,7 @@ class AttendanceCorrectionDialog extends StatefulWidget {
   final String studentId;
   final String studentName;
   final String currentStatus;
+  final String? initialRemarks;
 
   const AttendanceCorrectionDialog({
     super.key,
@@ -15,6 +16,7 @@ class AttendanceCorrectionDialog extends StatefulWidget {
     required this.studentId,
     required this.studentName,
     required this.currentStatus,
+    this.initialRemarks,
   });
 
   @override
@@ -32,6 +34,9 @@ class _AttendanceCorrectionDialogState extends State<AttendanceCorrectionDialog>
     super.initState();
     // Default new status to current status if valid, otherwise empty
     _newStatus = widget.currentStatus;
+    if (widget.initialRemarks != null && widget.initialRemarks!.isNotEmpty) {
+      _remarksController.text = widget.initialRemarks!;
+    }
   }
 
   @override
@@ -48,11 +53,24 @@ class _AttendanceCorrectionDialogState extends State<AttendanceCorrectionDialog>
         final operationsState = ref.watch(attendanceOperationsProvider);
         final isLoading = operationsState.isLoading;
 
+        final screenH = MediaQuery.of(context).size.height;
+
         return AlertDialog(
-          title: const Text('Correct Attendance Record'),
-          content: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
+          title: const Row(
+            children: [
+              Expanded(
+                child: Text('Correct Attendance Record', overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 480,
+              maxHeight: (screenH * 0.85).clamp(300.0, 600.0),
+            ),
+            child: Form(
+              key: _formKey,
+              child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -131,7 +149,8 @@ class _AttendanceCorrectionDialogState extends State<AttendanceCorrectionDialog>
               ),
             ),
           ),
-          actions: [
+        ),
+        actions: [
             TextButton(
               onPressed: isLoading ? null : () => Navigator.pop(context, false),
               child: const Text('Cancel'),

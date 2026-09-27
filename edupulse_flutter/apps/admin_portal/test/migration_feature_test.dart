@@ -14,6 +14,15 @@ import 'package:admin_portal/features/school_setup/presentation/providers/school
 
 class FakeMigrationRepository implements AuthRepository {
   @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
+
+  @override
   Future<ApiResult<SessionToken>> login({required String email, required String password}) async {
     return const ApiResult.success(SessionToken(accessToken: 'mock_access', refreshToken: 'mock_refresh', tokenType: 'bearer'));
   }
@@ -58,6 +67,18 @@ class FakeMigrationRepository implements AuthRepository {
 }
 
 class FakeMigrationSessionManager implements SessionManager {
+  @override
+  Future<String?> getSchoolName() async => null;
+
+  @override
+  Future<String?> getTenantName() async => null;
+
+  @override
+  Future<void> saveSchoolName(String name) async {}
+
+  @override
+  Future<void> saveTenantName(String name) async {}
+
   String? cachedTenantId;
 
   @override
@@ -75,7 +96,7 @@ class FakeMigrationSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String? reason]) async {}
   @override
   Future<bool> hasSession() async => true;
   @override

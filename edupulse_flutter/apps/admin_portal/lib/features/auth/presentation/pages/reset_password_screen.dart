@@ -7,10 +7,12 @@ import '../../../../core/routing/routes.dart';
 
 class ResetPasswordScreen extends ConsumerStatefulWidget {
   final String? initialToken;
+  final bool initialManualMode;
 
   const ResetPasswordScreen({
     super.key,
     this.initialToken,
+    this.initialManualMode = false,
   });
 
   @override
@@ -19,6 +21,7 @@ class ResetPasswordScreen extends ConsumerStatefulWidget {
 
 class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _tokenController;
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
@@ -26,20 +29,40 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   bool _obscureConfirmPassword = true;
   bool _isLoading = false;
   bool _isSuccess = false;
+  bool _isManualTokenMode = false;
+  bool _isTokenExpired = false;
   String? _errorMessage;
 
   @override
+  void initState() {
+    super.initState();
+    _tokenController = TextEditingController(text: widget.initialToken ?? '');
+    _isManualTokenMode = widget.initialManualMode;
+  }
+
+  @override
+  void didUpdateWidget(ResetPasswordScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialToken != null && widget.initialToken != oldWidget.initialToken) {
+      _tokenController.text = widget.initialToken!;
+      _isTokenExpired = false;
+      _errorMessage = null;
+    }
+  }
+
+  @override
   void dispose() {
+    _tokenController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final token = widget.initialToken?.trim() ?? '';
+    final token = _tokenController.text.trim();
     if (token.isEmpty) {
       setState(() {
-        _errorMessage = 'Invalid or missing password reset token. Please request a new link.';
+        _errorMessage = 'Password reset token is required. Please paste your token or click the link in your email.';
       });
       return;
     }
@@ -71,13 +94,20 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
 
     result.when(
       onSuccess: (_) {
+        _tokenController.clear();
+        _passwordController.clear();
+        _confirmPasswordController.clear();
         setState(() {
           _isSuccess = true;
+          _isTokenExpired = false;
         });
       },
       onFailure: (failure) {
+        final lower = failure.message.toLowerCase();
+        final isExpiredOrInvalid = lower.contains('expired') || lower.contains('invalid or expired');
         setState(() {
           _errorMessage = failure.message;
+          _isTokenExpired = isExpiredOrInvalid;
         });
       },
     );
@@ -89,9 +119,6 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
     final gradients = theme.extension<AppGradients>() ?? const AppGradients.standard();
-
-    final token = widget.initialToken?.trim() ?? '';
-    final hasValidToken = token.isNotEmpty;
 
     return Scaffold(
       body: Container(
@@ -114,11 +141,26 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                     horizontal: spacing.xl,
                     vertical: spacing.xxl,
                   ),
-                  child: _isSuccess
-                      ? _buildSuccessView(context, theme, radius, spacing)
-                      : (!hasValidToken
-                          ? _buildMissingTokenView(context, theme, radius, spacing)
-                          : _buildFormView(context, theme, radius, spacing)),
+                  child: () {
+                    final hasInitialToken = widget.initialToken != null && widget.initialToken!.trim().isNotEmpty;
+                    final isMissingToken = !hasInitialToken && !_isManualTokenMode;
+
+                    if (_isSuccess) {
+                      return _buildSuccessView(context, theme, radius, spacing);
+                    } else if (_isTokenExpired) {
+                      return _buildExpiredTokenView(context, theme, radius, spacing);
+                    } else if (isMissingToken) {
+                      return _buildMissingTokenView(context, theme, radius, spacing);
+                    } else {
+                      return _buildFormView(
+                        context,
+                        theme,
+                        radius,
+                        spacing,
+                        hasTokenFromLink: hasInitialToken && !_isManualTokenMode,
+                      );
+                    }
+                  }(),
                 ),
               ),
             ),
@@ -132,8 +174,9 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     BuildContext context,
     ThemeData theme,
     AppRadius radius,
-    AppSpacing spacing,
-  ) {
+    AppSpacing spacing, {
+    required bool hasTokenFromLink,
+  }) {
     return Form(
       key: _formKey,
       child: Column(
@@ -191,7 +234,56 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
               ),
             ),
           ],
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+
+          if (hasTokenFromLink) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(radius.sm),
+                border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.verified_user_outlined, size: 18, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Reset token automatically loaded from link',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ] else ...[
+            TextFormField(
+              controller: _tokenController,
+              enabled: !_isLoading,
+              decoration: InputDecoration(
+                labelText: 'Reset Token',
+                hintText: 'Paste the security token from your email',
+                prefixIcon: const Icon(Icons.vpn_key_outlined),
+                helperText: 'Enter or paste the token received in your password reset email',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(radius.md),
+                ),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Reset token is required';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
           TextFormField(
             controller: _passwordController,
             obscureText: _obscurePassword,
@@ -306,6 +398,34 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
               child: const Text('Return to Sign In'),
             ),
           ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Version 1.0.0  •  ',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+              InkWell(
+                key: const Key('public_footer_privacy_policy_link_reset'),
+                onTap: () => context.push(AppRoutes.privacyPolicy),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    'Privacy Policy',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -370,6 +490,89 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     );
   }
 
+  Widget _buildExpiredTokenView(
+    BuildContext context,
+    ThemeData theme,
+    AppRadius radius,
+    AppSpacing spacing,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.timer_off_outlined,
+            size: 36,
+            color: Colors.red.shade700,
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'Reset Link Expired',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _errorMessage ??
+              'Your password reset token has expired or is invalid. Security tokens are valid for 30 minutes and can only be used once.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 28),
+        ElevatedButton(
+          onPressed: () => context.go(AppRoutes.forgotPassword),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius.md),
+            ),
+          ),
+          child: const Text(
+            'Request New Reset Link',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.vpn_key_outlined, size: 16),
+          label: const Text('Enter Token Manually'),
+          onPressed: () {
+            setState(() {
+              _isTokenExpired = false;
+              _isManualTokenMode = true;
+              _tokenController.clear();
+            });
+          },
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius.md),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextButton(
+          onPressed: () => context.go(AppRoutes.login),
+          child: const Text('Return to Sign In'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildMissingTokenView(
     BuildContext context,
     ThemeData theme,
@@ -423,6 +626,22 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
           child: const Text(
             'Request New Reset Link',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.vpn_key_outlined, size: 16),
+          label: const Text('Enter Token Manually'),
+          onPressed: () {
+            setState(() {
+              _isManualTokenMode = true;
+            });
+          },
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius.md),
+            ),
           ),
         ),
         const SizedBox(height: 12),

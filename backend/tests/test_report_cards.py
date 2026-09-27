@@ -768,3 +768,197 @@ async def test_report_card_security_restrictions(client: AsyncClient, setup_repo
     finally:
         if get_current_user in app.dependency_overrides:
             del app.dependency_overrides[get_current_user]
+
+@pytest.mark.anyio
+async def test_parent_published_vs_draft_and_direct_publish_workflow(
+    client: AsyncClient, setup_report_test_data, db_session: AsyncSession
+) -> None:
+    """
+    Validates:
+    1. Parent cannot view DRAFT/unpublished report cards (404 returned).
+    2. Admin/Principal can directly publish report cards from DRAFT via bulk-publish and class publish.
+    3. Once published, linked parent can view the report card (with or without academic_year_id query param).
+    4. Unlinked parent receives 403 Forbidden.
+    """
+    from app.main import app
+    from app.api.dependencies.auth import get_current_user
+    from app.schemas.auth import UserCreate
+
+    data = setup_report_test_data
+    tenant_id = data["tenant_a"].id
+    school_id = data["school_a"].id
+    student_id = data["stud1"].id
+    ay_id = data["ay_a"].id
+    class_id = data["class_a"].id
+    section_id = data["sec_a1"].id
+    repo_user = UserRepository(db_session)
+    repo_role = RoleRepository(db_session)
+    repo_perm = PermissionRepository(db_session)
+    repo_refresh = RefreshTokenRepository(db_session)
+    repo_school = SchoolRepository(db_session)
+    auth_s = AuthService(repo_user, repo_role, repo_perm, repo_refresh, repo_school)
+
+    # Seed published marks for student so report card generation passes completeness check
+    mark = Marks(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=ay_id,
+        examination_id=data["exam"].id,
+        exam_schedule_id=data["sched"].id,
+        student_id=student_id,
+        teacher_subject_assignment_id=data["tsa_a"].id,
+        teacher_id=data["teacher_a"].id,
+        subject_id=data["subject_a"].id,
+        class_id=class_id,
+        section_id=section_id,
+        maximum_marks=100,
+        marks_obtained=88.0,
+        result_status=ExamResult.PRESENT,
+        status=MarksStatus.PUBLISHED,
+        created_by=data["user_admin"].id,
+        updated_by=data["user_admin"].id
+    )
+    db_session.add(mark)
+    await db_session.commit()
+
+    active_user = None
+    async def override_get_current_user():
+        return active_user
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        # Fetch permissions
+        stmt_p = select(Permission).where(Permission.code.in_([
+            "report_card.generate", "report_card.publish", "report_card.read", "report_card.download"
+        ]))
+        res_p = await db_session.execute(stmt_p)
+        rc_perms = list(res_p.scalars().all())
+
+        # Setup PARENT role
+        from sqlalchemy.orm import selectinload
+        stmt_role_p = select(Role).where(Role.tenant_id == tenant_id, Role.code == "PARENT").options(selectinload(Role.permissions))
+        res_role_p = await db_session.execute(stmt_role_p)
+        parent_role = res_role_p.scalar_one()
+        parent_role.permissions = [p for p in rc_perms if p.code in ["report_card.read", "report_card.download"]]
+        db_session.add(parent_role)
+
+        # Setup ADMIN role
+        stmt_role_adm = select(Role).where(Role.tenant_id == tenant_id, Role.code == "ADMIN").options(selectinload(Role.permissions))
+        res_role_adm = await db_session.execute(stmt_role_adm)
+        admin_role = res_role_adm.scalar_one()
+        admin_role.permissions = rc_perms
+        db_session.add(admin_role)
+        await db_session.commit()
+
+        # Create linked parent user
+        user_parent = await auth_s.create_user(
+            tenant_id,
+            UserCreate(email="linked.parent@edu.com", password="SecurePassword123!", first_name="Linked", last_name="Parent", school_ids=[school_id])
+        )
+        user_parent.roles = [parent_role]
+        db_session.add(user_parent)
+        await db_session.commit()
+
+        # Link guardian
+        guard = Guardian(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            guardian_type=GuardianType.FATHER,
+            first_name="Linked",
+            last_name="Parent",
+            gender=StudentGender.MALE,
+            date_of_birth=date(1980, 1, 1),
+            mobile="+919876543299",
+            email="linked.parent@edu.com",
+            address={},
+            communication_preferences={},
+            is_active=True,
+            user_id=user_parent.id
+        )
+        db_session.add(guard)
+        await db_session.flush()
+
+        sg = StudentGuardian(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student_id,
+            guardian_id=guard.id,
+            relationship=StudentGuardianRelationship.FATHER,
+            is_primary=True,
+            can_pickup_student=True,
+            receives_notifications=True
+        )
+        db_session.add(sg)
+        await db_session.commit()
+
+        # Create Admin user
+        user_admin = await auth_s.create_user(
+            tenant_id,
+            UserCreate(email="admin.publisher@edu.com", password="SecurePassword123!", first_name="Admin", last_name="Publisher", school_ids=[school_id])
+        )
+        user_admin.roles = [admin_role]
+        db_session.add(user_admin)
+        await db_session.commit()
+
+        token_parent = await auth_s.create_tokens(user_parent)
+        headers_parent = {"Authorization": f"Bearer {token_parent.access_token}", "X-Tenant-ID": str(tenant_id), "X-School-ID": str(school_id)}
+
+        token_admin = await auth_s.create_tokens(user_admin)
+        headers_admin = {"Authorization": f"Bearer {token_admin.access_token}", "X-Tenant-ID": str(tenant_id), "X-School-ID": str(school_id)}
+
+        # 1. Generate Report Card in DRAFT
+        active_user = user_admin
+        resp_gen = await client.post("/api/v1/report-cards/generate", json={
+            "student_id": str(student_id),
+            "school_id": str(school_id),
+            "academic_year_id": str(ay_id),
+            "teacher_remarks": "Good conduct."
+        }, headers=headers_admin)
+        assert resp_gen.status_code == 201
+        rc_id = resp_gen.json()["data"]["id"]
+        assert resp_gen.json()["data"]["status"] == "DRAFT"
+
+        # 2. Linked parent checks report card while in DRAFT -> MUST return 404
+        active_user = user_parent
+        resp_p_draft = await client.get(
+            f"/api/v1/report-cards/student/{student_id}",
+            params={"academic_year_id": str(ay_id)},
+            headers=headers_parent
+        )
+        assert resp_p_draft.status_code == 404
+        assert "not published" in resp_p_draft.json()["message"].lower()
+
+        # 3. Admin directly bulk-publishes the card from DRAFT
+        active_user = user_admin
+        resp_pub = await client.post("/api/v1/report-cards/bulk-publish", json={
+            "school_id": str(school_id),
+            "report_card_ids": [rc_id]
+        }, headers=headers_admin)
+        assert resp_pub.status_code == 200
+        assert resp_pub.json()["data"]["success_count"] == 1
+        assert resp_pub.json()["data"]["failed_count"] == 0
+
+        # 4. Linked parent checks report card after publication -> MUST return 200 PUBLISHED
+        active_user = user_parent
+        resp_p_pub = await client.get(
+            f"/api/v1/report-cards/student/{student_id}",
+            params={"academic_year_id": str(ay_id)},
+            headers=headers_parent
+        )
+        assert resp_p_pub.status_code == 200
+        assert resp_p_pub.json()["data"]["status"] == "PUBLISHED"
+        assert resp_p_pub.json()["data"]["id"] == rc_id
+
+        # 5. Linked parent checks without academic_year_id param -> MUST return 200 PUBLISHED (fallback)
+        resp_p_pub_no_ay = await client.get(
+            f"/api/v1/report-cards/student/{student_id}",
+            headers=headers_parent
+        )
+        assert resp_p_pub_no_ay.status_code == 200
+        assert resp_p_pub_no_ay.json()["data"]["status"] == "PUBLISHED"
+
+    finally:
+        if get_current_user in app.dependency_overrides:
+            del app.dependency_overrides[get_current_user]
+

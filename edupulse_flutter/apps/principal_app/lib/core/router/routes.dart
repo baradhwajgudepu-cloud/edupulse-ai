@@ -23,5 +23,7 @@ class AppRoutes {
   static const String communicationDetails = '/communication/details/:id';
   static const String planner = '/planner';
   static const String manageExams = '/manage-exams';
+  static const String syllabusProgress = '/academics/syllabus-progress';
   static const String outstandingDetails = '/fees/outstanding-details';
+  static const String more = '/more';
 }

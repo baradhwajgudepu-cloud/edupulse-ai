@@ -75,12 +75,75 @@ class ExamTemplateResponse(BaseModel):
 
 
 # ==================================================
+# Exam Paper Schemas
+# ==================================================
+class ExamPaperClassConfigItem(BaseModel):
+    class_id: uuid.UUID
+    maximum_marks: Optional[int] = Field(None, ge=1)
+    pass_marks: Optional[int] = Field(None, ge=1)
+    duration_minutes: Optional[int] = Field(None, ge=15)
+
+class ExamPaperClassResponse(BaseModel):
+    id: uuid.UUID
+    examination_id: uuid.UUID
+    paper_id: uuid.UUID
+    class_id: uuid.UUID
+    class_name: Optional[str] = None
+    maximum_marks: Optional[int] = None
+    pass_marks: Optional[int] = None
+    duration_minutes: Optional[int] = None
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ExamPaperCreate(BaseModel):
+    subject_id: uuid.UUID
+    paper_name: str = Field(..., max_length=200, min_length=1)
+    paper_code: Optional[str] = Field(None, max_length=50)
+    default_max_marks: int = Field(100, ge=1)
+    default_pass_marks: int = Field(35, ge=1)
+    default_duration_minutes: int = Field(180, ge=15)
+    order_index: int = Field(1, ge=1)
+    class_configs: Optional[List[ExamPaperClassConfigItem]] = None
+
+class ExamPaperUpdate(BaseModel):
+    paper_name: Optional[str] = Field(None, max_length=200, min_length=1)
+    paper_code: Optional[str] = Field(None, max_length=50)
+    default_max_marks: Optional[int] = Field(None, ge=1)
+    default_pass_marks: Optional[int] = Field(None, ge=1)
+    default_duration_minutes: Optional[int] = Field(None, ge=15)
+    order_index: Optional[int] = Field(None, ge=1)
+    is_active: Optional[bool] = None
+
+class ExamPaperResponse(BaseModel):
+    id: uuid.UUID
+    examination_id: uuid.UUID
+    subject_id: uuid.UUID
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
+    paper_name: str
+    paper_code: Optional[str] = None
+    default_max_marks: int
+    default_pass_marks: int
+    default_duration_minutes: int
+    order_index: int
+    is_active: bool
+    class_configs: List[ExamPaperClassResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ExamPaperClassBulkUpdate(BaseModel):
+    configs: List[ExamPaperClassConfigItem]
+
+
+# ==================================================
 # Exam Schedule Schemas
 # ==================================================
 class ExamScheduleCreate(BaseModel):
     class_id: uuid.UUID
     section_id: uuid.UUID
     subject_id: uuid.UUID
+    paper_id: Optional[uuid.UUID] = None
     teacher_subject_assignment_id: Optional[uuid.UUID] = None
     exam_date: date
     start_time: time
@@ -90,6 +153,7 @@ class ExamScheduleCreate(BaseModel):
     room_number: Optional[str] = Field(None, max_length=50)
 
 class ExamScheduleUpdate(BaseModel):
+    paper_id: Optional[uuid.UUID] = None
     exam_date: Optional[date] = None
     start_time: Optional[time] = None
     end_time: Optional[time] = None
@@ -100,6 +164,7 @@ class ExamScheduleUpdate(BaseModel):
 class ExamScheduleResponse(BaseModel):
     id: uuid.UUID
     exam_id: uuid.UUID
+    paper_id: Optional[uuid.UUID] = None
     class_id: uuid.UUID
     section_id: uuid.UUID
     subject_id: uuid.UUID
@@ -112,6 +177,7 @@ class ExamScheduleResponse(BaseModel):
     room_number: Optional[str] = None
     is_active: bool
     version: int
+    paper_name: Optional[str] = None
     subject_name: Optional[str] = None
     subject_code: Optional[str] = None
     class_name: Optional[str] = None
@@ -210,6 +276,9 @@ class ExaminationCopyRequest(BaseModel):
     new_start_date: date
     new_end_date: date
 
+class ExaminationClassesUpdate(BaseModel):
+    class_ids: List[uuid.UUID]
+
 class ExaminationResponse(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -222,6 +291,10 @@ class ExaminationResponse(BaseModel):
     status: ExamStatus
     description: Optional[str] = None
     participating_class_ids: List[uuid.UUID] = []
+    participating_class_names: List[str] = []
+    classes_range_formatted: Optional[str] = None
+    total_papers_count: int = 0
+    total_schedules_count: int = 0
     settings: Dict[str, Any]
     ai_metrics: Dict[str, Any]
     is_active: bool
@@ -232,6 +305,7 @@ class ExaminationResponse(BaseModel):
     created_by: Optional[uuid.UUID] = None
     updated_by: Optional[uuid.UUID] = None
     
+    papers: List[ExamPaperResponse] = []
     schedules: List[ExamScheduleResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -240,21 +314,33 @@ class ExaminationResponse(BaseModel):
 # ==================================================
 # Bulk Timetable Generation Schemas
 # ==================================================
+class TimetableSessionSlot(BaseModel):
+    session_name: str = "Morning"
+    start_time: time = time(9, 0)
+    end_time: time = time(12, 0)
+
 class BulkTimetablePreviewRequest(BaseModel):
     school_id: uuid.UUID
     examination_id: uuid.UUID
     class_ids: List[uuid.UUID]
     section_ids: Optional[List[uuid.UUID]] = None
     subject_ids: Optional[List[uuid.UUID]] = None
+    paper_ids: Optional[List[uuid.UUID]] = None
     start_date: date
+    end_date: Optional[date] = None
     gap_days: int = Field(1, ge=0, le=14)
     start_time: time = Field(default=time(9, 0))
     duration_minutes: int = Field(180, ge=30, le=360)
+    sessions: Optional[List[TimetableSessionSlot]] = None
+    scheduling_strategy: str = Field(default="ONE_PAPER_PER_DAY") # ONE_PAPER_PER_DAY, MULTIPLE_SESSIONS, CLASS_STAGGERED, AI_OPTIMIZED
     exclude_weekends: bool = True
     max_marks: int = Field(100, ge=1)
     pass_marks: int = Field(35, ge=1)
 
 class BulkTimetablePreviewItem(BaseModel):
+    paper_id: Optional[uuid.UUID] = None
+    paper_name: Optional[str] = None
+    session_name: Optional[str] = None
     class_id: uuid.UUID
     class_name: str
     section_id: uuid.UUID
@@ -264,17 +350,24 @@ class BulkTimetablePreviewItem(BaseModel):
     subject_code: Optional[str] = None
     teacher_subject_assignment_id: Optional[uuid.UUID] = None
     exam_date: date
+    day_name: Optional[str] = None
     start_time: time
     end_time: time
+    duration_minutes: Optional[int] = None
     max_marks: int
     pass_marks: int
     room_number: Optional[str] = None
+    conflict_status: Optional[str] = "OK"
 
 class BulkTimetablePreviewResponse(BaseModel):
     total_slots: int
     schedules: List[BulkTimetablePreviewItem]
+    warnings: List[str] = []
+    has_conflicts: bool = False
+    conflict_count: int = 0
 
 class BulkTimetableConfirmRequest(BaseModel):
     school_id: uuid.UUID
     examination_id: uuid.UUID
     schedules: List[ExamScheduleCreate]
+

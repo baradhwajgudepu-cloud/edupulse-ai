@@ -10,6 +10,8 @@ from app.models.user import User, UserStatus
 from app.models.tenant import Tenant
 from app.models.refresh_token import RefreshToken
 from app.core.security import hash_password, verify_password
+from app.services.email import EmailService, email_service
+from app.core.settings import settings
 
 async def get_or_create_tenant(db: AsyncSession) -> Tenant:
     stmt = select(Tenant)
@@ -339,3 +341,218 @@ async def test_10_no_token_is_exposed_in_api_response(client: AsyncClient, db_se
     resp_text = resp.text.lower()
     assert "token" not in resp.json().get("data", {}) if resp.json().get("data") else True
     assert "password_reset_hash" not in resp_text
+
+@pytest.mark.anyio
+async def test_11_smtp_config_validation():
+    """
+    11. SMTP configuration validation:
+    - Missing host -> is_configured is False
+    - Missing from_email -> is_configured is False
+    - Username provided without password -> is_configured is False
+    - Host, from_email, username, and password provided -> is_configured is True
+    - Host and from_email provided without username/password -> is_configured is True
+    """
+    svc = EmailService()
+
+    # Missing host
+    svc.host = None
+    svc.from_email = "noreply@edupulse.com"
+    svc.username = None
+    svc.password = None
+    assert svc.is_configured is False
+
+    # Missing from_email
+    svc.host = "smtp.gmail.com"
+    svc.from_email = None
+    assert svc.is_configured is False
+
+    # Username without password
+    svc.host = "smtp.gmail.com"
+    svc.from_email = "noreply@edupulse.com"
+    svc.username = "edupulsetechnologies@gmail.com"
+    svc.password = None
+    assert svc.is_configured is False
+
+    # Username with empty string password
+    svc.password = ""
+    assert svc.is_configured is False
+
+    # Complete configuration
+    svc.password = "valid_app_password"
+    assert svc.is_configured is True
+
+    # Open relay / no auth required
+    svc.username = None
+    svc.password = None
+    assert svc.is_configured is True
+
+@pytest.mark.anyio
+async def test_12_smtp_unavailable_returns_503_anti_enumeration(client: AsyncClient, db_session: AsyncSession, monkeypatch):
+    """
+    12. When SMTP is unavailable outside DEBUG mode:
+    - Returns HTTP 503 for existing user.
+    - Returns identical HTTP 503 for non-existent user.
+    - Zero account enumeration information is leaked.
+    """
+    tenant = await get_or_create_tenant(db_session)
+    existing_email = f"smtp_unavail_{uuid.uuid4().hex[:8]}@example.com"
+    user = User(
+        email=existing_email,
+        hashed_password=hash_password("ValidPassword123!"),
+        first_name="Unavail",
+        last_name="User",
+        tenant_id=tenant.id,
+        status=UserStatus.ACTIVE
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    # Simulate production (DEBUG=False) with unconfigured SMTP
+    monkeypatch.setattr(EmailService, "is_configured", property(lambda self: False))
+    monkeypatch.setattr(settings, "DEBUG", False)
+
+    # Existing user -> 503
+    resp_exist = await client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": existing_email}
+    )
+    assert resp_exist.status_code == 503
+    msg_exist = resp_exist.json().get("detail") or resp_exist.json().get("message")
+    assert "temporarily unavailable" in msg_exist.lower()
+
+    # Non-existing user -> identical 503
+    non_existing_email = f"nobody_{uuid.uuid4().hex[:8]}@example.com"
+    resp_non_exist = await client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": non_existing_email}
+    )
+    assert resp_non_exist.status_code == 503
+    msg_non_exist = resp_non_exist.json().get("detail") or resp_non_exist.json().get("message")
+    assert msg_exist == msg_non_exist
+
+@pytest.mark.anyio
+async def test_13_runtime_delivery_failure_rolls_back_token_and_returns_503(client: AsyncClient, db_session: AsyncSession, monkeypatch):
+    """
+    13. When SMTP runtime sendmail fails:
+    - Returns HTTP 503 Service Unavailable.
+    - Stored reset token and expiry are rolled back to None in the database.
+    """
+    tenant = await get_or_create_tenant(db_session)
+    test_email = f"fail_delivery_{uuid.uuid4().hex[:8]}@example.com"
+    user = User(
+        email=test_email,
+        hashed_password=hash_password("ValidPassword123!"),
+        first_name="Fail",
+        last_name="Delivery",
+        tenant_id=tenant.id,
+        status=UserStatus.ACTIVE
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    # Mock send_password_reset_email to return False (delivery failure)
+    async def mock_send_fail(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(email_service, "send_password_reset_email", mock_send_fail)
+
+    resp = await client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": test_email}
+    )
+    assert resp.status_code == 503
+
+    # Verify reset token is cleared / rolled back on the user model
+    await db_session.refresh(user)
+    assert user.password_reset_hash is None
+    assert user.password_reset_expires_at is None
+
+@pytest.mark.anyio
+async def test_14_tampered_and_invalid_otp_rejected(client: AsyncClient, db_session: AsyncSession):
+    """
+    14. Tampered and invalid reset tokens must be rejected with 400 Bad Request.
+    """
+    tenant = await get_or_create_tenant(db_session)
+    raw_token = f"legit_token_{uuid.uuid4().hex}"
+    raw_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    user = User(
+        email=f"tamper_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password=hash_password("TempPassword123!"),
+        first_name="Tamper",
+        last_name="Test",
+        tenant_id=tenant.id,
+        status=UserStatus.ACTIVE,
+        password_reset_hash=raw_hash,
+        password_reset_expires_at=datetime.now(timezone.utc) + timedelta(minutes=30)
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    # Submit tampered token (single character modified)
+    tampered_token = raw_token[:-1] + ("0" if raw_token[-1] != "0" else "1")
+    resp = await client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": tampered_token,
+            "new_password": "NewStrongPass123#",
+            "confirm_password": "NewStrongPass123#"
+        }
+    )
+    assert resp.status_code == 400
+    err_msg = resp.json().get("detail") or resp.json().get("message") or ""
+    assert "invalid or expired" in err_msg.lower()
+
+@pytest.mark.anyio
+async def test_15_locked_user_can_request_reset_and_is_unlocked(client: AsyncClient, db_session: AsyncSession):
+    """
+    15. Locked user can request password reset, and confirming reset unlocks the account.
+    """
+    tenant = await get_or_create_tenant(db_session)
+    test_email = f"locked_flow_{uuid.uuid4().hex[:8]}@example.com"
+    user = User(
+        email=test_email,
+        hashed_password=hash_password("LockedOldPass123!"),
+        first_name="Locked",
+        last_name="Student",
+        tenant_id=tenant.id,
+        status=UserStatus.LOCKED,
+        locked_until=datetime.now(timezone.utc) + timedelta(hours=2),
+        failed_login_attempts=5
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    # 1. Request password reset as locked user
+    resp = await client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": test_email}
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(user)
+    assert user.password_reset_hash is not None
+    assert user.password_reset_expires_at is not None
+
+    # 2. Reset password using a known token
+    new_raw_token = f"unlock_known_{uuid.uuid4().hex}"
+    user.password_reset_hash = hashlib.sha256(new_raw_token.encode()).hexdigest()
+    user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    await db_session.commit()
+
+    reset_resp = await client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": new_raw_token,
+            "new_password": "NewUnlockedPass456$",
+            "confirm_password": "NewUnlockedPass456$"
+        }
+    )
+    assert reset_resp.status_code == 200
+
+    await db_session.refresh(user)
+    assert user.status == UserStatus.ACTIVE
+    assert user.locked_until is None
+    assert user.failed_login_attempts == 0
+    assert user.password_reset_hash is None

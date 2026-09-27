@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.teacher import Teacher, TeacherStatus
+from app.models.teacher import Teacher, TeacherStatus, StaffType
 from app.schemas.teacher import TeacherCreate, TeacherUpdate
 
 class TeacherRepository:
@@ -151,6 +151,7 @@ class TeacherRepository:
         department: Optional[str] = None,
         designation: Optional[str] = None,
         status: Optional[TeacherStatus] = None,
+        staff_type: Optional[StaffType] = None,
         search: Optional[str] = None,
         skip: int = 0,
         limit: int = 100
@@ -165,6 +166,8 @@ class TeacherRepository:
             Teacher.deleted_at.is_(None)
         ]
 
+        if staff_type:
+            filters.append(Teacher.staff_type == staff_type)
         if department:
             filters.append(Teacher.department.ilike(f"%{department}%"))
         if designation:
@@ -236,6 +239,7 @@ class TeacherRepository:
             designation=obj_in.designation,
             department=obj_in.department,
             salary=obj_in.salary,
+            staff_type=getattr(obj_in, "staff_type", StaffType.TEACHING),
             settings=obj_in.settings,
             ai_metrics=obj_in.ai_metrics,
             tenant_id=tenant_id,

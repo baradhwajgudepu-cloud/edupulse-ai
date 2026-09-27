@@ -88,7 +88,7 @@ async def get_ai_config(
     Returns active configuration metrics. Scoped to authorized active users.
     """
     provider_name = settings.AI_PROVIDER
-    model_name = settings.AI_MODEL or service.provider.model
+    model_name = getattr(service.provider, "model", None) or settings.AI_MODEL or "openrouter/free"
     
     config_data = AIConfigResponse(
         provider=provider_name,

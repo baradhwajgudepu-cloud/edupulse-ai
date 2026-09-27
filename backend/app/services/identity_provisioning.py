@@ -407,41 +407,112 @@ class IdentityProvisioningService:
         return user_loaded
 
     async def provision_principal(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, principal_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        phone: Optional[str] = None,
+        password: Optional[str] = None,
+        principal_id: Optional[uuid.UUID] = None,
+        current_user_id: Optional[uuid.UUID] = None,
     ) -> User:
         """
-        Creates an authenticated User account with the PRINCIPAL role.
+        Creates or resolves an authenticated User account with the PRINCIPAL role,
+        linked to the specified School and Tenant.
         """
-        email = f"principal.{principal_id.hex[:6]}@edupulse.local"
+        # 1. Validate School & Tenant Context
+        stmt_sc = select(School).where(
+            School.id == school_id,
+            School.tenant_id == tenant_id,
+            School.deleted_at.is_(None)
+        )
+        res_sc = await self.db.execute(stmt_sc)
+        school = res_sc.scalar_one_or_none()
+        if not school:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="School campus not found or does not belong to active tenant."
+            )
 
+        # 2. Resolve email & names
+        if email and email.strip():
+            clean_email = email.strip().lower()
+        elif principal_id:
+            clean_email = f"principal.{principal_id.hex[:6]}@edupulse.local"
+        else:
+            clean_email = f"principal.{school.code.lower()}@edupulse.local"
+
+        clean_first_name = (first_name or "Principal").strip()
+        clean_last_name = (last_name if last_name is not None else (school.code if not first_name else "")).strip()
+
+        # 3. Check for existing user with this email in the tenant
         stmt_dup = select(User).where(
             User.tenant_id == tenant_id,
-            func.lower(User.email) == email.lower(),
+            func.lower(User.email) == clean_email,
             User.deleted_at.is_(None)
-        ).options(selectinload(User.roles).selectinload(Role.permissions), selectinload(User.schools))
+        ).options(
+            selectinload(User.roles).selectinload(Role.permissions),
+            selectinload(User.schools)
+        )
         res_dup = await self.db.execute(stmt_dup)
         dup_user = res_dup.scalar_one_or_none()
 
-        if dup_user:
-            return await self._get_loaded_user(dup_user.id)
-
-        stmt_sc = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
-        res_sc = await self.db.execute(stmt_sc)
-        school = res_sc.scalar_one_or_none()
-
         role = await self._get_role(tenant_id, "PRINCIPAL", "Principal")
 
-        if settings.DEBUG:
-            temp_pwd = "EduPulse@123"
-        else:
-            temp_pwd = generate_secure_temp_password()
+        if dup_user:
+            # Idempotent handling / self-heal missing school or PRINCIPAL role
+            needs_update = False
+            if role not in dup_user.roles:
+                dup_user.roles.append(role)
+                needs_update = True
+            if school not in dup_user.schools:
+                dup_user.schools.append(school)
+                needs_update = True
+            if dup_user.status != UserStatus.ACTIVE:
+                dup_user.status = UserStatus.ACTIVE
+                needs_update = True
+            if password and password.strip():
+                dup_user.hashed_password = hash_password(password.strip())
+                needs_update = True
 
-        hashed = hash_password(temp_pwd)
+            if needs_update:
+                self.db.add(dup_user)
+                await self.db.flush()
+                await self.db.commit()
+
+            return await self._get_loaded_user(dup_user.id)
+
+        # 4. Check global tenant conflicts (if email exists in another tenant)
+        stmt_global = select(User).where(
+            func.lower(User.email) == clean_email,
+            User.tenant_id != tenant_id,
+            User.deleted_at.is_(None)
+        )
+        res_global = await self.db.execute(stmt_global)
+        if res_global.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Email '{clean_email}' is already in use by another tenant identity."
+            )
+
+        # 5. Password handling
+        if password and password.strip():
+            temp_pwd = password.strip()
+            hashed = hash_password(temp_pwd)
+        else:
+            if settings.DEBUG:
+                temp_pwd = "EduPulse@123"
+            else:
+                temp_pwd = generate_secure_temp_password()
+            hashed = hash_password(temp_pwd)
+
         new_user = User(
-            email=email,
+            email=clean_email,
             hashed_password=hashed,
-            first_name="Principal",
-            last_name="User",
+            first_name=clean_first_name,
+            last_name=clean_last_name,
             status=UserStatus.ACTIVE,
             is_superuser=False,
             must_change_password=True,
@@ -450,18 +521,17 @@ class IdentityProvisioningService:
             created_by=current_user_id
         )
 
-        if school:
-            new_user.schools.append(school)
+        new_user.schools.append(school)
         new_user.roles.append(role)
 
         self.db.add(new_user)
         await self.db.flush()
-
         await self.db.commit()
 
         user_loaded = await self._get_loaded_user(new_user.id)
         user_loaded.temp_password = temp_pwd
         return user_loaded
+
 
     async def provision_staff(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, staff_id: uuid.UUID, current_user_id: Optional[uuid.UUID] = None

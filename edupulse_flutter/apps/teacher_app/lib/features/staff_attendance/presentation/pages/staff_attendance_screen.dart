@@ -171,24 +171,52 @@ class _StaffAttendanceScreenState extends ConsumerState<StaffAttendanceScreen> {
   ) {
     final isLoading = state is StaffAttendanceCheckingIn || state is StaffAttendanceCheckingOut;
     final isCheckIn = data == null || (data.status != 'CHECKED_IN' && data.status != 'CHECKED_OUT');
+    final geofence = state.schoolGeofence;
 
     if (state is StaffAttendanceCheckedOut) {
       return const SizedBox.shrink();
     }
 
+    final isUnconfigured = geofence != null && geofence.enabled && !geofence.isConfigured;
+    final isGeofenceDisabled = geofence != null && !geofence.enabled;
+    final isActionDisabled = isLoading || isUnconfigured;
+
+    final helperText = isUnconfigured
+        ? 'School attendance geofence coordinates are not configured. Please contact school administration.'
+        : isGeofenceDisabled
+            ? 'Location restriction is disabled. Attendance will be recorded with your current position.'
+            : geofence != null && geofence.enabled
+                ? 'School geofencing is active (radius: ${geofence.radiusMeters}m). Your location will be verified against the school boundary.'
+                : isCheckIn
+                    ? 'Your current location will be verified against the school boundary.'
+                    : 'Your current location will be verified before check-out.';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (isUnconfigured && state is! StaffAttendanceError) ...[
+          const GeofenceStatusBanner(
+            message: 'School attendance location is not configured. Sign-in cannot be verified.',
+            isError: true,
+          ),
+          SizedBox(height: spacing.md),
+        ] else if (isGeofenceDisabled && state is! StaffAttendanceError) ...[
+          const GeofenceStatusBanner(
+            message: 'Attendance is not location restricted (Geofence Disabled).',
+            isError: false,
+          ),
+          SizedBox(height: spacing.md),
+        ],
         if (isCheckIn) ...[
           AttendanceActionButton(
             label: 'Check In',
             icon: Icons.login_rounded,
             isLoading: state is StaffAttendanceCheckingIn,
-            onTap: isLoading ? null : () => ref.read(staffAttendanceStateProvider.notifier).checkIn(),
+            onTap: isActionDisabled ? null : () => ref.read(staffAttendanceStateProvider.notifier).checkIn(),
           ),
           SizedBox(height: spacing.sm),
           Text(
-            'Your current location will be verified against the school boundary.',
+            helperText,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
@@ -200,11 +228,11 @@ class _StaffAttendanceScreenState extends ConsumerState<StaffAttendanceScreen> {
             icon: Icons.logout_rounded,
             color: Colors.orange,
             isLoading: state is StaffAttendanceCheckingOut,
-            onTap: isLoading ? null : () => ref.read(staffAttendanceStateProvider.notifier).checkOut(),
+            onTap: isActionDisabled ? null : () => ref.read(staffAttendanceStateProvider.notifier).checkOut(),
           ),
           SizedBox(height: spacing.sm),
           Text(
-            'Your current location will be verified before check-out.',
+            helperText,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,

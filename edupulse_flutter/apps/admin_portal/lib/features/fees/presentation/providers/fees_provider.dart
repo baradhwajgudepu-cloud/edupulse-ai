@@ -1,9 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
 import 'package:edupulse_network/edupulse_network.dart';
-import 'package:edupulse_core/edupulse_core.dart';
 import '../../data/models/fee_models.dart';
-import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../students/data/models/student_models.dart';
 
 // --- 1. FEE TYPES PROVIDER ---
@@ -147,6 +144,10 @@ class ScholarshipsNotifier extends StateNotifier<ScholarshipsState> {
   }
 
   Future<void> fetchScholarships() async {
+    if (_schoolId.isEmpty) {
+      state = const ScholarshipsState(scholarships: [], isLoading: false);
+      return;
+    }
     state = state.copyWith(isLoading: true, error: null);
     final result = await _apiClient.get(
       '/fees/scholarships',
@@ -168,7 +169,13 @@ class ScholarshipsNotifier extends StateNotifier<ScholarshipsState> {
     );
   }
 
-  Future<bool> createScholarship(String name, ConcessionType concessionType, double value, String? description) async {
+  Future<Scholarship?> createScholarshipAndReturn(
+    String name,
+    ConcessionType concessionType,
+    double value,
+    String? description,
+  ) async {
+    if (_schoolId.isEmpty) return null;
     state = state.copyWith(isLoading: true, error: null);
     final result = await _apiClient.post(
       '/fees/scholarships',
@@ -184,14 +191,79 @@ class ScholarshipsNotifier extends StateNotifier<ScholarshipsState> {
 
     return result.when(
       onSuccess: (scholarship) {
-        state = state.copyWith(scholarships: [...state.scholarships, scholarship], isLoading: false);
-        return true;
+        final existingIndex = state.scholarships.indexWhere((s) => s.id == scholarship.id);
+        final updatedList = existingIndex >= 0
+            ? (List<Scholarship>.from(state.scholarships)..[existingIndex] = scholarship)
+            : [...state.scholarships, scholarship];
+        state = state.copyWith(scholarships: updatedList, isLoading: false);
+        return scholarship;
       },
       onFailure: (failure) {
         state = state.copyWith(isLoading: false, error: failure.message);
-        return false;
+        return null;
       },
     );
+  }
+
+  Future<bool> createScholarship(
+    String name,
+    ConcessionType concessionType,
+    double value,
+    String? description,
+  ) async {
+    final res = await createScholarshipAndReturn(name, concessionType, value, description);
+    return res != null;
+  }
+
+  Future<Scholarship?> updateScholarshipAndReturn({
+    required String id,
+    required String name,
+    required ConcessionType concessionType,
+    required double value,
+    String? description,
+  }) async {
+    if (_schoolId.isEmpty) return null;
+    state = state.copyWith(isLoading: true, error: null);
+    final result = await _apiClient.put(
+      '/fees/scholarships/$id',
+      options: Options(headers: {'X-School-ID': _schoolId}),
+      data: {
+        'name': name,
+        'concession_type': concessionType.name,
+        'value': value,
+        'description': description,
+      },
+      mapper: (json) => Scholarship.fromJson((json as Map<String, dynamic>)['data'] as Map<String, dynamic>),
+    );
+
+    return result.when(
+      onSuccess: (updated) {
+        final updatedList = state.scholarships.map((s) => s.id == id ? updated : s).toList();
+        state = state.copyWith(scholarships: updatedList, isLoading: false);
+        return updated;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return null;
+      },
+    );
+  }
+
+  Future<bool> updateScholarship({
+    required String id,
+    required String name,
+    required ConcessionType concessionType,
+    required double value,
+    String? description,
+  }) async {
+    final res = await updateScholarshipAndReturn(
+      id: id,
+      name: name,
+      concessionType: concessionType,
+      value: value,
+      description: description,
+    );
+    return res != null;
   }
 
   Future<bool> deleteScholarship(String id) async {
@@ -343,6 +415,24 @@ class FeeStructuresNotifier extends StateNotifier<FeeStructuresState> {
       },
     );
   }
+
+  Future<int?> propagateStructure(String id) async {
+    final result = await _apiClient.post(
+      '/fees/structures/$id/propagate',
+      options: Options(headers: {'X-School-ID': _schoolId}),
+      data: {},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final data = payload['data'] as Map<String, dynamic>?;
+        return data?['assigned_count'] as int? ?? 0;
+      },
+    );
+
+    return result.when(
+      onSuccess: (count) => count,
+      onFailure: (_) => null,
+    );
+  }
 }
 
 final feeStructuresProvider = StateNotifierProvider.family<FeeStructuresNotifier, FeeStructuresState, String>((ref, schoolId) {
@@ -401,9 +491,22 @@ class FeesDashboardNotifier extends StateNotifier<FeesDashboardState> {
       options: Options(headers: {'X-School-ID': _schoolId}),
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
-        return DashboardMetrics.fromJson(payload['data'] as Map<String, dynamic>);
+        final data = payload['data'];
+        if (data is Map<String, dynamic>) {
+          return DashboardMetrics.fromJson(data);
+        }
+        return DashboardMetrics(
+          todayCollection: 0.0,
+          monthCollection: 0.0,
+          pendingDues: 0.0,
+          collectionPercentage: 0.0,
+          defaultersCount: 0,
+          topOutstandingClasses: const [],
+        );
       },
     );
+
+    if (!mounted) return;
 
     if (metricsResult.isSuccess) {
       final metrics = metricsResult.dataOrNull!;
@@ -414,9 +517,15 @@ class FeesDashboardNotifier extends StateNotifier<FeesDashboardState> {
         options: Options(headers: {'X-School-ID': _schoolId}),
         mapper: (json) {
           final payload = json as Map<String, dynamic>;
-          return CollectionAnalytics.fromJson(payload['data'] as Map<String, dynamic>);
+          final data = payload['data'];
+          if (data is Map<String, dynamic>) {
+            return CollectionAnalytics.fromJson(data);
+          }
+          return null;
         },
       );
+
+      if (!mounted) return;
 
       if (aiResult.isSuccess) {
         state = FeesDashboardState(
@@ -560,11 +669,14 @@ class StudentLedgerNotifier extends StateNotifier<StudentLedgerState> {
       },
     );
 
+    if (!mounted) return;
     result.when(
       onSuccess: (data) {
+        if (!mounted) return;
         state = StudentLedgerState(ledger: data, isLoading: false);
       },
       onFailure: (failure) {
+        if (!mounted) return;
         state = state.copyWith(isLoading: false, error: failure.message);
       },
     );
@@ -644,6 +756,191 @@ final feeAssignmentCreationProvider = StateNotifierProvider<FeeAssignmentCreatio
   return FeeAssignmentCreationNotifier(apiClient);
 });
 
+// --- 8. FEE PAYMENT ACTION PROVIDER ---
+class FeePaymentActionState {
+  final bool isLoading;
+  final String? error;
+  final FeePayment? payment;
+
+  const FeePaymentActionState({
+    required this.isLoading,
+    this.error,
+    this.payment,
+  });
+
+  FeePaymentActionState copyWith({
+    bool? isLoading,
+    String? error,
+    FeePayment? payment,
+  }) {
+    return FeePaymentActionState(
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+      payment: payment ?? this.payment,
+    );
+  }
+}
+
+class FeePaymentActionNotifier extends StateNotifier<FeePaymentActionState> {
+  final BaseApiClient _apiClient;
+  final Ref _ref;
+
+  FeePaymentActionNotifier(this._apiClient, this._ref)
+      : super(const FeePaymentActionState(isLoading: false));
+
+  Future<bool> recordPayment({
+    required String studentId,
+    required String academicYearId,
+    required PaymentMethod paymentMethod,
+    required List<Map<String, dynamic>> allocations,
+    String? transactionReference,
+    String? remarks,
+    String? schoolId,
+  }) async {
+    if (allocations.isEmpty) {
+      state = const FeePaymentActionState(isLoading: false, error: 'At least one fee allocation is required.');
+      return false;
+    }
+    final uuidRegex = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+    for (final alloc in allocations) {
+      final assignmentId = alloc['assignment_id'];
+      if (assignmentId == null || !uuidRegex.hasMatch(assignmentId.toString())) {
+        state = const FeePaymentActionState(
+          isLoading: false,
+          error: 'Invalid fee assignment ID. A valid assignment UUID is required.',
+        );
+        return false;
+      }
+      final amount = alloc['amount_allocated'];
+      if (amount == null || (amount is num && amount <= 0)) {
+        state = const FeePaymentActionState(isLoading: false, error: 'Allocation amount must be greater than zero.');
+        return false;
+      }
+    }
+
+    state = const FeePaymentActionState(isLoading: true);
+    final result = await _apiClient.post(
+      '/fees/payments',
+      data: {
+        'student_id': studentId,
+        'academic_year_id': academicYearId,
+        'payment_method': paymentMethod.name,
+        if (transactionReference != null && transactionReference.isNotEmpty)
+          'transaction_reference': transactionReference,
+        if (remarks != null && remarks.isNotEmpty) 'remarks': remarks,
+        'allocations': allocations,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return FeePayment.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (payment) {
+        state = FeePaymentActionState(isLoading: false, payment: payment);
+        _ref.invalidate(studentLedgerProvider(studentId));
+        if (schoolId != null && schoolId.isNotEmpty) {
+          _ref.invalidate(feesDashboardProvider(schoolId));
+          _ref.invalidate(outstandingReportProvider(OutstandingReportParams(schoolId: schoolId, onlyDefaulters: false)));
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        state = FeePaymentActionState(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> cancelPayment({
+    required String paymentId,
+    required String cancelReason,
+    required String studentId,
+    String? schoolId,
+  }) async {
+    if (cancelReason.trim().isEmpty) {
+      state = const FeePaymentActionState(isLoading: false, error: 'Cancellation reason is required.');
+      return false;
+    }
+
+    state = const FeePaymentActionState(isLoading: true);
+    final result = await _apiClient.put(
+      '/fees/payments/$paymentId/cancel',
+      data: {
+        'cancel_reason': cancelReason.trim(),
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return FeePayment.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (payment) {
+        state = FeePaymentActionState(isLoading: false, payment: payment);
+        _ref.invalidate(studentLedgerProvider(studentId));
+        if (schoolId != null && schoolId.isNotEmpty) {
+          _ref.invalidate(feesDashboardProvider(schoolId));
+          _ref.invalidate(outstandingReportProvider(OutstandingReportParams(schoolId: schoolId, onlyDefaulters: false)));
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        state = FeePaymentActionState(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> updatePayment({
+    required String paymentId,
+    required String studentId,
+    PaymentMethod? paymentMethod,
+    String? transactionReference,
+    String? remarks,
+    double? amountPaid,
+    String? schoolId,
+  }) async {
+    state = const FeePaymentActionState(isLoading: true);
+    final data = <String, dynamic>{};
+    if (paymentMethod != null) data['payment_method'] = paymentMethod.name;
+    if (transactionReference != null) data['transaction_reference'] = transactionReference;
+    if (remarks != null) data['remarks'] = remarks;
+    if (amountPaid != null) data['amount_paid'] = amountPaid;
+
+    final result = await _apiClient.put(
+      '/fees/payments/$paymentId',
+      data: data,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return FeePayment.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (payment) {
+        state = FeePaymentActionState(isLoading: false, payment: payment);
+        _ref.invalidate(studentLedgerProvider(studentId));
+        if (schoolId != null && schoolId.isNotEmpty) {
+          _ref.invalidate(feesDashboardProvider(schoolId));
+          _ref.invalidate(outstandingReportProvider(OutstandingReportParams(schoolId: schoolId, onlyDefaulters: false)));
+        }
+        return true;
+      },
+      onFailure: (failure) {
+        state = FeePaymentActionState(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final feePaymentActionProvider = StateNotifierProvider<FeePaymentActionNotifier, FeePaymentActionState>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return FeePaymentActionNotifier(apiClient, ref);
+});
+
 class OutstandingReportState {
   final List<OutstandingFeeReportItem> items;
   final bool isLoading;
@@ -686,21 +983,24 @@ class OutstandingReportNotifier extends StateNotifier<OutstandingReportState> {
       '/fees/reports/outstanding',
       queryParameters: {
         'school_id': _schoolId,
-        if (_classId != null && _classId!.isNotEmpty) 'class_id': _classId,
+        if (_classId != null && _classId.isNotEmpty) 'class_id': _classId,
         'only_defaulters': _onlyDefaulters.toString(),
       },
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
-        final list = payload['data'] as List<dynamic>;
+        final list = (payload['data'] as List<dynamic>?) ?? [];
         return list.map((e) => OutstandingFeeReportItem.fromJson(e as Map<String, dynamic>)).toList();
       },
     );
 
+    if (!mounted) return;
     result.when(
       onSuccess: (data) {
+        if (!mounted) return;
         state = OutstandingReportState(items: data, isLoading: false);
       },
       onFailure: (failure) {
+        if (!mounted) return;
         state = OutstandingReportState(items: [], isLoading: false, error: failure.message);
       },
     );

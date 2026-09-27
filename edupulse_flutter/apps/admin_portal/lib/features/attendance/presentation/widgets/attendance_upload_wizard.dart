@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/attendance_providers.dart';
+import '../../data/models/attendance_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
@@ -344,6 +345,21 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
     final valResult = uploadState.validateResult;
     if (valResult == null) return const SizedBox.shrink();
 
+    // Pagination for preview rows to prevent DOM/widget tree freeze
+    final totalPreview = valResult.previewRows.length;
+    final pageSize = uploadState.previewPageSize;
+    final totalPages = (totalPreview / pageSize).ceil().clamp(1, 9999);
+    final currentPage = uploadState.previewCurrentPage.clamp(1, totalPages);
+    final startIdx = (currentPage - 1) * pageSize;
+    final endIdx = (startIdx + pageSize).clamp(0, totalPreview);
+    final displayedRows = (totalPreview > 0 && startIdx < totalPreview)
+        ? valResult.previewRows.sublist(startIdx, endIdx)
+        : <BulkValidateRowPreviewDto>[];
+
+    final progressPct = uploadState.totalImportRows > 0
+        ? (uploadState.processedImportRows / uploadState.totalImportRows).clamp(0.0, 1.0)
+        : 0.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -366,6 +382,58 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
         ),
         const SizedBox(height: 24),
 
+        // Live Import Progress Panel (shown during execution or after partial batch failure)
+        if (uploadState.isImporting || uploadState.totalImportRows > 0) ...[
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      uploadState.isImporting
+                          ? 'Importing Batch ${uploadState.currentBatchIndex} of ${uploadState.totalBatches}...'
+                          : 'Import Progress (Paused)',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: theme.colorScheme.primary),
+                    ),
+                    Text(
+                      '${(progressPct * 100).toStringAsFixed(1)}% complete',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: progressPct,
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    _metricPill('Total', '${uploadState.totalImportRows}', Colors.blue),
+                    _metricPill('Processed', '${uploadState.processedImportRows}', Colors.indigo),
+                    _metricPill('Remaining', '${uploadState.remainingImportRows}', Colors.purple),
+                    _metricPill('Success', '${uploadState.importSuccessCount}', Colors.green),
+                    _metricPill('Skipped', '${uploadState.importSkippedCount}', Colors.orange),
+                    _metricPill('Failed', '${uploadState.importFailureCount}', Colors.red),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+
         // Conflict Resolution Strategy Option
         Container(
           padding: const EdgeInsets.all(16),
@@ -387,26 +455,62 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
                 subtitle: const Text('If student attendance already exists for that session and date, do not modify it.'),
                 value: 'SKIP_EXISTING',
                 groupValue: uploadState.conflictStrategy,
-                onChanged: (val) => uploadNotifier.setConflictStrategy(val!),
+                onChanged: uploadState.isImporting ? null : (val) => uploadNotifier.setConflictStrategy(val!),
               ),
               RadioListTile<String>(
                 title: const Text('Replace Existing Records'),
                 subtitle: const Text('Overwrite existing attendance records with the values in this import file and log an audit trail.'),
                 value: 'REPLACE_EXISTING',
                 groupValue: uploadState.conflictStrategy,
-                onChanged: (val) => uploadNotifier.setConflictStrategy(val!),
+                onChanged: uploadState.isImporting ? null : (val) => uploadNotifier.setConflictStrategy(val!),
               ),
             ],
           ),
         ),
         const SizedBox(height: 24),
 
-        // Row Previews
-        Text(
-          'Data Preview (First ${valResult.previewRows.length} rows):',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        // Row Previews Header with Pagination Controls
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Data Preview (${totalPreview > 0 ? "${startIdx + 1}-$endIdx of $totalPreview" : "0"} preview rows):',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            Row(
+              children: [
+                const Text('Page size: ', style: TextStyle(fontSize: 12)),
+                DropdownButton<int>(
+                  value: uploadState.previewPageSize,
+                  underline: const SizedBox(),
+                  items: const [
+                    DropdownMenuItem(value: 10, child: Text('10', style: TextStyle(fontSize: 12))),
+                    DropdownMenuItem(value: 25, child: Text('25', style: TextStyle(fontSize: 12))),
+                    DropdownMenuItem(value: 50, child: Text('50', style: TextStyle(fontSize: 12))),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) uploadNotifier.setPreviewPageSize(val);
+                  },
+                ),
+                const SizedBox(width: 12),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left, size: 20),
+                  onPressed: currentPage > 1 ? () => uploadNotifier.setPreviewPage(currentPage - 1) : null,
+                  tooltip: 'Previous Page',
+                ),
+                Text('$currentPage / $totalPages', style: const TextStyle(fontSize: 12)),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right, size: 20),
+                  onPressed: currentPage < totalPages ? () => uploadNotifier.setPreviewPage(currentPage + 1) : null,
+                  tooltip: 'Next Page',
+                ),
+              ],
+            ),
+          ],
         ),
         const SizedBox(height: 8),
+
+        // Paginated Preview Table (Clamped: renders max pageSize rows)
         Container(
           decoration: BoxDecoration(
             border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
@@ -430,7 +534,7 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
                   ],
                 ),
               ),
-              ...valResult.previewRows.map((row) {
+              ...displayedRows.map((row) {
                 Color valColor = Colors.green;
                 if (row.validationStatus == 'INVALID') valColor = Colors.red;
                 if (row.validationStatus == 'CONFLICT') valColor = Colors.orange;
@@ -480,29 +584,48 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
         ),
         const SizedBox(height: 24),
 
-        // Execution buttons
+        // Execution and Safe Retry Buttons
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             OutlinedButton(
-              onPressed: () => uploadNotifier.reset(),
+              onPressed: uploadState.isImporting ? null : () => uploadNotifier.reset(),
               child: const Text('Cancel & Start Over'),
             ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                backgroundColor: theme.colorScheme.primary,
-                foregroundColor: Colors.white,
-              ),
-              icon: uploadState.isImporting
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_upload),
-              label: Text(uploadState.isImporting ? 'Importing Records...' : 'Execute Attendance Import'),
-              onPressed: uploadState.isImporting ? null : () => uploadNotifier.executeImport(),
+            Row(
+              children: [
+                if (uploadState.lastFailedBatchIndex != null && !uploadState.isImporting) ...[
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      backgroundColor: Colors.amber[800],
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.refresh),
+                    label: Text('Retry Remaining (Batch ${(uploadState.lastFailedBatchIndex ?? 0) + 1} of ${uploadState.totalBatches})'),
+                    onPressed: () => uploadNotifier.executeImport(retryFromFailed: true),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    backgroundColor: theme.colorScheme.primary,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: uploadState.isImporting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_upload),
+                  label: Text(uploadState.isImporting
+                      ? 'Importing Batch ${uploadState.currentBatchIndex} of ${uploadState.totalBatches}...'
+                      : 'Execute Attendance Import'),
+                  onPressed: uploadState.isImporting ? null : () => uploadNotifier.executeImport(),
+                ),
+              ],
             ),
           ],
         ),
@@ -553,8 +676,16 @@ class _AttendanceUploadWizardState extends ConsumerState<AttendanceUploadWizard>
               onPressed: () => uploadNotifier.reset(),
             ),
             const SizedBox(width: 16),
-            if (widget.onNavigateToHistory != null) ...[
+            if (widget.onNavigateToRegister != null) ...[
               ElevatedButton.icon(
+                icon: const Icon(Icons.assignment_turned_in_outlined),
+                label: const Text('View in Register'),
+                onPressed: widget.onNavigateToRegister,
+              ),
+              const SizedBox(width: 16),
+            ],
+            if (widget.onNavigateToHistory != null) ...[
+              OutlinedButton.icon(
                 icon: const Icon(Icons.history),
                 label: const Text('View Import History'),
                 onPressed: widget.onNavigateToHistory,

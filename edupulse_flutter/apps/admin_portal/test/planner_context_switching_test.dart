@@ -46,11 +46,22 @@ class FakePlannerAuthRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakePlannerSessionManager implements SessionManager {
   String? _schoolId;
   String? cachedTenantId;
+  String? cachedSchoolName;
+  String? cachedTenantName;
 
   FakePlannerSessionManager([this._schoolId]);
 
@@ -65,13 +76,21 @@ class FakePlannerSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async { _schoolId = null; }
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async { _schoolId = null; }
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => _schoolId;
   @override
   Future<void> saveSchoolId(String schoolId) async { _schoolId = schoolId; }
+  @override
+  Future<String?> getSchoolName() async => cachedSchoolName;
+  @override
+  Future<void> saveSchoolName(String schoolName) async { cachedSchoolName = schoolName; }
+  @override
+  Future<String?> getTenantName() async => cachedTenantName;
+  @override
+  Future<void> saveTenantName(String tenantName) async { cachedTenantName = tenantName; }
 }
 
 class FakePlannerApiClient extends BaseApiClient {
@@ -223,7 +242,7 @@ void main() {
     expect(lastReq['query']['school_id'], 'school_1');
 
     // 2. Switch to DPS002
-    await tester.tap(find.byType(DropdownButton<String?>));
+    await tester.tap(find.byType(DropdownButton<String?>).last);
     await tester.pumpAndSettle();
     
     await tester.tap(find.text('Delhi Public School Hyderabad - Campus 2').last);
@@ -240,7 +259,7 @@ void main() {
     expect(lastReq['query']['school_id'], 'school_2');
 
     // 3. Switch back to DPS001
-    await tester.tap(find.byType(DropdownButton<String?>));
+    await tester.tap(find.byType(DropdownButton<String?>).last);
     await tester.pumpAndSettle();
     
     await tester.tap(find.text('Delhi Public School Hyderabad').last);

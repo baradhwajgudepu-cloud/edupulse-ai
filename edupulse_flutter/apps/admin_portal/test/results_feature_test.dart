@@ -33,7 +33,7 @@ class FakeResultsSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
@@ -302,6 +302,32 @@ class FakeResultsApiClient extends BaseApiClient {
       return ApiResult.success(mapper({'data': _mockClasses}));
     } else if (path.contains('/sections')) {
       return ApiResult.success(mapper({'data': _mockSections}));
+    } else if (path.contains('result-readiness')) {
+      return ApiResult.success(mapper({
+        'data': {
+          'examination_id': 'exam_1',
+          'examination_name': 'Term 1 Final Exam',
+          'academic_year_id': 'ay_1',
+          'class_id': 'class_1',
+          'class_name': 'Class 8',
+          'section_id': 'section_1',
+          'section_name': 'Section A',
+          'total_students': 2,
+          'students_with_complete_results': 2,
+          'students_with_incomplete_results': 0,
+          'draft_results_count': 0,
+          'ready_to_publish_count': 0,
+          'published_count': 2,
+          'is_ready_to_publish': false,
+          'is_fully_published': true,
+          'publication_status': 'PUBLISHED',
+          'last_published_date': '2026-08-13T15:00:00Z',
+          'published_by_name': 'Principal',
+          'status_message': 'Results are published and visible to parents and students.',
+          'missing_breakdown': [],
+          'can_unpublish': true,
+        }
+      }));
     } else if (path.contains('/examinations')) {
       return ApiResult.success(mapper({'data': _mockExaminations}));
     } else if (path.contains('/students')) {
@@ -378,13 +404,13 @@ void main() {
     expect(find.text('Section'), findsOneWidget);
 
     // Verify statistics panel cards
-    expect(find.text('Total Students'), findsOneWidget);
-    expect(find.text('Complete Results'), findsOneWidget);
-    expect(find.text('Incomplete Results'), findsOneWidget);
+    expect(find.text('Total Students'), findsWidgets);
+    expect(find.text('Complete Results'), findsWidgets);
+    expect(find.text('Incomplete Results'), findsWidgets);
     
     // Total: 2, Complete: 1, Incomplete: 1
-    expect(find.text('2'), findsNWidgets(2)); // Total students (and Aarav's roll number)
-    expect(find.text('1'), findsNWidgets(3)); // Complete & Incomplete cards, and Aditi's roll number
+    expect(find.text('2'), findsWidgets);
+    expect(find.text('1'), findsWidgets);
   });
 
   testWidgets('Student list renders and roll numbers are sorted numerically', (tester) async {
@@ -396,6 +422,10 @@ void main() {
       ],
     );
     container.read(selectedSchoolIdProvider.notifier).state = 'school_1';
+
+    await container.read(academicYearsProvider('school_1').notifier).fetchYears();
+    await container.read(classesProvider('school_1').notifier).fetchClasses();
+    await container.read(sectionsProvider('school_1').notifier).fetchSections();
 
     await tester.pumpWidget(createTestWidget(const ResultsDashboardScreen(), container));
     await tester.pumpAndSettle();

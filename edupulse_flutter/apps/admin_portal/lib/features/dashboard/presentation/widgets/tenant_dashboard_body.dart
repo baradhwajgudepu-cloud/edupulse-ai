@@ -5,6 +5,7 @@ import '../../../reports/presentation/providers/reports_provider.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 
+
 class TenantDashboardBody extends ConsumerWidget {
   const TenantDashboardBody({super.key});
 
@@ -57,6 +58,20 @@ class TenantDashboardBody extends ConsumerWidget {
         final reportCardCompletion = data['report_card_completion_percentage'] ?? 100.0;
         final activeAcademicYear = data['active_academic_year'] ?? 'N/A';
         final List<dynamic> schools = data['schools'] ?? [];
+
+        final screenWidth = MediaQuery.of(context).size.width;
+        int metricCrossAxisCount = 4;
+        double metricAspectRatio = 1.8;
+        if (screenWidth < 600) {
+          metricCrossAxisCount = 1;
+          metricAspectRatio = 3.2;
+        } else if (screenWidth < 960) {
+          metricCrossAxisCount = 2;
+          metricAspectRatio = 2.2;
+        } else if (screenWidth < 1300) {
+          metricCrossAxisCount = 3;
+          metricAspectRatio = 2.0;
+        }
 
         return SingleChildScrollView(
           padding: EdgeInsets.all(spacing.lg),
@@ -112,12 +127,12 @@ class TenantDashboardBody extends ConsumerWidget {
 
               // 2. Metrics Grid (8 cards)
               GridView.count(
-                crossAxisCount: MediaQuery.of(context).size.width > 1200 ? 4 : (MediaQuery.of(context).size.width > 800 ? 3 : 2),
+                crossAxisCount: metricCrossAxisCount,
                 crossAxisSpacing: spacing.md,
                 mainAxisSpacing: spacing.md,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                childAspectRatio: 1.6,
+                childAspectRatio: metricAspectRatio,
                 children: [
                   _buildMetricCard(
                     context,
@@ -199,88 +214,94 @@ class TenantDashboardBody extends ConsumerWidget {
               ),
               SizedBox(height: spacing.md),
 
-              // 4. Schools Table Card
-              Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(radius.md),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  width: double.infinity,
-                  child: DataTable(
-                    headingRowColor: WidgetStateProperty.all(theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)),
-                    dataRowMinHeight: 56,
-                    dataRowMaxHeight: 64,
-                    columns: const [
-                      DataColumn(label: Text('School Campus')),
-                      DataColumn(label: Text('Students'), numeric: true),
-                      DataColumn(label: Text('Teachers'), numeric: true),
-                      DataColumn(label: Text('Attendance'), numeric: true),
-                      DataColumn(label: Text('Fee Collection'), numeric: true),
-                      DataColumn(label: Text('Report Card %'), numeric: true),
-                      DataColumn(label: Text('Status')),
-                    ],
-                    rows: schools.map((sch) {
-                      final name = sch['school_name'] ?? 'N/A';
-                      final std = sch['students_count'] ?? 0;
-                      final tch = sch['teachers_count'] ?? 0;
-                      final att = sch['attendance_percentage'] ?? 100.0;
-                      final fee = sch['fee_collection_percentage'] ?? 100.0;
-                      final rc = sch['report_card_completion_percentage'] ?? 100.0;
-                      final isActive = sch['is_active'] ?? true;
+              // 4. Schools Table Card / Mobile Cards
+              if (screenWidth < 600)
+                _buildMobileSchoolCards(schools, ref, theme, radius, spacing)
+              else
+                Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(radius.md),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minWidth: screenWidth - spacing.lg * 2),
+                      child: DataTable(
+                        headingRowColor: WidgetStateProperty.all(theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)),
+                        dataRowMinHeight: 56,
+                        dataRowMaxHeight: 64,
+                        columns: const [
+                          DataColumn(label: Text('School Campus')),
+                          DataColumn(label: Text('Students'), numeric: true),
+                          DataColumn(label: Text('Teachers'), numeric: true),
+                          DataColumn(label: Text('Attendance'), numeric: true),
+                          DataColumn(label: Text('Fee Collection'), numeric: true),
+                          DataColumn(label: Text('Report Card %'), numeric: true),
+                          DataColumn(label: Text('Status')),
+                        ],
+                        rows: schools.map((sch) {
+                          final name = sch['school_name'] ?? 'N/A';
+                          final std = sch['students_count'] ?? 0;
+                          final tch = sch['teachers_count'] ?? 0;
+                          final att = sch['attendance_percentage'] ?? 100.0;
+                          final fee = sch['fee_collection_percentage'] ?? 100.0;
+                          final rc = sch['report_card_completion_percentage'] ?? 100.0;
+                          final isActive = sch['is_active'] ?? true;
 
-                      return DataRow(
-                        cells: [
-                          DataCell(
-                            InkWell(
-                              onTap: () {
-                                // Switch context to selected school and reload context-sensitive providers
-                                ref.read(selectedSchoolIdProvider.notifier).state = sch['school_id'];
-                              },
-                              child: Row(
-                                children: [
-                                  Icon(Icons.launch, size: 16, color: theme.colorScheme.primary),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    name,
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontWeight: FontWeight.bold,
-                                      decoration: TextDecoration.underline,
-                                    ),
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                InkWell(
+                                  onTap: () {
+                                    // Switch context to selected school and reload context-sensitive providers
+                                    ref.read(selectedSchoolIdProvider.notifier).state = sch['school_id'];
+                                  },
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.launch, size: 16, color: theme.colorScheme.primary),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        name,
+                                        style: TextStyle(
+                                          color: theme.colorScheme.primary,
+                                          fontWeight: FontWeight.bold,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          DataCell(Text('$std')),
-                          DataCell(Text('$tch')),
-                          DataCell(Text('${att.toStringAsFixed(1)}%')),
-                          DataCell(Text('${fee.toStringAsFixed(1)}%')),
-                          DataCell(Text('${rc.toStringAsFixed(1)}%')),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: isActive ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                isActive ? 'Active' : 'Inactive',
-                                style: TextStyle(
-                                  color: isActive ? Colors.green[800] : Colors.red[800],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
                                 ),
                               ),
-                            ),
-                          ),
-                        ],
-                      );
-                    }).toList(),
+                              DataCell(Text('$std')),
+                              DataCell(Text('$tch')),
+                              DataCell(Text('${att.toStringAsFixed(1)}%')),
+                              DataCell(Text('${fee.toStringAsFixed(1)}%')),
+                              DataCell(Text('${rc.toStringAsFixed(1)}%')),
+                              DataCell(
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isActive ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    isActive ? 'Active' : 'Inactive',
+                                    style: TextStyle(
+                                      color: isActive ? Colors.green[800] : Colors.red[800],
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         );
@@ -348,4 +369,126 @@ class TenantDashboardBody extends ConsumerWidget {
       ),
     );
   }
+
+  Widget _buildMobileSchoolCards(
+    List<dynamic> schools,
+    WidgetRef ref,
+    ThemeData theme,
+    AppRadius radius,
+    AppSpacing spacing,
+  ) {
+    if (schools.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: EdgeInsets.all(spacing.lg),
+          child: const Center(child: Text('No schools registered.')),
+        ),
+      );
+    }
+
+    return Column(
+      children: schools.map((sch) {
+        final name = sch['school_name'] ?? 'N/A';
+        final std = sch['students_count'] ?? 0;
+        final tch = sch['teachers_count'] ?? 0;
+        final att = sch['attendance_percentage'] ?? 100.0;
+        final fee = sch['fee_collection_percentage'] ?? 100.0;
+        final isActive = sch['is_active'] ?? true;
+
+        return Card(
+          margin: EdgeInsets.only(bottom: spacing.md),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radius.md),
+            side: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(spacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          ref.read(selectedSchoolIdProvider.notifier).state = sch['school_id'];
+                        },
+                        child: Row(
+                          children: [
+                            Icon(Icons.launch, size: 16, color: theme.colorScheme.primary),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                name,
+                                style: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  decoration: TextDecoration.underline,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isActive ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        isActive ? 'Active' : 'Inactive',
+                        style: TextStyle(
+                          color: isActive ? Colors.green[800] : Colors.red[800],
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Divider(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatCol('Students', '$std', theme),
+                    _buildStatCol('Teachers', '$tch', theme),
+                    _buildStatCol('Attendance', '${att.toStringAsFixed(1)}%', theme),
+                    _buildStatCol('Fee Collection', '${fee.toStringAsFixed(1)}%', theme),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildStatCol(String label, String value, ThemeData theme) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontSize: 10,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
 }
+

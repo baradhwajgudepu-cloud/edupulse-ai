@@ -7,6 +7,7 @@ import '../../../../core/router/routes.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/homework_provider.dart';
 import '../widgets/homework_list.dart';
+import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 
 class HomeworkScreen extends ConsumerStatefulWidget {
   const HomeworkScreen({super.key});
@@ -27,7 +28,8 @@ class _HomeworkScreenState extends ConsumerState<HomeworkScreen> {
   void _loadHomework({bool isRefresh = false}) {
     final authState = ref.read(authStateProvider);
     if (authState is Authenticated) {
-      final schoolId = authState.user.schools.firstOrNull ?? '16730f87-bf8d-44e0-acf9-4b055a778b58';
+      final schoolId = authState.user.schools.firstOrNull;
+      if (schoolId == null) return;
       ref.read(homeworkStateProvider.notifier).fetchHomework(
             schoolId: schoolId,
             isRefresh: isRefresh,
@@ -46,6 +48,12 @@ class _HomeworkScreenState extends ConsumerState<HomeworkScreen> {
     final spacing =
         theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
+
+    ref.listen(authStateProvider, (previous, next) {
+      if (next is Authenticated) {
+        _loadHomework();
+      }
+    });
 
     ref.listen<HomeworkState>(homeworkStateProvider, (previous, next) {
       if (next is HomeworkSuccess && next.isFromCache) {
@@ -156,11 +164,43 @@ class _HomeworkScreenState extends ConsumerState<HomeworkScreen> {
             ),
           ),
         ),
-      HomeworkSuccess(:final homeworks) => SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.all(spacing.md),
-          child: HomeworkList(homeworks: homeworks),
-        ),
+      HomeworkSuccess(:final homeworks) => () {
+          final dbState = ref.watch(dashboardStateProvider);
+          final selected = dbState is DashboardSuccess ? dbState.data.selectedStudent : null;
+          final filtered = (selected != null && selected.classId.isNotEmpty)
+              ? homeworks.where((h) =>
+                  h.classId.isEmpty ||
+                  h.classId == selected.classId ||
+                  h.classId == selected.className
+                ).toList()
+              : homeworks;
+
+          if (filtered.isEmpty) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.all(spacing.lg),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.assignment_outlined, size: 64, color: Colors.grey),
+                    SizedBox(height: spacing.md),
+                    Text(
+                      local?.translate('no_homework') ?? 'No homework assigned',
+                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.all(spacing.md),
+            child: HomeworkList(homeworks: filtered),
+          );
+        }(),
     };
   }
 }

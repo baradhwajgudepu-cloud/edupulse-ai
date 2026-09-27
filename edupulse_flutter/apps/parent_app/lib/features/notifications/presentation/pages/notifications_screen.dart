@@ -67,27 +67,21 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   void _handleDeepLink(NotificationDto notification) {
-    switch (notification.type.toUpperCase()) {
-      case 'ATTENDANCE':
-        context.push('/attendance');
-        break;
-      case 'EXAMINATION':
-      case 'MARKS':
-        context.push('/exams');
-        break;
-      case 'REPORT_CARD':
-        context.push('/report-cards');
-        break;
-      case 'FEE':
-        context.push('/pay-fees');
-        break;
-      case 'ANNOUNCEMENT':
-      case 'HOLIDAY':
-      case 'EVENT':
-        context.push('/announcements');
-        break;
-      default:
-        break;
+    final type = notification.type.toUpperCase();
+    final module = (notification.relatedEntityType ?? '').toUpperCase();
+
+    if (type == 'ATTENDANCE' || module == 'ATTENDANCE') {
+      context.push('/attendance');
+    } else if (type == 'HOMEWORK' || module == 'HOMEWORK') {
+      context.push('/homework');
+    } else if (type == 'EXAMINATION' || type == 'MARKS' || module == 'EXAMINATION' || module == 'MARKS') {
+      context.push('/exams');
+    } else if (type == 'REPORT_CARD' || module == 'REPORT_CARD') {
+      context.push('/report-cards');
+    } else if (type == 'FEE' || module == 'FEE') {
+      context.push('/pay-fees');
+    } else if (type == 'ANNOUNCEMENT' || type == 'HOLIDAY' || type == 'EVENT' || module == 'ANNOUNCEMENT' || module == 'EVENT') {
+      context.push('/announcements');
     }
   }
 

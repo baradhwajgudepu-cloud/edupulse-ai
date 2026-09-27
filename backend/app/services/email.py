@@ -1,12 +1,26 @@
 import asyncio
-import logging
 import smtplib
+import structlog
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 from app.core.settings import settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+def mask_email(email: str) -> str:
+    """
+    Safely masks an email address to avoid logging complete email addresses.
+    e.g. 'edupulsetechnologies@gmail.com' -> 'e***s@gmail.com'
+    """
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = "*" * len(local)
+    else:
+        masked_local = f"{local[0]}***{local[-1]}"
+    return f"{masked_local}@{domain}"
 
 class EmailService:
     """
@@ -24,7 +38,16 @@ class EmailService:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.host and self.from_email)
+        """
+        SMTP configuration must be considered valid only when required credentials are present.
+        If SMTP host or from_email is missing, SMTP is not configured.
+        If SMTP username exists but SMTP password is missing, treat SMTP as unavailable.
+        """
+        if not (self.host and self.from_email):
+            return False
+        if self.username and not self.password:
+            return False
+        return True
 
     async def send_password_reset_email(
         self, to_email: str, recipient_name: str, reset_token: str
@@ -114,25 +137,81 @@ The EduPulse AI Team
     ) -> bool:
         """
         Executes asynchronous SMTP dispatch in threadpool executor.
+        Never simulates successful email delivery outside DEBUG mode.
         """
+        recipient_masked = mask_email(to_email)
+
         if not self.is_configured:
             if settings.DEBUG:
                 logger.info(
-                    f"[EMAIL DISPATCH SIMULATION (DEBUG)] To: {to_email} | Subject: {subject}"
+                    "email_dispatch_simulation_debug",
+                    recipient=recipient_masked,
+                    subject=subject
                 )
+                return True
             else:
-                logger.warning(
-                    f"SMTP is not configured. Email to {to_email} could not be dispatched."
+                logger.error(
+                    "smtp_delivery_failed_unconfigured",
+                    recipient=recipient_masked,
+                    smtp_host=self.host,
+                    has_username=bool(self.username),
+                    has_password=bool(self.password)
                 )
-            return True
+                return False
+
+        logger.info(
+            "email_delivery_attempted",
+            recipient=recipient_masked,
+            smtp_host=self.host,
+            smtp_port=self.port,
+            use_tls=self.use_tls,
+            auth_configured=bool(self.username and self.password)
+        )
 
         loop = asyncio.get_running_loop()
+        start_time = loop.time()
         try:
-            return await loop.run_in_executor(
+            delivered = await loop.run_in_executor(
                 None, self._send_smtp_sync, to_email, subject, text_body, html_body
             )
+            duration_ms = round((loop.time() - start_time) * 1000, 2)
+            if delivered:
+                logger.info(
+                    "email_delivery_success",
+                    recipient=recipient_masked,
+                    smtp_host=self.host,
+                    smtp_port=self.port,
+                    duration_ms=duration_ms
+                )
+                return True
+            else:
+                logger.error(
+                    "email_delivery_failure",
+                    recipient=recipient_masked,
+                    smtp_host=self.host,
+                    smtp_port=self.port,
+                    duration_ms=duration_ms,
+                    error="SMTP transmission failed"
+                )
+                return False
         except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {str(e)}")
+            duration_ms = round((loop.time() - start_time) * 1000, 2)
+            logger.error(
+                "email_delivery_failure",
+                recipient=recipient_masked,
+                smtp_host=self.host,
+                smtp_port=self.port,
+                duration_ms=duration_ms,
+                error_type=type(e).__name__,
+                error_message=str(e)[:200]
+            )
+            if settings.DEBUG:
+                logger.info(
+                    "email_dispatch_fallback_debug",
+                    recipient=recipient_masked,
+                    subject=subject
+                )
+                return True
             return False
 
     def _send_smtp_sync(

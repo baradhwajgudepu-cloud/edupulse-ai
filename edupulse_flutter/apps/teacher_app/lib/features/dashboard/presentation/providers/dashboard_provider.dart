@@ -6,6 +6,7 @@ import '../../domain/repositories/dashboard_repository.dart';
 import '../../data/datasource/dashboard_remote_datasource.dart';
 import '../../data/repositories/dashboard_repository_impl.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 sealed class DashboardState {
   const DashboardState();
@@ -92,7 +93,7 @@ class DashboardNotifier extends Notifier<DashboardState> {
     }
 
     final user = authState.user;
-    final schoolId = user.schools.isNotEmpty ? user.schools.first : null;
+    final schoolId = ref.read(activeSchoolIdProvider) ?? (user.schools.isNotEmpty ? user.schools.first : null);
     if (schoolId == null) {
       state = const DashboardError('No school associated with this teacher account.');
       return;
@@ -103,6 +104,12 @@ class DashboardNotifier extends Notifier<DashboardState> {
       schoolId: schoolId,
       email: user.email,
     );
+
+    // Guard against race condition: discard response if active school changed in-flight
+    final currentSchoolId = ref.read(activeSchoolIdProvider) ?? (user.schools.isNotEmpty ? user.schools.first : null);
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (data) {

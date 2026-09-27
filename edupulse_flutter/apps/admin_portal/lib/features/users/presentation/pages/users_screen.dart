@@ -157,17 +157,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       }
     });
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 768;
+    return LayoutBuilder(
+      builder: (context, rootConstraints) {
+        final isMobile = rootConstraints.maxWidth < 768;
 
-    return Scaffold(
-      body: Container(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Section
-            LayoutBuilder(
+        final headerWidget = LayoutBuilder(
               builder: (context, constraints) {
                 final isNarrow = constraints.maxWidth < 600;
                 if (isNarrow) {
@@ -232,18 +226,17 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                   ],
                 );
               },
-            ),
-            const SizedBox(height: 24),
+    );
 
-            // Filters & Actions Toolbar
-            Card(
+    // Filters & Actions Toolbar
+    final filtersCard = Card(
               elevation: 0,
               shape: RoundedRectangleBorder(
                 side: BorderSide(color: theme.colorScheme.outlineVariant),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: EdgeInsets.all(isMobile ? 10.0 : 16.0),
                 child: LayoutBuilder(
                   builder: (context, filterConstraints) {
                     final isFilterNarrow = filterConstraints.maxWidth < 850;
@@ -500,167 +493,223 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                   },
                 ),
               ),
+            );
+
+    // Pagination Controls Footer
+    final paginationFooter = Container(
+      padding: EdgeInsets.symmetric(vertical: isMobile ? 8.0 : 16.0),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, footerConstraints) {
+          final isFooterNarrow = footerConstraints.maxWidth < 500;
+          final totalCount = usersState.totalCount > 0 ? usersState.totalCount : usersState.users.length;
+          final isFiltered = _searchQuery.isNotEmpty || _selectedRole != null || _selectedStatus != null || _selectedSchool != null;
+          final countText = isFiltered
+              ? 'Showing ${filteredUsers.length} matching of $totalCount users'
+              : (filteredUsers.length < totalCount
+                  ? 'Showing ${filteredUsers.length} of $totalCount users'
+                  : 'Showing all $totalCount users');
+
+          final resetPageButton = ElevatedButton.icon(
+            onPressed: usersState.skip > 0
+                ? () {
+                    ref.read(usersListProvider.notifier).fetchUsers(reset: true);
+                  }
+                : null,
+            icon: const Icon(Icons.arrow_back),
+            label: const Text('Reset Page'),
+          );
+
+          final loadMoreButton = ElevatedButton.icon(
+            onPressed: usersState.hasMore && !usersState.isLoadingMore
+                ? () {
+                    ref.read(usersListProvider.notifier).fetchUsers();
+                  }
+                : null,
+            icon: usersState.isLoadingMore
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.arrow_forward),
+            label: Text(usersState.isLoadingMore
+                ? 'Loading...'
+                : (usersState.hasMore ? 'Load More' : 'All Loaded')),
+          );
+
+          if (isFooterNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  countText,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                SizedBox(height: isMobile ? 8 : 12),
+                Row(
+                  children: [
+                    Expanded(child: resetPageButton),
+                    const SizedBox(width: 12),
+                    Expanded(child: loadMoreButton),
+                  ],
+                ),
+              ],
+            );
+          }
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                countText,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              Row(
+                children: [
+                  resetPageButton,
+                  const SizedBox(width: 12),
+                  loadMoreButton,
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    Widget buildBodyContent({required bool isMobileView}) {
+      if (usersState.isLoading && usersState.users.isEmpty) {
+        return const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24.0),
+            child: CircularProgressIndicator(),
+          ),
+        );
+      }
+
+      if (usersState.error != null && usersState.users.isEmpty) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
+                const SizedBox(height: 16),
+                Text('Failed to load users: ${usersState.error}'),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    ref.read(usersListProvider.notifier).fetchUsers(reset: true);
+                  },
+                  child: const Text('Retry'),
+                ),
+              ],
             ),
+          ),
+        );
+      }
+
+      if (filteredUsers.isEmpty) {
+        final hasActiveFilters = _searchQuery.isNotEmpty ||
+            _selectedRole != null ||
+            _selectedStatus != null ||
+            _selectedSchool != null;
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline, size: 48, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(height: 16),
+                Text(
+                  hasActiveFilters
+                      ? (_searchQuery.isNotEmpty
+                          ? 'No users found matching "$_searchQuery".'
+                          : 'No matching users found for the selected filters.')
+                      : 'No users found in directory.',
+                  style: theme.textTheme.titleMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                if (hasActiveFilters)
+                  TextButton.icon(
+                    onPressed: _clearFilters,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Clear Filters'),
+                  ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      if (isMobileView) {
+        return _buildMobileCards(
+          context,
+          filteredUsers,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+        );
+      }
+
+      // Render table or cards based on available content width
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final useCards = constraints.maxWidth < 720;
+          return useCards
+              ? _buildMobileCards(context, filteredUsers)
+              : _buildDesktopTable(context, filteredUsers);
+        },
+      );
+    }
+
+    if (isMobile) {
+      return Scaffold(
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              headerWidget,
+              const SizedBox(height: 12),
+              filtersCard,
+              const SizedBox(height: 12),
+              buildBodyContent(isMobileView: true),
+              const SizedBox(height: 12),
+              paginationFooter,
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      body: Container(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            headerWidget,
+            const SizedBox(height: 24),
+            filtersCard,
             const SizedBox(height: 16),
-
-            // Content Area
             Expanded(
-              child: Builder(
-                builder: (context) {
-                  if (usersState.isLoading && usersState.users.isEmpty) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  if (usersState.error != null && usersState.users.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
-                          const SizedBox(height: 16),
-                          Text('Failed to load users: ${usersState.error}'),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              ref.read(usersListProvider.notifier).fetchUsers(reset: true);
-                            },
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  if (filteredUsers.isEmpty) {
-                    final hasActiveFilters = _searchQuery.isNotEmpty ||
-                        _selectedRole != null ||
-                        _selectedStatus != null ||
-                        _selectedSchool != null;
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.people_outline, size: 48, color: theme.colorScheme.onSurfaceVariant),
-                          const SizedBox(height: 16),
-                          Text(
-                            hasActiveFilters
-                                ? (_searchQuery.isNotEmpty
-                                    ? 'No users found matching "$_searchQuery".'
-                                    : 'No matching users found for the selected filters.')
-                                : 'No users found in directory.',
-                            style: theme.textTheme.titleMedium,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 8),
-                          if (hasActiveFilters)
-                            TextButton.icon(
-                              onPressed: _clearFilters,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Clear Filters'),
-                            ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  // Render table or cards
-                  return isMobile
-                      ? _buildMobileCards(context, filteredUsers)
-                      : _buildDesktopTable(context, filteredUsers);
-                },
-              ),
+              child: buildBodyContent(isMobileView: false),
             ),
-
-            // Pagination Controls Footer
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 16.0),
-              decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
-              ),
-              child: LayoutBuilder(
-                builder: (context, footerConstraints) {
-                  final isFooterNarrow = footerConstraints.maxWidth < 500;
-                  final totalCount = usersState.totalCount > 0 ? usersState.totalCount : usersState.users.length;
-                  final isFiltered = _searchQuery.isNotEmpty || _selectedRole != null || _selectedStatus != null || _selectedSchool != null;
-                  final countText = isFiltered
-                      ? 'Showing ${filteredUsers.length} matching of $totalCount users'
-                      : (filteredUsers.length < totalCount
-                          ? 'Showing ${filteredUsers.length} of $totalCount users'
-                          : 'Showing all $totalCount users');
-
-                  final resetPageButton = ElevatedButton.icon(
-                    onPressed: usersState.skip > 0
-                        ? () {
-                            ref.read(usersListProvider.notifier).fetchUsers(reset: true);
-                          }
-                        : null,
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text('Reset Page'),
-                  );
-
-                  final loadMoreButton = ElevatedButton.icon(
-                    onPressed: usersState.hasMore && !usersState.isLoadingMore
-                        ? () {
-                            ref.read(usersListProvider.notifier).fetchUsers();
-                          }
-                        : null,
-                    icon: usersState.isLoadingMore
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.arrow_forward),
-                    label: Text(usersState.isLoadingMore
-                        ? 'Loading...'
-                        : (usersState.hasMore ? 'Load More' : 'All Loaded')),
-                  );
-
-                  if (isFooterNarrow) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          countText,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(child: resetPageButton),
-                            const SizedBox(width: 12),
-                            Expanded(child: loadMoreButton),
-                          ],
-                        ),
-                      ],
-                    );
-                  }
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        countText,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          resetPageButton,
-                          const SizedBox(width: 12),
-                          loadMoreButton,
-                        ],
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
+            paginationFooter,
           ],
         ),
       ),
+    );
+      },
     );
   }
 
@@ -774,9 +823,16 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     );
   }
 
-  Widget _buildMobileCards(BuildContext context, List<UserResponseDto> users) {
+  Widget _buildMobileCards(
+    BuildContext context,
+    List<UserResponseDto> users, {
+    bool shrinkWrap = false,
+    ScrollPhysics? physics,
+  }) {
     final theme = Theme.of(context);
     return ListView.builder(
+      shrinkWrap: shrinkWrap,
+      physics: physics,
       itemCount: users.length,
       itemBuilder: (context, idx) {
         final user = users[idx];

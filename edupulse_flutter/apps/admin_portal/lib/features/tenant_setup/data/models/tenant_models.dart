@@ -45,12 +45,12 @@ class TenantDto {
 
   factory TenantDto.fromJson(Map<String, dynamic> json) {
     return TenantDto(
-      id: json['id'] as String,
-      name: json['name'] as String,
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
       displayName: json['display_name'] as String?,
-      code: json['code'] as String,
-      subdomain: json['subdomain'] as String,
-      email: json['email'] as String,
+      code: json['code'] as String? ?? '',
+      subdomain: (json['subdomain'] as String?) ?? (json['code'] as String? ?? ''),
+      email: json['email'] as String? ?? '',
       phone: json['phone'] as String?,
       website: json['website'] as String?,
       logoUrl: json['logo_url'] as String?,
@@ -227,5 +227,43 @@ class TenantUpdateRequest {
     if (isActive != null) data['is_active'] = isActive;
     if (status != null) data['status'] = status;
     return data;
+  }
+}
+
+class TenantDeletionSummaryDto {
+  final String tenantId;
+  final String tenantName;
+  final String tenantCode;
+  final bool dryRun;
+  final Map<String, int> deletedCounts;
+  final int totalRecordsDeleted;
+  final Map<String, dynamic> storageCleanup;
+  final List<String> warnings;
+
+  TenantDeletionSummaryDto({
+    required this.tenantId,
+    required this.tenantName,
+    required this.tenantCode,
+    required this.dryRun,
+    required this.deletedCounts,
+    required this.totalRecordsDeleted,
+    required this.storageCleanup,
+    required this.warnings,
+  });
+
+  factory TenantDeletionSummaryDto.fromJson(Map<String, dynamic> json) {
+    return TenantDeletionSummaryDto(
+      tenantId: json['tenant_id'] as String,
+      tenantName: json['tenant_name'] as String,
+      tenantCode: json['tenant_code'] as String,
+      dryRun: json['dry_run'] as bool? ?? false,
+      deletedCounts: (json['deleted_counts'] as Map<String, dynamic>?)?.map(
+            (k, v) => MapEntry(k, (v as num).toInt()),
+          ) ??
+          {},
+      totalRecordsDeleted: (json['total_records_deleted'] as num?)?.toInt() ?? 0,
+      storageCleanup: json['storage_cleanup'] as Map<String, dynamic>? ?? {},
+      warnings: (json['warnings'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+    );
   }
 }

@@ -42,6 +42,7 @@ async def assign_student_guardian(
 async def list_student_guardians(
     student_id: Optional[uuid.UUID] = Query(None, description="Filter by Student ID"),
     guardian_id: Optional[uuid.UUID] = Query(None, description="Filter by Guardian ID"),
+    academic_year_id: Optional[uuid.UUID] = Query(None, description="Filter by Academic Year ID"),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("guardian.read")),
     service: GuardianService = Depends(get_guardian_service)
@@ -85,12 +86,12 @@ async def list_student_guardians(
                 )
         
         query_guardian_id = guardian_id or my_guardian_id
-        mappings = await service.student_guardian_repo.get_guardian_students(query_guardian_id, tenant_id)
+        mappings = await service.student_guardian_repo.get_guardian_students(query_guardian_id, tenant_id, academic_year_id=academic_year_id)
     else:
         if student_id:
             mappings = await service.student_guardian_repo.get_student_guardians(student_id, tenant_id)
         elif guardian_id:
-            mappings = await service.student_guardian_repo.get_guardian_students(guardian_id, tenant_id)
+            mappings = await service.student_guardian_repo.get_guardian_students(guardian_id, tenant_id, academic_year_id=academic_year_id)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

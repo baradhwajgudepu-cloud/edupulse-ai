@@ -26,17 +26,22 @@ class ReportCardRepository:
         return result.scalar_one_or_none()
 
     async def get_by_student_and_year(
-        self, student_id: uuid.UUID, academic_year_id: uuid.UUID, tenant_id: uuid.UUID
+        self, student_id: uuid.UUID, academic_year_id: Optional[uuid.UUID], tenant_id: uuid.UUID
     ) -> Optional[ReportCardPublication]:
-        stmt = select(ReportCardPublication).where(
+        filters = [
             ReportCardPublication.student_id == student_id,
-            ReportCardPublication.academic_year_id == academic_year_id,
             ReportCardPublication.tenant_id == tenant_id,
             ReportCardPublication.deleted_at.is_(None)
+        ]
+        if academic_year_id:
+            filters.append(ReportCardPublication.academic_year_id == academic_year_id)
+
+        stmt = select(ReportCardPublication).where(
+            *filters
         ).options(
             joinedload(ReportCardPublication.student),
             joinedload(ReportCardPublication.academic_year)
-        )
+        ).order_by(ReportCardPublication.created_at.desc()).limit(1)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -55,17 +60,30 @@ class ReportCardRepository:
         return result.scalar_one_or_none()
 
     async def get_parent_publication(
-        self, student_id: uuid.UUID, academic_year_id: uuid.UUID, tenant_id: uuid.UUID
+        self, student_id: uuid.UUID, academic_year_id: Optional[uuid.UUID], tenant_id: uuid.UUID
     ) -> Optional[ReportCardPublication]:
-        stmt = select(ReportCardPublication).where(
+        filters = [
             ReportCardPublication.student_id == student_id,
-            ReportCardPublication.academic_year_id == academic_year_id,
             ReportCardPublication.tenant_id == tenant_id,
             ReportCardPublication.status == ReportCardStatus.PUBLISHED,
             ReportCardPublication.deleted_at.is_(None)
-        )
+        ]
+        if academic_year_id:
+            filters.append(ReportCardPublication.academic_year_id == academic_year_id)
+
+        stmt = select(ReportCardPublication).where(
+            *filters
+        ).options(
+            joinedload(ReportCardPublication.student),
+            joinedload(ReportCardPublication.academic_year)
+        ).order_by(ReportCardPublication.created_at.desc()).limit(1)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_latest_published(
+        self, student_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> Optional[ReportCardPublication]:
+        return await self.get_parent_publication(student_id, None, tenant_id)
 
     async def get_multi(
         self,

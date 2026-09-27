@@ -19,24 +19,29 @@ class AppShell extends StatelessWidget {
         onDestinationSelected: (int index) => _onItemTapped(index, context),
         destinations: const <Widget>[
           NavigationDestination(
-            selectedIcon: Icon(Icons.dashboard),
-            icon: Icon(Icons.dashboard_outlined),
-            label: 'Dashboard',
+            selectedIcon: Icon(Icons.home_rounded),
+            icon: Icon(Icons.home_outlined),
+            label: 'Home',
           ),
           NavigationDestination(
-            selectedIcon: Icon(Icons.pie_chart_rounded),
-            icon: Icon(Icons.pie_chart_outline_rounded),
-            label: 'Fees',
+            selectedIcon: Icon(Icons.people_alt_rounded),
+            icon: Icon(Icons.people_alt_outlined),
+            label: 'Students',
           ),
           NavigationDestination(
-            selectedIcon: Icon(Icons.notifications_rounded),
-            icon: Icon(Icons.notifications_outlined),
-            label: 'Alerts',
+            selectedIcon: Icon(Icons.how_to_reg_rounded),
+            icon: Icon(Icons.how_to_reg_outlined),
+            label: 'Attendance',
           ),
           NavigationDestination(
-            selectedIcon: Icon(Icons.person_rounded),
-            icon: Icon(Icons.person_outline_rounded),
-            label: 'Profile',
+            selectedIcon: Icon(Icons.account_balance_wallet_rounded),
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            label: 'Finance',
+          ),
+          NavigationDestination(
+            selectedIcon: Icon(Icons.grid_view_rounded),
+            icon: Icon(Icons.grid_view_outlined),
+            label: 'More',
           ),
         ],
       ),
@@ -47,14 +52,26 @@ class AppShell extends StatelessWidget {
     if (location.startsWith(AppRoutes.dashboard)) {
       return 0;
     }
-    if (location.startsWith(AppRoutes.fees)) {
+    if (location.startsWith(AppRoutes.students)) {
       return 1;
     }
-    if (location.startsWith(AppRoutes.notifications)) {
+    if (location.startsWith(AppRoutes.teacherAttendance) || location.startsWith(AppRoutes.geofence)) {
       return 2;
     }
-    if (location.startsWith(AppRoutes.profile)) {
+    if (location.startsWith(AppRoutes.fees)) {
       return 3;
+    }
+    if (location.startsWith(AppRoutes.more) ||
+        location.startsWith(AppRoutes.profile) ||
+        location.startsWith(AppRoutes.notifications) ||
+        location.startsWith(AppRoutes.analytics) ||
+        location.startsWith(AppRoutes.teachers) ||
+        location.startsWith(AppRoutes.communication) ||
+        location.startsWith(AppRoutes.planner) ||
+        location.startsWith(AppRoutes.reportCards) ||
+        location.startsWith(AppRoutes.manageExams) ||
+        location.startsWith(AppRoutes.teacherLeaves)) {
+      return 4;
     }
     return 0;
   }
@@ -65,13 +82,16 @@ class AppShell extends StatelessWidget {
         context.go(AppRoutes.dashboard);
         break;
       case 1:
-        context.go(AppRoutes.fees);
+        context.go(AppRoutes.students);
         break;
       case 2:
-        context.go(AppRoutes.notifications);
+        context.go(AppRoutes.teacherAttendance);
         break;
       case 3:
-        context.go(AppRoutes.profile);
+        context.go(AppRoutes.fees);
+        break;
+      case 4:
+        context.go(AppRoutes.more);
         break;
     }
   }

@@ -5,3 +5,11 @@ import 'web_download_stub.dart'
 void downloadCsvFile(String fileName, String csvContent) {
   downloadFileImpl(fileName, csvContent);
 }
+
+void downloadBinaryFile(String fileName, List<int> bytes, {String mimeType = 'application/pdf'}) {
+  downloadBinaryFileImpl(fileName, bytes, mimeType);
+}
+
+void printReceiptHtml(String htmlContent) {
+  printReceiptHtmlImpl(htmlContent);
+}

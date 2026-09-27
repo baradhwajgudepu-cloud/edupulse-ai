@@ -1,6 +1,7 @@
 import uuid
 import secrets
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlalchemy import select, func
@@ -8,6 +9,9 @@ from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from app.core.security import hash_password, verify_password, create_access_token
 from app.models.user import User, UserStatus
+import structlog
+
+logger = structlog.get_logger(__name__)
 from app.models.role import Role
 from app.models.permission import Permission
 from app.models.refresh_token import RefreshToken
@@ -23,7 +27,7 @@ from app.schemas.auth import (
     LoginRequest, TokenResponse, PasswordChangeRequest,
     BootstrapRequest, BootstrapResponse, validate_password_strength
 )
-from app.services.email import email_service
+from app.services.email import email_service, mask_email
 from app.core.settings import settings
 
 # In-memory sliding rate limiters for password reset requests (IP and Email)
@@ -100,11 +104,13 @@ class AuthService:
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail=f"This account is locked due to multiple login failures. Try again after {locked_until}."
                     )
+                else:
+                    # Unlock automatically if duration has expired
+                    user.status = UserStatus.ACTIVE
+                    user.failed_login_attempts = 0
+                    user.locked_until = None
             else:
-                # Unlock automatically if duration has expired
-                user.status = UserStatus.ACTIVE
-                user.failed_login_attempts = 0
-                user.locked_until = None
+                pass
 
         if user.status != UserStatus.ACTIVE:
             raise HTTPException(
@@ -161,10 +167,13 @@ class AuthService:
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail=f"This account is locked due to multiple login failures. Try again after {locked_until}."
                     )
+                else:
+                    # Unlock automatically if duration has expired
+                    user.status = UserStatus.ACTIVE
+                    user.failed_login_attempts = 0
+                    user.locked_until = None
             else:
-                user.status = UserStatus.ACTIVE
-                user.failed_login_attempts = 0
-                user.locked_until = None
+                pass
 
         if user.status != UserStatus.ACTIVE:
             raise HTTPException(
@@ -353,6 +362,15 @@ class AuthService:
         Applies rate limiting per IP and per Email.
         """
         norm_email = email.strip().lower()
+        masked_email = mask_email(norm_email)
+
+        # Safe structured log: OTP request received
+        logger.info(
+            "otp_request_received",
+            email_masked=masked_email,
+            client_ip=client_ip or "unknown",
+            tenant_id=str(tenant_id) if tenant_id else "global"
+        )
 
         # 1. Rate limiting
         if client_ip:
@@ -369,35 +387,72 @@ class AuthService:
             "email address"
         )
 
-        # 2. Look up user by email (within tenant if provided, or globally for platform/admin users)
+        # 2. Check SMTP availability before user lookup for anti-enumeration
+        if not email_service.is_configured and not settings.DEBUG:
+            logger.error(
+                "password_reset_service_unavailable_unconfigured",
+                email_masked=masked_email,
+                smtp_host=email_service.host
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Password reset service is temporarily unavailable. Please try again later or contact support."
+            )
+
+        # 3. Look up user by email (within tenant if provided, or globally for platform/admin users)
         if tenant_id:
             user = await self.user_repo.get_by_email(norm_email, tenant_id)
         else:
             user = await self.user_repo.get_by_email_platform(norm_email)
 
-        if not user or user.status != UserStatus.ACTIVE:
+        if not user or user.status not in (UserStatus.ACTIVE, UserStatus.LOCKED):
             # Silently return to prevent user enumeration
             return
 
-        # 3. Generate cryptographically strong random token
+        # 4. Generate cryptographically strong random token
         raw_reset_token = secrets.token_urlsafe(32)
         reset_hash = hashlib.sha256(raw_reset_token.encode()).hexdigest()
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
         )
 
-        # 4. Store reset hash and expiration directly on the User model
+        # Safe structured log: OTP generated (Never log the raw token or full hash)
+        logger.info(
+            "otp_generated",
+            email_masked=mask_email(user.email),
+            user_id=str(user.id),
+            token_hash_prefix=reset_hash[:8],
+            expires_at=expires_at.isoformat()
+        )
+
+        # 5. Store reset hash and expiration directly on the User model
         user.password_reset_hash = reset_hash
         user.password_reset_expires_at = expires_at
         await self.user_repo.db.commit()
 
-        # 5. Dispatch branded email asynchronously
+        # 6. Dispatch branded email asynchronously
         recipient_name = f"{user.first_name} {user.last_name}".strip()
-        await email_service.send_password_reset_email(
+        email_sent = await email_service.send_password_reset_email(
             to_email=user.email,
             recipient_name=recipient_name or "User",
             reset_token=raw_reset_token
         )
+
+        if not email_sent:
+            # Clear the reset token and expiry if email delivery fails
+            user.password_reset_hash = None
+            user.password_reset_expires_at = None
+            await self.user_repo.db.commit()
+
+            logger.error(
+                "password_reset_delivery_failed",
+                email_masked=mask_email(user.email),
+                user_id=str(user.id)
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Unable to send password reset email at this time. Please try again later or contact support."
+            )
 
     async def confirm_password_reset(
         self,
@@ -446,6 +501,13 @@ class AuthService:
 
         # 4. Commit atomic transaction
         await self.user_repo.db.commit()
+
+        logger.info(
+            "password_reset_completed",
+            email_masked=mask_email(user.email),
+            user_id=str(user.id),
+            status=user.status.value
+        )
 
 
     async def bootstrap_super_admin(
@@ -593,6 +655,76 @@ class AuthService:
             "role": "SUPER_ADMIN",
             "is_superuser": True,
             "password_changed": password_updated,
+            "dry_run": dry_run
+        }
+
+    async def unlock_account(
+        self,
+        email: Optional[str] = None,
+        user_id: Optional[uuid.UUID] = None,
+        unlocked_by_user_id: Optional[uuid.UUID] = None,
+        dry_run: bool = False
+    ) -> dict:
+        """
+        Safely and idempotently unlocks an account by email or user ID.
+        Verifies current status is LOCKED, updates status to ACTIVE,
+        and resets brute-force protection counters (failed_login_attempts and locked_until).
+        Does not touch passwords, roles, schools, or create new accounts.
+        """
+        if not email and not user_id:
+            raise ValueError("Target user email or user_id is required to unlock an account.")
+
+        user = None
+        if user_id:
+            user = await self.user_repo.get_by_id_platform(user_id)
+        elif email:
+            user = await self.user_repo.get_by_email_platform(email.strip().lower())
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User '{email or user_id}' not found."
+            )
+
+        if user.status == UserStatus.ACTIVE:
+            return {
+                "success": True,
+                "action": "ALREADY_ACTIVE",
+                "user_id": str(user.id),
+                "email": user.email,
+                "status": user.status.value,
+                "message": f"Account '{user.email}' is already ACTIVE. No changes made.",
+                "dry_run": dry_run
+            }
+
+        if user.status != UserStatus.LOCKED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot unlock account with status '{user.status.value}'. Expected status 'LOCKED'."
+            )
+
+        prev_status = user.status.value
+        if not dry_run:
+            user.status = UserStatus.ACTIVE
+            user.failed_login_attempts = 0
+            user.locked_until = None
+            if unlocked_by_user_id:
+                user.updated_by = unlocked_by_user_id
+            await self.user_repo.db.commit()
+
+        logger.info(
+            "AUDIT: Account unlocked successfully: email=%s, user_id=%s, prev_status=%s, new_status=%s, dry_run=%s",
+            user.email, user.id, prev_status, UserStatus.ACTIVE.value, dry_run
+        )
+
+        return {
+            "success": True,
+            "action": "UNLOCKED",
+            "user_id": str(user.id),
+            "email": user.email,
+            "previous_status": prev_status,
+            "new_status": UserStatus.ACTIVE.value,
+            "message": f"Account '{user.email}' unlocked successfully.",
             "dry_run": dry_run
         }
 

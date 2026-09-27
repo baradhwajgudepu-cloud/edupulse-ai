@@ -70,8 +70,12 @@ async def verify_school_access(user_id: uuid.UUID, school_id: uuid.UUID, db: Asy
         return
 
     # 5. For standard users, check mapping
-    stmt = text("SELECT 1 FROM school_users WHERE user_id = :uid AND school_id = :sid")
-    res = await db.execute(stmt, {"uid": str(user_id), "sid": str(school_id)})
+    from app.models.role import school_users
+    stmt = select(1).select_from(school_users).where(
+        school_users.c.user_id == user_id,
+        school_users.c.school_id == school_id
+    )
+    res = await db.execute(stmt)
     if not res.fetchone():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

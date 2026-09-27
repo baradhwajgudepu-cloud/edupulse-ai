@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:edupulse_core/edupulse_core.dart';
 import 'api_failure.dart';
@@ -47,7 +48,21 @@ class ApiExceptionMapper {
         );
 
       case DioExceptionType.badResponse:
-        final responseData = exception.response?.data;
+        dynamic responseData = exception.response?.data;
+        if (responseData is List<int>) {
+          try {
+            final decoded = utf8.decode(responseData);
+            responseData = jsonDecode(decoded);
+          } catch (_) {
+            // Non-JSON binary data
+          }
+        } else if (responseData is String) {
+          try {
+            responseData = jsonDecode(responseData);
+          } catch (_) {
+            // Non-JSON string
+          }
+        }
         String errorMessage = '';
 
         if (responseData is Map) {
@@ -141,6 +156,19 @@ class ApiExceptionMapper {
         );
 
       default:
+        final originalErr = exception.error;
+        if (originalErr != null && (originalErr is Error || originalErr.toString().contains('CircularDependencyError'))) {
+          final errorDetail = 'Client application error: $originalErr';
+          // ignore: avoid_print
+          print('[JWT_INTERCEPTOR _mapDioException internalError] $errorDetail');
+          return ApiFailure(
+            message: errorDetail,
+            type: ApiFailureType.unknown,
+            statusCode: statusCode,
+            originalError: exception,
+          );
+        }
+
         final messageDetail = 'Unexpected network error occurred. Type: ${exception.type} | Details: ${exception.message} | Error: ${exception.error}';
         // ignore: avoid_print
         print('[JWT_INTERCEPTOR _mapDioException default] $messageDetail');

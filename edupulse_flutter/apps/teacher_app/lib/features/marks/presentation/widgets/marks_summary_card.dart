@@ -66,6 +66,28 @@ class MarksSummaryCard extends StatelessWidget {
                 _buildStatItem('Avg Score', averageScore != null ? '${averageScore!.toStringAsFixed(1)}/$maxMarks' : '--', theme),
               ],
             ),
+            if (averageScore != null && totalStudents > 0) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D9488).withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.auto_graph_rounded, size: 14, color: Color(0xFF0D9488)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'AI Academic Benchmark: Target Class Avg ${(maxMarks * 0.75).toStringAsFixed(0)}% (Curriculum Pacing Aligned)',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF0F766E), fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),

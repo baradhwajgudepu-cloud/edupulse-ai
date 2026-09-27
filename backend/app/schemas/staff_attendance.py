@@ -6,14 +6,20 @@ from pydantic import BaseModel, ConfigDict, Field
 class StaffCheckInRequest(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
+    accuracy: Optional[float] = Field(None, ge=0.0, le=5000.0, description="GPS horizontal accuracy in meters")
     is_mocked: bool = Field(False, description="Flag indicating if location coordinates were mocked")
     remarks: Optional[str] = Field(None, max_length=500, description="Optional check-in remarks")
+
+    model_config = ConfigDict(extra="ignore")
 
 class StaffCheckOutRequest(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude coordinate")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude coordinate")
+    accuracy: Optional[float] = Field(None, ge=0.0, le=5000.0, description="GPS horizontal accuracy in meters")
     is_mocked: bool = Field(False, description="Flag indicating if location coordinates were mocked")
     remarks: Optional[str] = Field(None, max_length=500, description="Optional check-out remarks")
+
+    model_config = ConfigDict(extra="ignore")
 
 class StaffAttendanceResponse(BaseModel):
     id: Optional[uuid.UUID] = None

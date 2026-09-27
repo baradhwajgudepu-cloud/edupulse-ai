@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../../students/data/models/student_models.dart';
@@ -221,8 +222,17 @@ final guardianDetailProvider =
 final guardianMappingsProvider =
     FutureProvider.family<List<StudentGuardianDto>, String>((ref, guardianId) async {
   final apiClient = ref.watch(apiClientProvider);
+  final academicYearId = ref.watch(selectedAcademicYearIdProvider);
+  final queryParams = <String, String>{
+    'guardian_id': guardianId,
+  };
+  if (academicYearId != null && academicYearId.isNotEmpty) {
+    queryParams['academic_year_id'] = academicYearId;
+  }
+  final uri = Uri(path: '/student-guardians', queryParameters: queryParams);
+
   final result = await apiClient.get(
-    '/student-guardians?guardian_id=$guardianId',
+    uri.toString(),
     mapper: (json) {
       final payload = json as Map<String, dynamic>;
       final list = payload['data'] as List<dynamic>;
@@ -235,6 +245,54 @@ final guardianMappingsProvider =
   return result.when(
     onSuccess: (mappings) => mappings,
     onFailure: (failure) => throw Exception(failure.message),
+  );
+});
+
+class GuardianPhotoKey {
+  final String guardianId;
+  final String schoolId;
+  final String? version;
+
+  const GuardianPhotoKey({
+    required this.guardianId,
+    required this.schoolId,
+    this.version,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GuardianPhotoKey &&
+          runtimeType == other.runtimeType &&
+          guardianId == other.guardianId &&
+          schoolId == other.schoolId &&
+          version == other.version;
+
+  @override
+  int get hashCode =>
+      guardianId.hashCode ^ schoolId.hashCode ^ (version?.hashCode ?? 0);
+}
+
+final guardianAvatarBytesProvider =
+    FutureProvider.family<Uint8List?, GuardianPhotoKey>((ref, key) async {
+  if (key.guardianId.isEmpty || key.schoolId.isEmpty) return null;
+  final apiClient = ref.watch(apiClientProvider);
+
+  final versionQuery = key.version != null ? '&v=${Uri.encodeComponent(key.version!)}' : '';
+  final result = await apiClient.get<Uint8List?>(
+    '/guardians/${key.guardianId}/photo?school_id=${key.schoolId}$versionQuery',
+    options: Options(responseType: ResponseType.bytes),
+    mapper: (data) {
+      if (data is List<int>) {
+        return Uint8List.fromList(data);
+      }
+      return null;
+    },
+  );
+
+  return result.when(
+    onSuccess: (bytes) => bytes,
+    onFailure: (_) => null,
   );
 });
 
@@ -306,6 +364,87 @@ class GuardianActionNotifier extends StateNotifier<GuardianActionState> {
           isLoading: false,
           errorMessage: failure.message,
           isConflict: conflict,
+        );
+        return false;
+      },
+    );
+  }
+
+  Future<bool> uploadGuardianPhoto({
+    required String schoolId,
+    required String guardianId,
+    required Uint8List fileBytes,
+    required String fileName,
+  }) async {
+    state = const GuardianActionState(isLoading: true);
+
+    try {
+      final multipart = MultipartFile.fromBytes(
+        fileBytes,
+        filename: fileName,
+      );
+      final formData = FormData.fromMap({
+        'file': multipart,
+      });
+
+      final result = await _apiClient.post(
+        '/guardians/$guardianId/photo?school_id=$schoolId',
+        data: formData,
+        mapper: (json) => json,
+      );
+
+      return result.when(
+        onSuccess: (res) {
+          state = const GuardianActionState(
+            isLoading: false,
+            successMessage: 'Guardian photo updated successfully',
+          );
+          _ref.invalidate(guardianDetailProvider(guardianId));
+          _ref.invalidate(guardianListProvider);
+          return true;
+        },
+        onFailure: (failure) {
+          state = GuardianActionState(
+            isLoading: false,
+            errorMessage: failure.message,
+          );
+          return false;
+        },
+      );
+    } catch (e) {
+      state = GuardianActionState(
+        isLoading: false,
+        errorMessage: 'Failed to upload photo: $e',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> deleteGuardianPhoto({
+    required String schoolId,
+    required String guardianId,
+  }) async {
+    state = const GuardianActionState(isLoading: true);
+
+    final result = await _apiClient.delete(
+      '/guardians/$guardianId/photo?school_id=$schoolId',
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        state = const GuardianActionState(
+          isLoading: false,
+          successMessage: 'Guardian photo removed',
+        );
+        _ref.invalidate(guardianDetailProvider(guardianId));
+        _ref.invalidate(guardianListProvider);
+        return true;
+      },
+      onFailure: (failure) {
+        state = GuardianActionState(
+          isLoading: false,
+          errorMessage: failure.message,
         );
         return false;
       },

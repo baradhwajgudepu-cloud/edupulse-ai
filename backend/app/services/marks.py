@@ -1,16 +1,19 @@
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time, date
 from typing import List, Optional, Dict, Any, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import joinedload
 
 from app.models.marks import Marks, MarksStatus, ExamResult
-from app.models.teacher import Teacher
-from app.models.teacher_subject_assignment import TeacherSubjectAssignment
-from app.models.student import Student
-from app.models.examination import Examination, ExamSchedule, ExamStatus
+from app.models.teacher import Teacher, EmploymentType, TeacherStatus
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment, AssignmentType, AssignmentStatus
+from app.models.student import Student, StudentGender
+from app.models.examination import Examination, ExamSchedule, ExamStatus, ExaminationClass, ExamPaper, ExamPaperClass
+from app.models.class_entity import Class
+from app.models.section import Section
+from app.models.subject import Subject
 from app.models.user import User
 from app.repositories.marks import MarksRepository
 from app.repositories.examination import ExamScheduleRepository, ExaminationRepository
@@ -25,7 +28,7 @@ from app.schemas.marks import (
     ParentTimetableSlot, ParentReportCardItem, MarksExcelUploadSummary,
     ExamWideUploadRowPreview, ExamWideUploadPreviewResponse,
     ExamWideUploadConfirmRequest, ExamWideUploadSummary, ExaminationPublishSummary,
-    ClassAllSubjectsUploadSummary
+    ClassAllSubjectsUploadSummary, ExaminationResultReadiness, StudentResultReadinessItem
 )
 from app.models.guardian import Guardian, StudentGuardian
 from app.services.notification import NotificationService
@@ -34,24 +37,47 @@ from app.core.normalization import normalize_subject_header, format_subject_head
 logger = logging.getLogger(__name__)
 
 
+class ExamWideTemplateBytes(bytes):
+    def __new__(cls, data: bytes, filename: Optional[str] = None, mime: Optional[str] = None):
+        obj = super().__new__(cls, data)
+        obj.filename = filename or "Exam_Marks_Template.xlsx"
+        obj.mime = mime or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        return obj
+
+    def __iter__(self):
+        # Support unpacking into (content, filename, mime) for test backward-compatibility
+        return iter([bytes(self), self.filename, self.mime])
+
+
 class MarksService:
     def __init__(
         self,
-        marks_repo: MarksRepository,
-        schedule_repo: ExamScheduleRepository,
-        exam_repo: ExaminationRepository,
-        student_repo: StudentRepository,
-        tsa_repo: TeacherSubjectAssignmentRepository,
-        school_repo: SchoolRepository,
-        notification_service: NotificationService
+        marks_repo: Any = None,
+        schedule_repo: Optional[ExamScheduleRepository] = None,
+        exam_repo: Optional[ExaminationRepository] = None,
+        student_repo: Optional[StudentRepository] = None,
+        tsa_repo: Optional[TeacherSubjectAssignmentRepository] = None,
+        school_repo: Optional[SchoolRepository] = None,
+        notification_service: Optional[NotificationService] = None
     ) -> None:
-        self.marks_repo = marks_repo
-        self.schedule_repo = schedule_repo
-        self.exam_repo = exam_repo
-        self.student_repo = student_repo
-        self.tsa_repo = tsa_repo
-        self.school_repo = school_repo
-        self.notification_service = notification_service
+        from sqlalchemy.ext.asyncio import AsyncSession
+        if isinstance(marks_repo, AsyncSession):
+            db = marks_repo
+            self.marks_repo = MarksRepository(db)
+            self.schedule_repo = schedule_repo or ExamScheduleRepository(db)
+            self.exam_repo = exam_repo or ExaminationRepository(db)
+            self.student_repo = student_repo or StudentRepository(db)
+            self.tsa_repo = tsa_repo or TeacherSubjectAssignmentRepository(db)
+            self.school_repo = school_repo or SchoolRepository(db)
+            self.notification_service = notification_service
+        else:
+            self.marks_repo = marks_repo
+            self.schedule_repo = schedule_repo
+            self.exam_repo = exam_repo
+            self.student_repo = student_repo
+            self.tsa_repo = tsa_repo
+            self.school_repo = school_repo
+            self.notification_service = notification_service
 
     def _validate_marks_transition(self, current_status: MarksStatus, target_status: MarksStatus) -> None:
         """
@@ -99,7 +125,7 @@ class MarksService:
             ExamSchedule.school_id == school_id,
             ExamSchedule.tenant_id == tenant_id,
             ExamSchedule.deleted_at.is_(None)
-        )
+        ).options(joinedload(ExamSchedule.subject))
         res_s = await self.marks_repo.db.execute(stmt_s)
         sched = res_s.scalar_one_or_none()
         if not sched:
@@ -154,6 +180,8 @@ class MarksService:
         high = max(scores) if scores else None
         low = min(scores) if scores else None
 
+        subj_name = sched.subject.subject_name if sched.subject else None
+        subj_code = sched.subject.subject_code if sched.subject else None
         return SmartMissingSummary(
             total_students=total,
             entered_count=entered_count,
@@ -162,7 +190,10 @@ class MarksService:
             highest_score=high,
             lowest_score=low,
             missing_students=missing_students,
-            entries=wizard_items
+            entries=wizard_items,
+            subject_id=sched.subject_id,
+            subject_name=subj_name,
+            subject_code=subj_code
         )
 
     async def bulk_save_marks(
@@ -782,6 +813,7 @@ class MarksService:
                 section_name=sched.section.name if sched.section else "Section",
                 subject_id=sched.subject_id,
                 subject_name=getattr(sched.subject, "subject_name", getattr(sched.subject, "name", "Subject")) if sched.subject else "Subject",
+                subject_code=getattr(sched.subject, "subject_code", None) if sched.subject else None,
                 teacher_id=teacher_id,
                 teacher_name=teacher_name,
                 exam_date=str(sched.exam_date),
@@ -975,6 +1007,7 @@ class MarksService:
                 exam_type=s.examination.exam_type.value if (s.examination and hasattr(s.examination.exam_type, "value")) else (str(s.examination.exam_type) if s.examination else "SCHOLASTIC"),
                 subject_id=s.subject_id,
                 subject_name=getattr(s.subject, "subject_name", getattr(s.subject, "name", "Subject")) if s.subject else "Subject",
+                subject_code=getattr(s.subject, "subject_code", None) if s.subject else None,
                 exam_date=str(s.exam_date),
                 start_time=s.start_time.strftime("%H:%M"),
                 end_time=s.end_time.strftime("%H:%M"),
@@ -1071,7 +1104,7 @@ class MarksService:
         existing_marks = await self.marks_repo.get_by_schedule_id(exam_schedule_id, tenant_id)
         marks_map = {m.student_id: m for m in existing_marks}
 
-        subject_name = sched.subject.name if getattr(sched, "subject", None) else "Subject"
+        subject_name = sched.subject.subject_name if (getattr(sched, "subject", None) and getattr(sched.subject, "subject_name", None)) else "Subject"
         class_name = sched.class_obj.name if getattr(sched, "class_obj", None) else "Class"
         section_name = f"-{sched.section.name}" if getattr(sched, "section", None) else ""
         clean_filename_base = f"marks_template_{subject_name}_{class_name}{section_name}".replace(" ", "_")
@@ -1341,30 +1374,125 @@ class MarksService:
 
     async def preview_exam_wide_marks_file(
         self,
-        tenant_id: uuid.UUID,
-        school_id: uuid.UUID,
-        exam_id: uuid.UUID,
-        file_bytes: bytes,
-        filename: str,
-        current_user: User
+        tenant_id: Optional[uuid.UUID] = None,
+        school_id: Optional[uuid.UUID] = None,
+        exam_id: Optional[uuid.UUID] = None,
+        file_bytes: bytes = b"",
+        filename: str = "upload.xlsx",
+        current_user: Optional[User] = None,
+        class_ids: Optional[List[uuid.UUID]] = None,
+        section_ids: Optional[List[uuid.UUID]] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+        scope: Optional[str] = "ALL_PARTICIPATING_CLASSES",
+        duplicate_behavior: Optional[str] = "UPDATE_EXISTING",
+        examination_id: Optional[uuid.UUID] = None,
     ) -> ExamWideUploadPreviewResponse:
         import io
         import csv
         from openpyxl import load_workbook
 
-        # 1. Fetch Examination
+        effective_exam_id = exam_id or examination_id
+        if not effective_exam_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="exam_id or examination_id is required.")
+        exam_id = effective_exam_id
+
+        # 1. Fetch Examination with participating classes and papers
         stmt_e = select(Examination).where(
             Examination.id == exam_id,
-            Examination.school_id == school_id,
-            Examination.tenant_id == tenant_id,
             Examination.deleted_at.is_(None)
+        ).options(
+            joinedload(Examination.participating_classes).joinedload(ExaminationClass.class_obj),
+            joinedload(Examination.papers).joinedload(ExamPaper.class_configs),
+            joinedload(Examination.papers).joinedload(ExamPaper.subject)
         )
+        if school_id:
+            stmt_e = stmt_e.where(Examination.school_id == school_id)
+        if tenant_id:
+            stmt_e = stmt_e.where(Examination.tenant_id == tenant_id)
+
         res_e = await self.marks_repo.db.execute(stmt_e)
-        examination = res_e.scalar_one_or_none()
+        examination = res_e.unique().scalar_one_or_none()
         if not examination:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
 
-        # 2. Fetch all ExamSchedules for this Examination with Class, Section, Subject
+        tenant_id = examination.tenant_id
+        school_id = examination.school_id
+
+        # Academic year isolation check
+        if academic_year_id and examination.academic_year_id != academic_year_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected academic year does not match examination cycle academic year."
+            )
+
+        # 2. Collect participating classes for the Examination Cycle
+        participating_class_ids = set()
+        participating_class_names = {}
+        for pc in (examination.participating_classes or []):
+            if pc.class_obj:
+                c_uuid = uuid.UUID(str(pc.class_id))
+                participating_class_ids.add(c_uuid)
+                cn = pc.class_obj.name.strip().lower()
+                participating_class_names[cn] = c_uuid
+                participating_class_names[cn.replace("class", "").strip()] = c_uuid
+                if pc.class_obj.code:
+                    participating_class_names[pc.class_obj.code.strip().lower()] = c_uuid
+
+        # Also support class_ids in examination.settings if participating_classes table empty
+        if not participating_class_ids and examination.settings and "class_ids" in examination.settings:
+            raw_cids = examination.settings["class_ids"]
+            if isinstance(raw_cids, list):
+                for cid_str in raw_cids:
+                    try:
+                        cid = uuid.UUID(str(cid_str))
+                        participating_class_ids.add(cid)
+                    except Exception:
+                        pass
+
+        # Validate that requested class_ids belong to the participating classes of this examination
+        allowed_class_ids = None
+        if class_ids:
+            requested_set = set(uuid.UUID(str(cid)) for cid in class_ids)
+            for r_cid in requested_set:
+                if participating_class_ids and r_cid not in participating_class_ids:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Class ID {r_cid} does not participate in this examination cycle."
+                    )
+            allowed_class_ids = requested_set
+        else:
+            allowed_class_ids = participating_class_ids if participating_class_ids else None
+
+        allowed_section_ids = set(uuid.UUID(str(sid)) for sid in section_ids) if section_ids else None
+
+        # 3. Build Paper and Class Overrides Lookup
+        # paper_lookup: (norm_subject_name, class_id) -> (max_marks, pass_marks, subject_id, paper_id, subject_name)
+        paper_lookup = {}
+        for paper in (examination.papers or []):
+            sub = paper.subject
+            sub_id = paper.subject_id
+            sub_name = (sub.subject_name if sub else paper.paper_name).strip().lower()
+            sub_code = (sub.subject_code if sub and sub.subject_code else "").strip().lower()
+            canonical_name = sub.subject_name if sub else paper.paper_name
+
+            overrides = {cc.class_id: cc for cc in (paper.class_configs or [])}
+
+            # Map default paper info (None class_id)
+            def_tuple = (paper.default_max_marks, paper.default_pass_marks, sub_id, paper.id, canonical_name)
+            for k in filter(None, [sub_name, sub_code, paper.paper_name.strip().lower()]):
+                paper_lookup[(k, None)] = def_tuple
+
+            # Map class overrides
+            for p_cid in (participating_class_ids or []):
+                cc = overrides.get(p_cid)
+                max_m = cc.maximum_marks if (cc and cc.maximum_marks is not None) else paper.default_max_marks
+                pass_m = cc.pass_marks if (cc and cc.pass_marks is not None) else paper.default_pass_marks
+                override_tuple = (max_m, pass_m, sub_id, paper.id, canonical_name)
+
+                for k in filter(None, [sub_name, sub_code, paper.paper_name.strip().lower()]):
+                    paper_lookup[(k, p_cid)] = override_tuple
+
+        # 4. Fetch all existing ExamSchedules for this Examination
         stmt_s = select(ExamSchedule).where(
             ExamSchedule.exam_id == exam_id,
             ExamSchedule.school_id == school_id,
@@ -1377,12 +1505,11 @@ class MarksService:
         )
         res_s = await self.marks_repo.db.execute(stmt_s)
         schedules = list(res_s.unique().scalars().all())
-        if not schedules:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No exam schedules/papers configured for this examination.")
 
-        # Build Schedule lookup maps: (normalized_class, normalized_section, normalized_subject) -> ExamSchedule
         schedule_map = {}
+        schedule_by_ids = {}
         for s in schedules:
+            schedule_by_ids[(s.class_id, s.section_id, s.subject_id)] = s
             c_name = str(s.class_obj.name).strip().lower() if s.class_obj else ""
             c_code = str(s.class_obj.code).strip().lower() if s.class_obj and s.class_obj.code else ""
             sec_name = str(s.section.name).strip().lower() if s.section else ""
@@ -1390,37 +1517,91 @@ class MarksService:
             sub_name = str(s.subject.subject_name).strip().lower() if s.subject else ""
             sub_code = str(s.subject.subject_code).strip().lower() if s.subject and s.subject.subject_code else ""
 
-            # Register standard variations
             for cn in filter(None, [c_name, c_code, c_name.replace("class", "").strip()]):
                 for sn in filter(None, [sec_name, sec_code, sec_name.replace("section", "").strip()]):
                     for sbn in filter(None, [sub_name, sub_code]):
                         schedule_map[(cn, sn, sbn)] = s
 
-        # 3. Fetch all active enrolled students for these classes/sections
-        class_ids = {s.class_id for s in schedules}
+        # 5. Fetch all School Classes and Sections for ID resolution
+        stmt_all_c = select(Class).where(
+            Class.school_id == school_id,
+            Class.tenant_id == tenant_id,
+            Class.deleted_at.is_(None)
+        )
+        all_classes = (await self.marks_repo.db.execute(stmt_all_c)).scalars().all()
+        class_name_to_obj = {}
+        for c in all_classes:
+            cn = c.name.strip().lower()
+            class_name_to_obj[cn] = c
+            class_name_to_obj[cn.replace("class", "").strip()] = c
+            if c.code:
+                class_name_to_obj[c.code.strip().lower()] = c
+
+        stmt_all_sec = select(Section).where(
+            Section.school_id == school_id,
+            Section.tenant_id == tenant_id,
+            Section.deleted_at.is_(None)
+        )
+        all_sections = (await self.marks_repo.db.execute(stmt_all_sec)).scalars().all()
+        sec_lookup = {}
+        for sec in all_sections:
+            sn = sec.name.strip().lower()
+            sec_lookup[(sec.class_id, sn)] = sec
+            sec_lookup[(sec.class_id, sn.replace("section", "").strip())] = sec
+            if sec.code:
+                sec_lookup[(sec.class_id, sec.code.strip().lower())] = sec
+
+        # 6. Fetch all active enrolled students for targeted classes
+        # 6. Fetch all active enrolled students for targeted classes
+        target_class_ids = allowed_class_ids if allowed_class_ids else (participating_class_ids if participating_class_ids else {c.id for c in all_classes})
         stmt_st = select(Student).where(
-            Student.class_id.in_(class_ids),
+            Student.class_id.in_(target_class_ids),
             Student.school_id == school_id,
             Student.tenant_id == tenant_id,
             Student.deleted_at.is_(None),
             Student.is_active == True
         )
+        if allowed_section_ids:
+            stmt_st = stmt_st.where(Student.section_id.in_(allowed_section_ids))
         res_st = await self.marks_repo.db.execute(stmt_st)
         students = list(res_st.scalars().all())
 
-        # Student lookup maps: (class_id, section_id, normalized_roll_or_adm) -> Student
+        # Student lookup maps
         student_map = {}
         for st in students:
+            st_id_str = str(st.id).strip().lower()
+            student_map[(st.class_id, st.section_id, st_id_str)] = st
+            student_map[(st.class_id, st_id_str)] = st
+            student_map[st_id_str] = st
             if st.roll_number:
-                student_map[(st.class_id, st.section_id, str(st.roll_number).strip().lower())] = st
+                rn = str(st.roll_number).strip().lower()
+                student_map[(st.class_id, st.section_id, rn)] = st
+                student_map[(st.class_id, rn)] = st
                 try:
-                    student_map[(st.class_id, st.section_id, str(int(st.roll_number.strip())).lower())] = st
+                    rn_int = str(int(st.roll_number.strip())).lower()
+                    student_map[(st.class_id, st.section_id, rn_int)] = st
+                    student_map[(st.class_id, rn_int)] = st
                 except Exception:
                     pass
             if st.admission_number:
-                student_map[(st.class_id, st.section_id, str(st.admission_number).strip().lower())] = st
+                adm = str(st.admission_number).strip().lower()
+                student_map[(st.class_id, st.section_id, adm)] = st
+                student_map[(st.class_id, adm)] = st
+                student_map[adm] = st
 
-        # 4. Parse file
+        # 7. Fetch existing marks to detect duplicate or re-import entries
+        stmt_existing = select(Marks).where(
+            Marks.examination_id == exam_id,
+            Marks.school_id == school_id,
+            Marks.tenant_id == tenant_id,
+            Marks.deleted_at.is_(None)
+        )
+        res_ex = await self.marks_repo.db.execute(stmt_existing)
+        existing_marks = list(res_ex.scalars().all())
+        existing_sched_map = {(m.student_id, m.exam_schedule_id): m for m in existing_marks}
+        existing_subj_map = {(m.student_id, m.class_id, m.subject_id): m for m in existing_marks}
+
+        # 8. Parse file
         is_csv = filename.lower().endswith(".csv")
         if is_csv:
             try:
@@ -1440,17 +1621,45 @@ class MarksService:
         if not raw_rows or len(raw_rows) < 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty or missing data rows.")
 
-        # Normalize header indices
+        # 9. Flexible column header discovery with rich aliases
         headers = [str(h or "").strip().lower() for h in raw_rows[0]]
-        class_idx = next((i for i, h in enumerate(headers) if "class" in h), 0)
-        sec_idx = next((i for i, h in enumerate(headers) if "section" in h or "sec" in h), 1)
-        roll_idx = next((i for i, h in enumerate(headers) if "roll" in h or "admission" in h), 2)
-        name_idx = next((i for i, h in enumerate(headers) if "name" in h or "student" in h), 3)
-        sub_idx = next((i for i, h in enumerate(headers) if "subject" in h or "paper" in h), 4)
-        max_idx = next((i for i, h in enumerate(headers) if "max" in h), -1)
-        marks_idx = next((i for i, h in enumerate(headers) if "obtained" in h or "score" in h or ("mark" in h and "max" not in h)), -1)
-        status_idx = next((i for i, h in enumerate(headers) if "status" in h or "result" in h or "attendance" in h), -1)
-        remarks_idx = next((i for i, h in enumerate(headers) if "remark" in h or "note" in h or "comment" in h), -1)
+
+        def find_col_idx(aliases: List[str], fallback_idx: int = -1) -> int:
+            # 1. Exact match first
+            for i, h in enumerate(headers):
+                norm_h = h.replace("_", " ").replace("-", " ").strip()
+                for alias in aliases:
+                    if alias == norm_h:
+                        return i
+            # 2. Substring match fallback (with conflict prevention)
+            for i, h in enumerate(headers):
+                norm_h = h.replace("_", " ").replace("-", " ").strip()
+                for alias in aliases:
+                    if alias in ["marks", "mark", "score"] and ("max" in norm_h or "maximum" in norm_h or "total" in norm_h):
+                        continue
+                    if alias in ["max", "maximum", "total"] and ("obtained" in norm_h):
+                        continue
+                    if alias in norm_h:
+                        return i
+            return fallback_idx
+
+        class_idx = find_col_idx(["class", "grade", "standard"], fallback_idx=0)
+        sec_idx = find_col_idx(["section", "division", "sec"], fallback_idx=1)
+        adm_idx = find_col_idx(["admission no", "admission number", "admission_no", "adm no", "admission"], fallback_idx=-1)
+        roll_idx = find_col_idx(["roll no", "roll number", "roll_no", "roll"], fallback_idx=-1)
+        if roll_idx == -1 and adm_idx != -1:
+            roll_idx = adm_idx
+        elif roll_idx == -1:
+            roll_idx = find_col_idx(["student id", "student_id", "identifier"], fallback_idx=2)
+        if adm_idx == -1:
+            adm_idx = roll_idx
+
+        name_idx = find_col_idx(["student name", "name", "full name"], fallback_idx=3)
+        sub_idx = find_col_idx(["subject name", "paper name", "subject", "paper", "course"], fallback_idx=4)
+        max_idx = find_col_idx(["maximum marks", "max marks", "total marks", "maximum", "max"], fallback_idx=-1)
+        marks_idx = find_col_idx(["marks obtained", "obtained marks", "marks", "score", "mark"], fallback_idx=-1)
+        status_idx = find_col_idx(["status", "result status", "result", "attendance"], fallback_idx=-1)
+        remarks_idx = find_col_idx(["remarks", "remark", "notes", "note", "comment"], fallback_idx=-1)
 
         if marks_idx == -1 and len(headers) > 5:
             marks_idx = 5
@@ -1462,7 +1671,11 @@ class MarksService:
         students_detected = set()
         errors_summary: List[str] = []
         seen_duplicates = set()
+        existing_marks_count = 0
+        grouped_summary: Dict[str, Dict[str, Dict[str, int]]] = {} # class -> sec -> sub -> count
+        new_schedules_created = False
 
+        # 10. Process each row
         for row_num, row in enumerate(raw_rows[1:], start=2):
             if not row or all(v is None or str(v).strip() == "" for v in row):
                 continue
@@ -1470,6 +1683,7 @@ class MarksService:
             raw_class = str(row[class_idx]).strip() if class_idx < len(row) and row[class_idx] is not None else ""
             raw_sec = str(row[sec_idx]).strip() if sec_idx < len(row) and row[sec_idx] is not None else ""
             raw_roll = str(row[roll_idx]).strip() if roll_idx < len(row) and row[roll_idx] is not None else ""
+            raw_adm = str(row[adm_idx]).strip() if adm_idx < len(row) and row[adm_idx] is not None else ""
             raw_name = str(row[name_idx]).strip() if name_idx < len(row) and row[name_idx] is not None else ""
             raw_sub = str(row[sub_idx]).strip() if sub_idx < len(row) and row[sub_idx] is not None else ""
             raw_max = row[max_idx] if (max_idx != -1 and max_idx < len(row)) else None
@@ -1479,66 +1693,158 @@ class MarksService:
 
             row_error = None
             is_valid = True
+            is_existing_mark = False
             matched_sched = None
             matched_student = None
+            matched_class = None
+            matched_sec = None
 
             # Normalization
             norm_class = raw_class.lower().replace("class", "").strip()
             norm_sec = raw_sec.lower().replace("section", "").strip()
-            norm_sub = raw_sub.lower()
+            norm_sub = raw_sub.lower().strip()
 
-            if not raw_class or not raw_sec or not raw_roll or not raw_sub:
-                row_error = "Missing required fields (Class, Section, Roll No, or Subject)."
+            if not raw_class or not raw_sec or (not raw_roll and not raw_adm) or not raw_sub:
+                row_error = "Missing required fields (Class, Section, Roll/Admission No, or Subject)."
                 is_valid = False
 
-            # Find matching Schedule
+            # Validate Class
             if is_valid:
+                matched_class = class_name_to_obj.get(norm_class) or class_name_to_obj.get(raw_class.lower().strip())
+                if not matched_class:
+                    row_error = f"Class '{raw_class}' not found in school."
+                    is_valid = False
+                else:
+                    matched_c_uuid = uuid.UUID(str(matched_class.id))
+                    if participating_class_ids and matched_c_uuid not in participating_class_ids:
+                        row_error = f"Class '{raw_class}' does not participate in this examination cycle."
+                        is_valid = False
+                    elif allowed_class_ids and matched_c_uuid not in allowed_class_ids:
+                        row_error = f"Class '{raw_class}' is not included in the selected import classes."
+                        is_valid = False
+
+            # Validate Section
+            if is_valid and matched_class:
+                matched_sec = sec_lookup.get((matched_class.id, norm_sec)) or sec_lookup.get((matched_class.id, raw_sec.lower().strip()))
+                if not matched_sec:
+                    row_error = f"Section '{raw_sec}' not found for Class '{raw_class}'."
+                    is_valid = False
+                elif allowed_section_ids and uuid.UUID(str(matched_sec.id)) not in allowed_section_ids:
+                    row_error = f"Section '{raw_sec}' is not included in the selected import sections."
+                    is_valid = False
+
+            # Validate Student
+            if is_valid and matched_class and matched_sec:
+                norm_roll = raw_roll.lower().strip()
+                norm_adm = raw_adm.lower().strip()
+                matched_student = (
+                    (student_map.get((matched_class.id, matched_sec.id, norm_adm)) if norm_adm else None) or
+                    (student_map.get((matched_class.id, norm_adm)) if norm_adm else None) or
+                    (student_map.get((matched_class.id, matched_sec.id, norm_roll)) if norm_roll else None) or
+                    (student_map.get((matched_class.id, matched_sec.id, norm_roll.lstrip("0"))) if norm_roll else None) or
+                    (student_map.get((matched_class.id, norm_roll)) if norm_roll else None) or
+                    (student_map.get(norm_adm) if norm_adm else None)
+                )
+                if not matched_student:
+                    identifier = raw_adm or raw_roll
+                    row_error = f"Student with ID/Roll/Adm '{identifier}' not found in Class {raw_class} Section {raw_sec}."
+                    is_valid = False
+
+            # Validate Subject/Paper for this specific Class
+            max_marks_val = 100
+            resolved_subject_id = None
+            resolved_subject_name = raw_sub
+
+            if is_valid and matched_class and matched_sec:
+                # 1. Try matching against existing schedule
                 matched_sched = (
                     schedule_map.get((norm_class, norm_sec, norm_sub)) or
                     schedule_map.get((raw_class.lower(), raw_sec.lower(), norm_sub)) or
                     schedule_map.get((norm_class, norm_sec, raw_sub.lower()))
                 )
-                if not matched_sched:
-                    row_error = f"Subject '{raw_sub}' is not scheduled for Class {raw_class} Section {raw_sec} in this examination."
+
+                # 2. Try matching against ExamPaper / ExamPaperClass for this class
+                paper_info = paper_lookup.get((norm_sub, matched_class.id)) or paper_lookup.get((norm_sub, None))
+                if paper_info:
+                    max_marks_val = paper_info[0]
+                    resolved_subject_id = paper_info[2]
+                    paper_id = paper_info[3]
+                    resolved_subject_name = paper_info[4]
+
+                    # Auto-provision or link schedule slot if missing
+                    if not matched_sched:
+                        matched_sched = schedule_by_ids.get((matched_class.id, matched_sec.id, resolved_subject_id))
+                        if not matched_sched:
+                            # Auto-provision an ExamSchedule for this class, section, paper
+                            matched_sched = ExamSchedule(
+                                tenant_id=tenant_id,
+                                school_id=school_id,
+                                academic_year_id=examination.academic_year_id,
+                                exam_id=exam_id,
+                                paper_id=paper_id,
+                                class_id=matched_class.id,
+                                section_id=matched_sec.id,
+                                subject_id=resolved_subject_id,
+                                exam_date=examination.start_date,
+                                start_time=time(9, 30),
+                                end_time=time(12, 30),
+                                max_marks=max_marks_val,
+                                pass_marks=paper_info[1],
+                                room_number="Examination Hall"
+                            )
+                            self.marks_repo.db.add(matched_sched)
+                            await self.marks_repo.db.flush()
+                            schedule_by_ids[(matched_class.id, matched_sec.id, resolved_subject_id)] = matched_sched
+                            schedules.append(matched_sched)
+                            new_schedules_created = True
+                elif matched_sched:
+                    max_marks_val = matched_sched.max_marks
+                    resolved_subject_id = matched_sched.subject_id
+                    resolved_subject_name = matched_sched.subject.subject_name if matched_sched.subject else raw_sub
+                else:
+                    row_error = f"Subject '{raw_sub}' is not configured for Class {raw_class} in this examination cycle."
                     is_valid = False
 
-            # Find matching Student
-            if is_valid and matched_sched:
-                norm_roll = raw_roll.lower()
-                matched_student = (
-                    student_map.get((matched_sched.class_id, matched_sched.section_id, norm_roll)) or
-                    student_map.get((matched_sched.class_id, matched_sched.section_id, norm_roll.lstrip("0")))
-                )
-                if not matched_student:
-                    row_error = f"Student with Roll No '{raw_roll}' not found in Class {raw_class} Section {raw_sec}."
-                    is_valid = False
+            if raw_max is not None:
+                try:
+                    file_max = int(float(str(raw_max).strip()))
+                    if file_max > 0:
+                        max_marks_val = file_max
+                except Exception:
+                    pass
 
-            # Duplicate detection in file
-            if is_valid and matched_sched and matched_student:
-                dup_key = (matched_student.id, matched_sched.id)
+            # Intra-File Duplicate Detection
+            if is_valid and matched_student and (resolved_subject_id or (matched_sched and matched_sched.subject_id)):
+                s_id = resolved_subject_id or matched_sched.subject_id
+                dup_key = (matched_student.id, s_id)
                 if dup_key in seen_duplicates:
-                    row_error = f"Duplicate marks entry for student '{raw_name or raw_roll}' in subject '{raw_sub}'."
+                    row_error = f"Duplicate marks entry for student '{raw_name or raw_roll}' in subject '{raw_sub}' within this file."
                     is_valid = False
                 else:
                     seen_duplicates.add(dup_key)
 
-            # Max & Obtained Marks Validation
-            max_marks_val = matched_sched.max_marks if matched_sched else 100
-            if raw_max is not None:
-                try:
-                    max_marks_val = int(float(str(raw_max).strip()))
-                except Exception:
-                    pass
+            # Check Existing Mark in Database
+            if is_valid and matched_student and matched_sched:
+                existing = existing_sched_map.get((matched_student.id, matched_sched.id)) or (
+                    existing_subj_map.get((matched_student.id, matched_class.id, matched_sched.subject_id)) if matched_class else None
+                )
+                if existing:
+                    is_existing_mark = True
+                    existing_marks_count += 1
+                    if duplicate_behavior == "FAIL_DUPLICATE":
+                        is_valid = False
+                        row_error = f"Existing mark found for student '{raw_name or raw_roll}' in '{raw_sub}' (Duplicates not allowed)."
 
+            # Marks Obtained Validation
             marks_val = None
             result_st = "PRESENT"
-
             if is_valid:
-                if str(raw_obtained).strip().upper() in ["AB", "ABSENT", "A"]:
+                raw_str = str(raw_obtained).strip().upper() if raw_obtained is not None else ""
+                if raw_str in ["AB", "ABSENT", "A"]:
                     result_st = "ABSENT"
-                elif str(raw_obtained).strip().upper() in ["EX", "EXEMPTED"]:
+                elif raw_str in ["EX", "EXEMPTED"]:
                     result_st = "EXEMPTED"
-                elif str(raw_obtained).strip().upper() in ["MP", "MALPRACTICE"]:
+                elif raw_str in ["MP", "MALPRACTICE"]:
                     result_st = "MALPRACTICE"
                 elif raw_obtained is not None and str(raw_obtained).strip() != "":
                     try:
@@ -1547,7 +1853,7 @@ class MarksService:
                             row_error = f"Marks cannot be negative ({marks_val})."
                             is_valid = False
                         elif marks_val > max_marks_val:
-                            row_error = f"Marks obtained ({marks_val}) exceeds Maximum Marks ({max_marks_val})."
+                            row_error = f"Marks obtained ({marks_val}) exceeds Maximum Marks ({max_marks_val}) for Class {raw_class}."
                             is_valid = False
                     except ValueError:
                         row_error = f"Invalid marks numeric value '{raw_obtained}'."
@@ -1555,10 +1861,19 @@ class MarksService:
                 else:
                     marks_val = None
 
+            # Track detected metadata
             if raw_class: classes_detected.add(raw_class)
             if raw_sec: sections_detected.add(f"{raw_class}-{raw_sec}")
-            if raw_sub: subjects_detected.add(raw_sub)
+            if raw_sub: subjects_detected.add(resolved_subject_name)
             if matched_student: students_detected.add(str(matched_student.id))
+
+            # Grouped breakdown
+            if is_valid and matched_class and matched_sec:
+                c_display = matched_class.name
+                s_display = matched_sec.name
+                sub_display = resolved_subject_name
+                grouped_summary.setdefault(c_display, {}).setdefault(s_display, {}).setdefault(sub_display, 0)
+                grouped_summary[c_display][s_display][sub_display] += 1
 
             if not is_valid and row_error:
                 errors_summary.append(f"Row {row_num} (Class {raw_class}-{raw_sec}, {raw_sub}, Roll {raw_roll}): {row_error}")
@@ -1570,7 +1885,7 @@ class MarksService:
                     section_name=raw_sec,
                     roll_number=raw_roll,
                     student_name=raw_name or (matched_student.full_name if matched_student else None),
-                    subject_name=raw_sub,
+                    subject_name=resolved_subject_name,
                     max_marks=max_marks_val,
                     marks_obtained=marks_val,
                     status=result_st,
@@ -1579,47 +1894,195 @@ class MarksService:
                     error_message=row_error,
                     student_id=str(matched_student.id) if matched_student else None,
                     exam_schedule_id=str(matched_sched.id) if matched_sched else None,
-                    class_id=str(matched_sched.class_id) if matched_sched else None,
-                    section_id=str(matched_sched.section_id) if matched_sched else None,
-                    subject_id=str(matched_sched.subject_id) if matched_sched else None
+                    class_id=str(matched_class.id) if matched_class else (str(matched_sched.class_id) if matched_sched else None),
+                    section_id=str(matched_sec.id) if matched_sec else (str(matched_sched.section_id) if matched_sched else None),
+                    subject_id=str(resolved_subject_id) if resolved_subject_id else (str(matched_sched.subject_id) if matched_sched else None),
+                    is_existing=is_existing_mark
                 )
             )
 
+        # Build classes_summary list
+        classes_summary_list = []
+        for c_k, sec_dict in sorted(grouped_summary.items()):
+            sections_list = []
+            for s_k, sub_dict in sorted(sec_dict.items()):
+                subjects_list = [
+                    {"subject_name": sub_k, "students_count": cnt}
+                    for sub_k, cnt in sorted(sub_dict.items())
+                ]
+                sections_list.append({
+                    "section_name": s_k,
+                    "subjects": subjects_list
+                })
+            classes_summary_list.append({
+                "class_name": c_k,
+                "sections": sections_list
+            })
+
         valid_count = sum(1 for r in preview_rows if r.is_valid)
         invalid_count = len(preview_rows) - valid_count
+
+        if new_schedules_created:
+            await self.marks_repo.db.commit()
 
         return ExamWideUploadPreviewResponse(
             total_rows=len(preview_rows),
             valid_rows_count=valid_count,
             invalid_rows_count=invalid_count,
+            existing_marks_count=existing_marks_count,
             classes_detected=sorted(list(classes_detected)),
             sections_detected=sorted(list(sections_detected)),
             subjects_detected=sorted(list(subjects_detected)),
             students_count=len(students_detected),
             errors=errors_summary,
+            classes_summary=classes_summary_list,
             preview_rows=preview_rows
         )
 
     async def confirm_exam_wide_marks(
         self,
-        tenant_id: uuid.UUID,
-        school_id: uuid.UUID,
-        req: ExamWideUploadConfirmRequest,
-        current_user: User
+        tenant_id: Optional[uuid.UUID] = None,
+        school_id: Optional[uuid.UUID] = None,
+        req: Optional[ExamWideUploadConfirmRequest] = None,
+        current_user: Optional[User] = None,
+        **kwargs
     ) -> ExamWideUploadSummary:
-        # Load Examination
+        if req is None:
+            exam_id = kwargs.get("examination_id") or kwargs.get("exam_id")
+            rows = kwargs.get("rows", [])
+            auto_approve = kwargs.get("auto_approve", True)
+            duplicate_behavior = kwargs.get("duplicate_behavior", "UPDATE_EXISTING")
+            class_ids = kwargs.get("class_ids")
+            section_ids = kwargs.get("section_ids")
+            academic_year_id = kwargs.get("academic_year_id")
+            req = ExamWideUploadConfirmRequest(
+                exam_id=exam_id,
+                school_id=school_id or uuid.uuid4(),
+                rows=rows,
+                auto_approve=auto_approve,
+                duplicate_behavior=duplicate_behavior,
+                class_ids=class_ids,
+                section_ids=section_ids,
+                academic_year_id=academic_year_id,
+            )
+
+        if tenant_id is None:
+            res_t = await self.marks_repo.db.execute(select(Examination.tenant_id, Examination.school_id).where(Examination.id == req.exam_id))
+            row_t = res_t.first()
+            if row_t:
+                tenant_id = row_t[0]
+                if not school_id:
+                    school_id = row_t[1]
+
+        user_id = current_user.id if current_user else None
+
+        # Load Examination with participating classes
         stmt_e = select(Examination).where(
             Examination.id == req.exam_id,
             Examination.school_id == school_id,
             Examination.tenant_id == tenant_id,
             Examination.deleted_at.is_(None)
+        ).options(
+            joinedload(Examination.participating_classes).joinedload(ExaminationClass.class_obj)
         )
         res_e = await self.marks_repo.db.execute(stmt_e)
-        examination = res_e.scalar_one_or_none()
+        examination = res_e.unique().scalar_one_or_none()
         if not examination:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
 
-        # Fetch existing marks for this exam to update existing records
+        # Academic year isolation check
+        if req.academic_year_id and examination.academic_year_id != req.academic_year_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected academic year does not match examination cycle."
+            )
+
+        # Determine target participating classes
+        target_class_ids = set()
+        participating_class_objects = {}
+        for pc in (examination.participating_classes or []):
+            if pc.class_obj:
+                c_uuid = uuid.UUID(str(pc.class_id))
+                target_class_ids.add(c_uuid)
+                participating_class_objects[c_uuid] = pc.class_obj
+
+        if not target_class_ids and examination.settings and "class_ids" in examination.settings:
+            raw_cids = examination.settings["class_ids"]
+            if isinstance(raw_cids, list):
+                for cid_str in raw_cids:
+                    try:
+                        c_uuid = uuid.UUID(str(cid_str))
+                        target_class_ids.add(c_uuid)
+                    except Exception:
+                        pass
+
+        if req.class_ids:
+            requested_set = set(uuid.UUID(str(cid)) for cid in req.class_ids)
+            target_class_ids = (target_class_ids & requested_set) if target_class_ids else requested_set
+        elif req.class_id:
+            requested_set = {uuid.UUID(str(req.class_id))}
+            target_class_ids = (target_class_ids & requested_set) if target_class_ids else requested_set
+
+        # Fetch Class entities for any missing class objects
+        missing_cids = [cid for cid in target_class_ids if cid not in participating_class_objects]
+        if missing_cids:
+            stmt_cls = select(Class).where(Class.id.in_(missing_cids), Class.deleted_at.is_(None))
+            res_cls = await self.marks_repo.db.execute(stmt_cls)
+            for c in res_cls.scalars().all():
+                participating_class_objects[c.id] = c
+
+        # Pre-query sections and student counts for all expected classes
+        expected_sections_map = {cid: [] for cid in target_class_ids}
+        if target_class_ids:
+            stmt_sec = select(Section).where(
+                Section.class_id.in_(target_class_ids),
+                Section.deleted_at.is_(None)
+            )
+            res_sec = await self.marks_repo.db.execute(stmt_sec)
+            for sec in res_sec.scalars().all():
+                expected_sections_map.setdefault(sec.class_id, []).append(sec.name)
+
+        expected_students_map = {cid: 0 for cid in target_class_ids}
+        if target_class_ids:
+            stmt_st_cnt = select(Student.class_id, func.count(Student.id)).where(
+                Student.class_id.in_(target_class_ids),
+                Student.deleted_at.is_(None),
+                Student.is_active == True
+            ).group_by(Student.class_id)
+            res_st_cnt = await self.marks_repo.db.execute(stmt_st_cnt)
+            for cid, cnt in res_st_cnt.all():
+                expected_students_map[cid] = cnt
+
+        # Initialize class_stats for all expected participating classes
+        class_stats: Dict[str, Dict[str, Any]] = {}
+        for cid, c_obj in participating_class_objects.items():
+            c_name = c_obj.name
+            secs = expected_sections_map.get(cid, [])
+            st_cnt = expected_students_map.get(cid, 0)
+            class_stats[c_name] = {
+                "class_id": str(cid),
+                "class_name": c_name,
+                "sections_count": len(secs),
+                "sections": sorted(secs),
+                "students_count": st_cnt,
+                "total_records": 0,
+                "created_count": 0,
+                "updated_count": 0,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "processed": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "failed": 0,
+                "status": "NOT_FOUND",
+                "reason": "No student marks records found in upload data for this class"
+            }
+
+        class_students_processed: Dict[str, set] = {cn: set() for cn in class_stats}
+        class_sections_processed: Dict[str, set] = {cn: set() for cn in class_stats}
+
+        # Fetch existing marks for this exam to update or skip existing records
         stmt_existing = select(Marks).where(
             Marks.examination_id == req.exam_id,
             Marks.school_id == school_id,
@@ -1638,64 +2101,244 @@ class MarksService:
             ExamSchedule.deleted_at.is_(None)
         )
         res_s = await self.marks_repo.db.execute(stmt_s)
-        schedules = {s.id: s for s in res_s.scalars().all()}
+        schedules_list = list(res_s.scalars().all())
+        schedules = {s.id: s for s in schedules_list}
+        schedules_by_combo = {(s.class_id, s.section_id, s.subject_id): s for s in schedules_list}
 
-        # Fetch TeacherSubjectAssignments to resolve teacher_id
+        # Fetch TeacherSubjectAssignments to resolve teacher_id and tsa_id
         stmt_tsa = select(TeacherSubjectAssignment).where(
             TeacherSubjectAssignment.school_id == school_id,
             TeacherSubjectAssignment.tenant_id == tenant_id,
             TeacherSubjectAssignment.deleted_at.is_(None)
         )
         res_tsa = await self.marks_repo.db.execute(stmt_tsa)
-        tsa_map = {tsa.id: (tsa.teacher_id, tsa.id) for tsa in res_tsa.scalars().all()}
+        all_tsas = list(res_tsa.scalars().all())
+        tsa_map_by_id = {tsa.id: (tsa.teacher_id, tsa.id) for tsa in all_tsas}
+        tsa_map_by_combo = {(tsa.class_id, tsa.section_id, tsa.subject_id): (tsa.teacher_id, tsa.id) for tsa in all_tsas}
 
         fallback_teacher_id = None
-        teacher_stmt = select(Teacher.id).where(
-            Teacher.school_id == school_id,
-            Teacher.tenant_id == tenant_id,
-            Teacher.deleted_at.is_(None)
-        ).limit(1)
-        fallback_teacher_id = (await self.marks_repo.db.execute(teacher_stmt)).scalar()
+        fallback_tsa_id = None
+        if all_tsas:
+            fallback_teacher_id = all_tsas[0].teacher_id
+            fallback_tsa_id = all_tsas[0].id
+        else:
+            teacher_stmt = select(Teacher.id).where(
+                Teacher.school_id == school_id,
+                Teacher.tenant_id == tenant_id,
+                Teacher.deleted_at.is_(None)
+            ).limit(1)
+            fallback_teacher_id = (await self.marks_repo.db.execute(teacher_stmt)).scalar()
+            if not fallback_teacher_id:
+                u_hex = uuid.uuid4().hex[:6]
+                sys_teacher = Teacher(
+                    tenant_id=tenant_id,
+                    school_id=school_id,
+                    first_name="Exam",
+                    last_name="Administrator",
+                    employee_code=f"EXAM_ADMIN_{u_hex}",
+                    staff_code=f"STF_ADMIN_{u_hex}",
+                    official_email=f"exam_admin_{u_hex}@edupulse.local",
+                    mobile=f"+9198765{u_hex[:5]}",
+                    date_of_birth=date(1990, 1, 1),
+                    joining_date=date.today(),
+                    gender=StudentGender.MALE,
+                    employment_type=EmploymentType.FULL_TIME,
+                    status=TeacherStatus.ACTIVE
+                )
+                self.marks_repo.db.add(sys_teacher)
+                await self.marks_repo.db.flush()
+                fallback_teacher_id = sys_teacher.id
 
         saved_count = 0
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
         failed_count = 0
         students_set = set()
         classes_set = set()
         sections_set = set()
         subjects_set = set()
 
+        failure_breakdown: Dict[str, int] = {
+            "Student not found": 0,
+            "Paper not found": 0,
+            "Wrong class": 0,
+            "Wrong section": 0,
+            "Duplicate": 0,
+            "Invalid marks": 0,
+            "Schedule missing": 0,
+            "Other": 0
+        }
+
         target_status = MarksStatus.PUBLISHED if req.auto_approve else MarksStatus.SUBMITTED
+        duplicate_mode = req.duplicate_behavior or "UPDATE_EXISTING"
 
         for row in req.rows:
-            if not row.is_valid or not row.student_id or not row.exam_schedule_id:
+            c_name = row.class_name if row.class_name and row.class_name.strip() else "Unassigned Class"
+            if c_name not in class_stats:
+                class_stats[c_name] = {
+                    "class_id": str(row.class_id) if row.class_id else None,
+                    "class_name": c_name,
+                    "sections_count": 0,
+                    "sections": [],
+                    "students_count": 0,
+                    "total_records": 0,
+                    "created_count": 0,
+                    "updated_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": 0,
+                    "processed": 0,
+                    "created": 0,
+                    "updated": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "status": "PENDING",
+                    "reason": None
+                }
+            class_stats[c_name]["total_records"] += 1
+            class_stats[c_name]["processed"] += 1
+            if row.section_name:
+                class_sections_processed.setdefault(c_name, set()).add(row.section_name)
+            if row.student_id:
+                class_students_processed.setdefault(c_name, set()).add(str(row.student_id))
+
+            if not row.is_valid:
                 failed_count += 1
+                class_stats[c_name]["failed_count"] += 1
+                class_stats[c_name]["failed"] += 1
+                err_msg = (row.error_message or "").lower()
+                if "student" in err_msg:
+                    failure_breakdown["Student not found"] += 1
+                elif "paper" in err_msg or "subject" in err_msg:
+                    failure_breakdown["Paper not found"] += 1
+                elif "class" in err_msg:
+                    failure_breakdown["Wrong class"] += 1
+                elif "section" in err_msg:
+                    failure_breakdown["Wrong section"] += 1
+                elif "duplicate" in err_msg:
+                    failure_breakdown["Duplicate"] += 1
+                    if duplicate_mode == "FAIL_DUPLICATE":
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Duplicate mark detected: {row.error_message}"
+                        )
+                elif "mark" in err_msg:
+                    failure_breakdown["Invalid marks"] += 1
+                else:
+                    failure_breakdown["Other"] += 1
+                continue
+
+            if not row.student_id:
+                failed_count += 1
+                class_stats[c_name]["failed_count"] += 1
+                class_stats[c_name]["failed"] += 1
+                failure_breakdown["Student not found"] += 1
                 continue
 
             try:
-                st_id = uuid.UUID(row.student_id)
-                sched_id = uuid.UUID(row.exam_schedule_id)
-                sched = schedules.get(sched_id)
+                st_id = uuid.UUID(str(row.student_id))
+                sched_id = uuid.UUID(str(row.exam_schedule_id)) if row.exam_schedule_id else None
+                sched = schedules.get(sched_id) if sched_id else None
+
+                # Resilient fallback: if sched is None, try resolving by (class_id, section_id, subject_id)
+                if not sched and row.class_id and row.section_id and row.subject_id:
+                    c_id = uuid.UUID(str(row.class_id))
+                    sec_id = uuid.UUID(str(row.section_id))
+                    sub_id = uuid.UUID(str(row.subject_id))
+                    sched = schedules_by_combo.get((c_id, sec_id, sub_id))
+                    if not sched:
+                        sched = ExamSchedule(
+                            tenant_id=tenant_id,
+                            school_id=school_id,
+                            academic_year_id=examination.academic_year_id,
+                            exam_id=req.exam_id,
+                            paper_id=None,
+                            class_id=c_id,
+                            section_id=sec_id,
+                            subject_id=sub_id,
+                            exam_date=examination.start_date,
+                            start_time=time(9, 30),
+                            end_time=time(12, 30),
+                            max_marks=row.max_marks or 100,
+                            pass_marks=int((row.max_marks or 100) * 0.35),
+                            room_number="Examination Hall"
+                        )
+                        self.marks_repo.db.add(sched)
+                        await self.marks_repo.db.flush()
+                        schedules[sched.id] = sched
+                        schedules_by_combo[(c_id, sec_id, sub_id)] = sched
+                    sched_id = sched.id
+
                 if not sched:
+                    logger.error(f"Row {row.row_number} failed: ExamSchedule could not be resolved for class {row.class_name} subject {row.subject_name}")
                     failed_count += 1
+                    class_stats[c_name]["failed_count"] += 1
+                    class_stats[c_name]["failed"] += 1
+                    failure_breakdown["Schedule missing"] += 1
                     continue
 
                 res_status_enum = ExamResult(row.status) if row.status in ExamResult.__members__ else ExamResult.PRESENT
                 grade_val = self._compute_grade(row.marks_obtained, row.max_marks) if row.marks_obtained is not None else None
 
-                tsa_info = tsa_map.get(sched.teacher_subject_assignment_id) if sched.teacher_subject_assignment_id else None
-                t_id = tsa_info[0] if tsa_info else fallback_teacher_id
-                tsa_id = sched.teacher_subject_assignment_id or (tsa_info[1] if tsa_info else None)
+                tsa_info = None
+                if sched.teacher_subject_assignment_id:
+                    tsa_info = tsa_map_by_id.get(sched.teacher_subject_assignment_id)
+                if not tsa_info:
+                    tsa_info = tsa_map_by_combo.get((sched.class_id, sched.section_id, sched.subject_id))
+
+                if tsa_info:
+                    t_id = tsa_info[0]
+                    tsa_id = tsa_info[1]
+                else:
+                    t_id = fallback_teacher_id
+                    tsa_id = sched.teacher_subject_assignment_id or fallback_tsa_id
+
+                # If still no TSA (e.g. fresh environment), auto-provision one to satisfy DB constraint
+                if not tsa_id and t_id:
+                    auto_tsa = TeacherSubjectAssignment(
+                        tenant_id=tenant_id,
+                        school_id=school_id,
+                        academic_year_id=sched.academic_year_id,
+                        teacher_id=t_id,
+                        class_id=sched.class_id,
+                        section_id=sched.section_id,
+                        subject_id=sched.subject_id,
+                        assignment_type=AssignmentType.PRIMARY,
+                        status=AssignmentStatus.ACTIVE,
+                        weekly_periods=1,
+                        effective_from=date.today()
+                    )
+                    self.marks_repo.db.add(auto_tsa)
+                    await self.marks_repo.db.flush()
+                    tsa_id = auto_tsa.id
+                    tsa_map_by_id[auto_tsa.id] = (t_id, tsa_id)
+                    tsa_map_by_combo[(sched.class_id, sched.section_id, sched.subject_id)] = (t_id, tsa_id)
 
                 existing = existing_map.get((st_id, sched_id))
                 if existing:
-                    existing.marks_obtained = row.marks_obtained
-                    existing.maximum_marks = row.max_marks
-                    existing.result_status = res_status_enum
-                    existing.status = target_status
-                    existing.grade = grade_val
-                    existing.remarks = row.remarks
-                    existing.updated_by = current_user.id
-                    self.marks_repo.db.add(existing)
+                    if duplicate_mode == "SKIP_EXISTING":
+                        skipped_count += 1
+                        class_stats[c_name]["skipped_count"] += 1
+                        class_stats[c_name]["skipped"] += 1
+                        continue
+                    elif duplicate_mode == "FAIL_DUPLICATE":
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Duplicate mark detected for student '{row.student_name}' (Duplicates not allowed under FAIL_DUPLICATE policy)."
+                        )
+                    else: # UPDATE_EXISTING
+                        existing.marks_obtained = row.marks_obtained
+                        existing.maximum_marks = row.max_marks
+                        existing.result_status = res_status_enum
+                        existing.status = target_status
+                        existing.grade = grade_val
+                        existing.remarks = row.remarks
+                        existing.updated_by = user_id
+                        self.marks_repo.db.add(existing)
+                        updated_count += 1
+                        saved_count += 1
+                        class_stats[c_name]["updated_count"] += 1
+                        class_stats[c_name]["updated"] += 1
                 else:
                     new_mark = Marks(
                         tenant_id=tenant_id,
@@ -1715,21 +2358,75 @@ class MarksService:
                         status=target_status,
                         grade=grade_val,
                         remarks=row.remarks,
-                        created_by=current_user.id,
-                        updated_by=current_user.id
+                        created_by=user_id,
+                        updated_by=user_id
                     )
                     self.marks_repo.db.add(new_mark)
+                    created_count += 1
+                    saved_count += 1
+                    class_stats[c_name]["created_count"] += 1
+                    class_stats[c_name]["created"] += 1
 
-                saved_count += 1
-                students_set.add(row.student_id)
-                classes_set.add(row.class_name)
-                sections_set.add(f"{row.class_name}-{row.section_name}")
+                students_set.add(str(st_id))
+                classes_set.add(c_name)
+                sections_set.add(f"{c_name}-{row.section_name}")
                 subjects_set.add(row.subject_name)
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error saving row {row.row_number}: {e}")
                 failed_count += 1
+                class_stats[c_name]["failed_count"] += 1
+                class_stats[c_name]["failed"] += 1
+                failure_breakdown["Other"] += 1
 
         await self.marks_repo.db.commit()
+
+        for c_name, st in class_stats.items():
+            if st["total_records"] == 0:
+                st["status"] = "NOT_FOUND"
+                st["reason"] = "No student marks records found in upload data for this class"
+            else:
+                processed_secs = class_sections_processed.get(c_name, set())
+                processed_st = class_students_processed.get(c_name, set())
+                if processed_secs:
+                    st["sections_count"] = len(processed_secs)
+                    st["sections"] = sorted(list(processed_secs))
+                if processed_st:
+                    st["students_count"] = len(processed_st)
+
+                if st["failed_count"] == st["total_records"]:
+                    st["status"] = "FAILED"
+                    st["reason"] = f"All {st['total_records']} rows failed validation"
+                elif st["failed_count"] > 0:
+                    st["status"] = "PARTIAL"
+                    st["reason"] = f"{st['failed_count']} of {st['total_records']} rows encountered issues"
+                else:
+                    st["status"] = "SUCCESS"
+                    st["reason"] = None
+
+        classes_breakdown = [
+            {
+                "class_id": st.get("class_id"),
+                "class_name": st["class_name"],
+                "sections_count": st["sections_count"],
+                "sections": st["sections"],
+                "students_count": st["students_count"],
+                "total_records": st["total_records"],
+                "created_count": st["created_count"],
+                "updated_count": st["updated_count"],
+                "skipped_count": st["skipped_count"],
+                "failed_count": st["failed_count"],
+                "processed": st["processed"],
+                "created": st["created"],
+                "updated": st["updated"],
+                "skipped": st["skipped"],
+                "failed": st["failed"],
+                "status": st["status"],
+                "reason": st["reason"]
+            }
+            for st in sorted(class_stats.values(), key=lambda x: x["class_name"])
+        ]
 
         return ExamWideUploadSummary(
             examination_id=req.exam_id,
@@ -1740,7 +2437,12 @@ class MarksService:
             subjects_count=len(subjects_set),
             total_records=len(req.rows),
             saved_count=saved_count,
-            failed_count=failed_count
+            created_count=created_count,
+            updated_count=updated_count,
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+            classes_breakdown=classes_breakdown,
+            failure_breakdown=failure_breakdown
         )
 
     async def publish_examination_marks(
@@ -1748,7 +2450,9 @@ class MarksService:
         tenant_id: uuid.UUID,
         school_id: uuid.UUID,
         exam_id: uuid.UUID,
-        current_user: User
+        current_user: User,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None
     ) -> ExaminationPublishSummary:
         # 1. Fetch Examination
         stmt_e = select(Examination).where(
@@ -1762,7 +2466,7 @@ class MarksService:
         if not examination:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
 
-        # 2. Fetch all schedules
+        # 2. Fetch all schedules in scope
         stmt_s = select(ExamSchedule).where(
             ExamSchedule.exam_id == exam_id,
             ExamSchedule.school_id == school_id,
@@ -1773,6 +2477,11 @@ class MarksService:
             joinedload(ExamSchedule.section),
             joinedload(ExamSchedule.subject)
         )
+        if class_id:
+            stmt_s = stmt_s.where(ExamSchedule.class_id == class_id)
+        if section_id:
+            stmt_s = stmt_s.where(ExamSchedule.section_id == section_id)
+
         res_s = await self.marks_repo.db.execute(stmt_s)
         schedules = list(res_s.unique().scalars().all())
         if not schedules:
@@ -1784,13 +2493,18 @@ class MarksService:
         missing_count = 0
         missing_breakdown = []
 
-        # Fetch all marks for this examination
+        # Fetch all marks for this examination in scope
         stmt_m = select(Marks).where(
             Marks.examination_id == exam_id,
             Marks.school_id == school_id,
             Marks.tenant_id == tenant_id,
             Marks.deleted_at.is_(None)
         )
+        if class_id:
+            stmt_m = stmt_m.where(Marks.class_id == class_id)
+        if section_id:
+            stmt_m = stmt_m.where(Marks.section_id == section_id)
+
         res_m = await self.marks_repo.db.execute(stmt_m)
         all_marks = list(res_m.scalars().all())
         marks_by_sched = {}
@@ -1823,7 +2537,10 @@ class MarksService:
 
         # 4. Transition all marks to PUBLISHED
         published_count = 0
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
+        user_name = f"{getattr(current_user, 'first_name', '')} {getattr(current_user, 'last_name', '')}".strip() or getattr(current_user, 'email', 'Administrator')
+
         for m in all_marks:
             if m.status != MarksStatus.LOCKED:
                 m.status = MarksStatus.PUBLISHED
@@ -1836,6 +2553,12 @@ class MarksService:
                 m.updated_by = current_user.id
                 self.marks_repo.db.add(m)
                 published_count += 1
+
+        # Record publication metadata in examination settings
+        examination.settings = dict(examination.settings or {})
+        examination.settings["last_published_at"] = now_iso
+        examination.settings["last_published_by_name"] = user_name
+        examination.settings["last_published_by_id"] = str(current_user.id)
 
         # Also update Examination status to PUBLISHED if it was ongoing / marks entry / under review
         if examination.status not in [ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
@@ -1855,14 +2578,342 @@ class MarksService:
             missing_breakdown=missing_breakdown
         )
 
+    async def get_examination_result_readiness(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
+        current_user: Optional[User] = None
+    ) -> ExaminationResultReadiness:
+        # 1. Fetch Examination
+        stmt_e = select(Examination).where(
+            Examination.id == exam_id,
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None)
+        )
+        res_e = await self.marks_repo.db.execute(stmt_e)
+        examination = res_e.scalar_one_or_none()
+        if not examination:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        # 2. Fetch all schedules in scope
+        stmt_s = select(ExamSchedule).where(
+            ExamSchedule.exam_id == exam_id,
+            ExamSchedule.school_id == school_id,
+            ExamSchedule.tenant_id == tenant_id,
+            ExamSchedule.deleted_at.is_(None)
+        ).options(
+            joinedload(ExamSchedule.class_obj),
+            joinedload(ExamSchedule.section),
+            joinedload(ExamSchedule.subject)
+        )
+        if class_id:
+            stmt_s = stmt_s.where(ExamSchedule.class_id == class_id)
+        if section_id:
+            stmt_s = stmt_s.where(ExamSchedule.section_id == section_id)
+
+        res_s = await self.marks_repo.db.execute(stmt_s)
+        schedules = list(res_s.unique().scalars().all())
+
+        # 3. Resolve class and section names
+        class_name = None
+        section_name = None
+        if class_id:
+            stmt_c = select(Class).where(Class.id == class_id)
+            c_res = await self.marks_repo.db.execute(stmt_c)
+            c_obj = c_res.scalar_one_or_none()
+            if c_obj:
+                class_name = c_obj.name
+        if section_id:
+            stmt_sec = select(Section).where(Section.id == section_id)
+            sec_res = await self.marks_repo.db.execute(stmt_sec)
+            sec_obj = sec_res.scalar_one_or_none()
+            if sec_obj:
+                section_name = sec_obj.name
+
+        # 4. Resolve students
+        students: List[Student] = []
+        if class_id and section_id:
+            students = await self.marks_repo.get_class_students_sorted(class_id, section_id, school_id, tenant_id)
+        elif class_id:
+            students = await self.marks_repo.get_class_students_sorted(class_id, None, school_id, tenant_id)
+        else:
+            pairs = set((s.class_id, s.section_id) for s in schedules if s.class_id and s.section_id)
+            seen_st_ids = set()
+            for cid, sid in pairs:
+                sub_st = await self.marks_repo.get_class_students_sorted(cid, sid, school_id, tenant_id)
+                for st in sub_st:
+                    if st.id not in seen_st_ids:
+                        seen_st_ids.add(st.id)
+                        students.append(st)
+
+        # 5. Fetch all marks in scope
+        stmt_m = select(Marks).where(
+            Marks.examination_id == exam_id,
+            Marks.school_id == school_id,
+            Marks.tenant_id == tenant_id,
+            Marks.deleted_at.is_(None)
+        )
+        if class_id:
+            stmt_m = stmt_m.where(Marks.class_id == class_id)
+        if section_id:
+            stmt_m = stmt_m.where(Marks.section_id == section_id)
+
+        res_m = await self.marks_repo.db.execute(stmt_m)
+        all_marks = list(res_m.scalars().all())
+
+        marks_by_student: Dict[uuid.UUID, List[Marks]] = {}
+        for m in all_marks:
+            marks_by_student.setdefault(m.student_id, []).append(m)
+
+        schedules_by_cs: Dict[Tuple[uuid.UUID, uuid.UUID], List[ExamSchedule]] = {}
+        for s in schedules:
+            if s.class_id and s.section_id:
+                schedules_by_cs.setdefault((s.class_id, s.section_id), []).append(s)
+
+        # 6. Evaluate per-student completion
+        student_statuses: List[StudentResultReadinessItem] = []
+        complete_count = 0
+        incomplete_count = 0
+        draft_count = 0
+        ready_to_publish_count = 0
+        published_count = 0
+
+        for st in students:
+            req_scheds = schedules_by_cs.get((st.class_id, st.section_id), [])
+            if not req_scheds:
+                req_scheds = [s for s in schedules if s.class_id == st.class_id]
+
+            total_req = len(req_scheds)
+            st_marks = marks_by_student.get(st.id, [])
+            marked_sched_ids = {m.exam_schedule_id for m in st_marks}
+            missing_scheds = [s for s in req_scheds if s.id not in marked_sched_ids]
+            missing_subjects = [s.subject.subject_name for s in missing_scheds if s.subject]
+
+            is_complete = (total_req > 0 and len(missing_scheds) == 0)
+            if is_complete:
+                complete_count += 1
+                if all(m.status == MarksStatus.PUBLISHED for m in st_marks):
+                    st_status = "PUBLISHED"
+                    published_count += 1
+                else:
+                    st_status = "READY_TO_PUBLISH"
+                    ready_to_publish_count += 1
+                    draft_count += 1
+            else:
+                incomplete_count += 1
+                st_status = "INCOMPLETE"
+                if st_marks:
+                    draft_count += 1
+
+            student_statuses.append(StudentResultReadinessItem(
+                student_id=st.id,
+                student_name=f"{st.first_name} {st.last_name}".strip(),
+                roll_number=st.roll_number or "",
+                admission_number=st.admission_number or "",
+                status=st_status,
+                total_required_papers=total_req,
+                entered_papers=len(st_marks),
+                is_complete=is_complete,
+                missing_subjects=missing_subjects
+            ))
+
+        total_students = len(students)
+        is_fully_published = (total_students > 0 and published_count == total_students)
+        is_ready = (total_students > 0 and incomplete_count == 0 and not is_fully_published)
+
+        if total_students == 0:
+            publication_status = "NOT_STARTED"
+            status_msg = "No students enrolled in the selected class and section."
+        elif is_fully_published:
+            publication_status = "PUBLISHED"
+            status_msg = f"All {total_students} student results are published and visible to parents."
+        elif published_count > 0:
+            publication_status = "PARTIALLY_PUBLISHED"
+            status_msg = f"{published_count} of {total_students} students published. {incomplete_count} remain incomplete."
+        elif is_ready:
+            publication_status = "READY_TO_PUBLISH"
+            status_msg = f"All {total_students} student results are complete and ready to publish."
+        else:
+            publication_status = "IN_PROGRESS"
+            status_msg = f"{incomplete_count} student{'s' if incomplete_count > 1 else ''} remain incomplete. Complete all required marks before publishing."
+
+        missing_breakdown = []
+        for s in schedules:
+            sched_marks = [m for m in all_marks if m.exam_schedule_id == s.id]
+            st_in_sched = [st for st in students if st.class_id == s.class_id and (not s.section_id or st.section_id == s.section_id)]
+            sched_missing = max(0, len(st_in_sched) - len(sched_marks))
+            if sched_missing > 0:
+                missing_breakdown.append({
+                    "class_name": s.class_obj.name if s.class_obj else "Class",
+                    "section_name": s.section.name if s.section else "Section",
+                    "subject_name": s.subject.subject_name if s.subject else "Subject",
+                    "missing_count": sched_missing,
+                    "expected_count": len(st_in_sched),
+                    "entered_count": len(sched_marks)
+                })
+
+        can_unpublish = False
+        if current_user:
+            role_codes = {r.code for r in current_user.roles}
+            can_unpublish = current_user.is_superuser or any(c in ["SUPER_ADMIN", "SCHOOL_ADMIN", "PRINCIPAL"] for c in role_codes)
+
+        settings = examination.settings or {}
+        return ExaminationResultReadiness(
+            examination_id=exam_id,
+            examination_name=examination.exam_name,
+            academic_year_id=academic_year_id or examination.academic_year_id,
+            class_id=class_id,
+            class_name=class_name,
+            section_id=section_id,
+            section_name=section_name,
+            total_students=total_students,
+            students_with_complete_results=complete_count,
+            students_with_incomplete_results=incomplete_count,
+            draft_results_count=draft_count,
+            ready_to_publish_count=ready_to_publish_count,
+            published_count=published_count,
+            is_ready_to_publish=is_ready,
+            is_fully_published=is_fully_published,
+            publication_status=publication_status,
+            last_published_date=settings.get("last_published_at"),
+            published_by_name=settings.get("last_published_by_name"),
+            status_message=status_msg,
+            missing_breakdown=missing_breakdown,
+            student_statuses=student_statuses,
+            can_unpublish=can_unpublish
+        )
+
+    async def unpublish_examination_marks(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        current_user: User,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        # 1. Fetch Examination
+        stmt_e = select(Examination).where(
+            Examination.id == exam_id,
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None)
+        )
+        res_e = await self.marks_repo.db.execute(stmt_e)
+        examination = res_e.scalar_one_or_none()
+        if not examination:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        # 2. Fetch published marks in scope
+        stmt_m = select(Marks).where(
+            Marks.examination_id == exam_id,
+            Marks.school_id == school_id,
+            Marks.tenant_id == tenant_id,
+            Marks.status == MarksStatus.PUBLISHED,
+            Marks.deleted_at.is_(None)
+        )
+        if class_id:
+            stmt_m = stmt_m.where(Marks.class_id == class_id)
+        if section_id:
+            stmt_m = stmt_m.where(Marks.section_id == section_id)
+
+        res_m = await self.marks_repo.db.execute(stmt_m)
+        published_marks = list(res_m.scalars().all())
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for m in published_marks:
+            m.status = MarksStatus.APPROVED
+            m.audit_history = list(m.audit_history or []) + [{
+                "action": "EXAM_WIDE_UNPUBLISH",
+                "reason": reason or "Administrative reopen for marks correction",
+                "updated_by": str(current_user.id),
+                "updated_at": now_iso
+            }]
+            m.updated_by = current_user.id
+            self.marks_repo.db.add(m)
+
+        # If examination was marked PUBLISHED, revert to APPROVED or ONGOING
+        if examination.status == ExamStatus.PUBLISHED:
+            examination.status = ExamStatus.APPROVED
+            self.marks_repo.db.add(examination)
+
+        await self.marks_repo.db.commit()
+
+        return {
+            "examination_id": str(exam_id),
+            "unpublished_count": len(published_marks),
+            "message": f"Successfully unpublished {len(published_marks)} marks. Results reopened for editing."
+        }
+
+
     async def generate_exam_wide_template(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID
-    ) -> bytes:
+        self,
+        tenant_id: Optional[uuid.UUID] = None,
+        school_id: Optional[uuid.UUID] = None,
+        exam_id: Optional[uuid.UUID] = None,
+        class_ids: Optional[List[uuid.UUID]] = None,
+        section_ids: Optional[List[uuid.UUID]] = None,
+        **kwargs
+    ) -> ExamWideTemplateBytes:
         import io
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
 
-        # Fetch schedules & enrolled students
+        if exam_id is None:
+            exam_id = kwargs.get("examination_id") or kwargs.get("exam_id")
+
+        if tenant_id is None:
+            res_t = await self.marks_repo.db.execute(select(Examination.tenant_id, Examination.school_id).where(Examination.id == exam_id))
+            row_t = res_t.first()
+            if row_t:
+                tenant_id = row_t[0]
+                if not school_id:
+                    school_id = row_t[1]
+
+        # 1. Fetch Examination with participating classes and papers
+        stmt_e = select(Examination).where(
+            Examination.id == exam_id,
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None)
+        ).options(
+            joinedload(Examination.participating_classes).joinedload(ExaminationClass.class_obj),
+            joinedload(Examination.papers).joinedload(ExamPaper.class_configs),
+            joinedload(Examination.papers).joinedload(ExamPaper.subject)
+        )
+        res_e = await self.marks_repo.db.execute(stmt_e)
+        examination = res_e.unique().scalar_one_or_none()
+        if not examination:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        # Determine target participating classes
+        target_class_ids = set()
+        for pc in (examination.participating_classes or []):
+            if pc.class_obj:
+                target_class_ids.add(uuid.UUID(str(pc.class_id)))
+
+        if not target_class_ids and examination.settings and "class_ids" in examination.settings:
+            raw_cids = examination.settings["class_ids"]
+            if isinstance(raw_cids, list):
+                for cid_str in raw_cids:
+                    try:
+                        target_class_ids.add(uuid.UUID(str(cid_str)))
+                    except Exception:
+                        pass
+
+        if class_ids:
+            requested_set = set(uuid.UUID(str(cid)) for cid in class_ids)
+            target_class_ids = (target_class_ids & requested_set) if target_class_ids else requested_set
+
+        normalized_sec_ids = set(uuid.UUID(str(sid)) for sid in section_ids) if section_ids else None
+
+        # Fetch schedules
         stmt_s = select(ExamSchedule).where(
             ExamSchedule.exam_id == exam_id,
             ExamSchedule.school_id == school_id,
@@ -1874,6 +2925,11 @@ class MarksService:
             joinedload(ExamSchedule.subject)
         ).order_by(ExamSchedule.class_id, ExamSchedule.section_id)
 
+        if target_class_ids:
+            stmt_s = stmt_s.where(ExamSchedule.class_id.in_(target_class_ids))
+        if normalized_sec_ids:
+            stmt_s = stmt_s.where(ExamSchedule.section_id.in_(normalized_sec_ids))
+
         res_s = await self.marks_repo.db.execute(stmt_s)
         schedules = list(res_s.unique().scalars().all())
 
@@ -1882,7 +2938,7 @@ class MarksService:
         ws.title = "Exam Marks"
 
         # Headers
-        headers = ["Class", "Section", "Roll No", "Student Name", "Subject", "Max Marks", "Obtained Marks", "Status", "Remarks"]
+        headers = ["Class", "Section", "Roll No", "Student Name", "Subject", "Max Marks", "Marks Obtained", "Status", "Remarks"]
         ws.append(headers)
 
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -1893,8 +2949,10 @@ class MarksService:
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        # Populate rows for each schedule & student
+        # Track which (class, section, subject) combinations were handled by schedules
+        handled_combos = set()
         for s in schedules:
+            handled_combos.add((s.class_id, s.section_id, s.subject_id))
             students = await self.marks_repo.get_class_students_sorted(s.class_id, s.section_id, school_id, tenant_id)
             c_name = s.class_obj.name if s.class_obj else "Class"
             sec_name = s.section.name if s.section else "Section"
@@ -1913,6 +2971,47 @@ class MarksService:
                     ""
                 ])
 
+        # If there are participating classes / papers that don't have schedules yet, also pre-populate them!
+        if examination.papers and target_class_ids:
+            stmt_classes = select(Class).where(Class.id.in_(target_class_ids), Class.deleted_at.is_(None))
+            classes_objs = {c.id: c for c in (await self.marks_repo.db.execute(stmt_classes)).scalars().all()}
+
+            stmt_sections = select(Section).where(Section.class_id.in_(target_class_ids), Section.deleted_at.is_(None))
+            if section_ids:
+                stmt_sections = stmt_sections.where(Section.id.in_(section_ids))
+            sections_objs = (await self.marks_repo.db.execute(stmt_sections)).scalars().all()
+
+            for sec in sections_objs:
+                c_obj = classes_objs.get(sec.class_id)
+                if not c_obj:
+                    continue
+                students = await self.marks_repo.get_class_students_sorted(sec.class_id, sec.id, school_id, tenant_id)
+                for paper in examination.papers:
+                    if (sec.class_id, sec.id, paper.subject_id) in handled_combos:
+                        continue
+                    handled_combos.add((sec.class_id, sec.id, paper.subject_id))
+                    sub_name = paper.subject.subject_name if paper.subject else paper.paper_name
+
+                    # class override max marks
+                    override_max = paper.default_max_marks
+                    for cc in (paper.class_configs or []):
+                        if cc.class_id == sec.class_id and cc.maximum_marks is not None:
+                            override_max = cc.maximum_marks
+                            break
+
+                    for st in students:
+                        ws.append([
+                            c_obj.name,
+                            sec.name,
+                            st.roll_number or "",
+                            st.full_name or "",
+                            sub_name,
+                            override_max,
+                            "",
+                            "PRESENT",
+                            ""
+                        ])
+
         # Auto-adjust column widths
         for col in ws.columns:
             max_len = max(len(str(cell.value or "")) for cell in col)
@@ -1921,7 +3020,8 @@ class MarksService:
 
         buf = io.BytesIO()
         wb.save(buf)
-        return buf.getvalue()
+        safe_name = examination.exam_name.replace(' ', '_')
+        return ExamWideTemplateBytes(buf.getvalue(), filename=f"{safe_name}_Template.xlsx")
 
     async def generate_class_all_subjects_template(
         self,

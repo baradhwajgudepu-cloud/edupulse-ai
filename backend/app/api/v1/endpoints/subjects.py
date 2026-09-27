@@ -45,6 +45,7 @@ async def list_subjects(
     academic_year_id: Optional[uuid.UUID] = Query(None, description="Filter by Academic Year ID"),
     category: Optional[SubjectCategory] = Query(None, description="Filter by category"),
     status_filter: Optional[SubjectStatus] = Query(None, alias="status", description="Filter by subject status"),
+    source_type: Optional[str] = Query(None, description="Filter by source_type (BOARD_OFFICIAL or SCHOOL_ADDED)"),
     search: Optional[str] = Query(None, description="Fuzzy match search on subject name, code, and short name"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -58,6 +59,7 @@ async def list_subjects(
         academic_year_id=academic_year_id,
         category=category,
         status=status_filter,
+        source_type=source_type,
         search=search,
         skip=skip,
         limit=limit

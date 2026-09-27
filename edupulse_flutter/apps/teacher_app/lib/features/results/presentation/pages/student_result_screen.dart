@@ -3,12 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
+import 'package:edupulse_config/edupulse_config.dart';
+import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 import '../../domain/entities/report_card_entity.dart';
 import '../../domain/entities/report_card_preview_entity.dart';
 import '../providers/results_providers.dart';
 import '../../../marks/presentation/providers/marks_providers.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 import '../widgets/grade_badge.dart';
 import '../widgets/result_status_badge.dart';
 
@@ -36,7 +40,7 @@ class _StudentResultScreenState extends ConsumerState<StudentResultScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authState = ref.read(authStateProvider);
-      final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '';
+      final schoolId = ref.read(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '');
       ref
           .read(studentResultPreviewProvider(widget.studentId).notifier)
           .fetchPreviewAndReportCard(
@@ -67,7 +71,7 @@ class _StudentResultScreenState extends ConsumerState<StudentResultScreen> {
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
 
     final authState = ref.watch(authStateProvider);
-    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '';
+    final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '');
 
     final state = ref.watch(studentResultPreviewProvider(widget.studentId));
     final remarksTemplatesAsync = ref.watch(remarksTemplatesProvider);
@@ -336,7 +340,14 @@ class _StudentResultScreenState extends ConsumerState<StudentResultScreen> {
             rows: subjectMarks.map((row) {
               return DataRow(
                 cells: [
-                  DataCell(Text(row.subjectName, style: const TextStyle(fontWeight: FontWeight.w600))),
+                  DataCell(Text(
+                    displaySubjectName(
+                      subjectName: row.subjectName,
+                      subjectCode: row.subjectCode,
+                      subjectId: row.subjectId,
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  )),
                   DataCell(Text(row.maximumMarks.toString())),
                   DataCell(Text(row.marksObtained != null ? row.marksObtained!.toStringAsFixed(1) : '-')),
                   DataCell(GradeBadge(grade: row.grade)),
@@ -490,7 +501,16 @@ class _StudentResultScreenState extends ConsumerState<StudentResultScreen> {
 
   void _handlePDFDownload(String studentName, String pdfUrl) {
     // Construct base client url using baseline configurations or window location
-    final fullUrl = 'http://127.0.0.1:8000$pdfUrl';
+    final config = ref.read(buildConfigProvider);
+    final baseUrl = config.apiBaseUrl.endsWith('/')
+        ? config.apiBaseUrl.substring(0, config.apiBaseUrl.length - 1)
+        : config.apiBaseUrl;
+    final cleanPath = pdfUrl.startsWith('/') ? pdfUrl : '/$pdfUrl';
+    final fullUrl = (cleanPath.startsWith('/api/v1') && baseUrl.endsWith('/api/v1'))
+        ? '${baseUrl.substring(0, baseUrl.length - 7)}$cleanPath'
+        : (pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://'))
+            ? pdfUrl
+            : '$baseUrl$cleanPath';
     
     showDialog(
       context: context,

@@ -582,3 +582,115 @@ async def test_timetable_concurrency_control_occ(setup_timetable_test_data, db_s
             await repo_b.db.commit()
 
         await repo_b.db.close()
+
+
+@pytest.mark.anyio
+async def test_timetable_conflict_check_endpoint(setup_timetable_test_data, client: AsyncClient) -> None:
+    data = setup_timetable_test_data
+    school_id = data["school_a"].id
+    headers = data["auth_headers"]
+
+    # 1. Check conflict for empty slot -> has_conflict: False
+    payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "teacher_id": str(data["teacher_a"].id),
+        "day_of_week": "MONDAY",
+        "period_number": 1,
+        "start_time": "08:30:00",
+        "end_time": "09:15:00",
+        "period_type": "REGULAR",
+        "room_number": "Room 101",
+    }
+    resp = await client.post("/api/v1/timetables/conflicts/check", json=payload, headers=headers)
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["data"]["has_conflict"] is False
+
+    # 2. Create the slot
+    create_payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "teacher_subject_assignment_id": str(data["tsa_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "day_of_week": "MONDAY",
+        "period_number": 1,
+        "start_time": "08:30:00",
+        "end_time": "09:15:00",
+        "period_type": "REGULAR",
+        "room_number": "Room 101",
+    }
+    resp_create = await client.post("/api/v1/timetables", json=create_payload, headers=headers)
+    assert resp_create.status_code == 201
+
+    # 3. Check conflict again for the same slot -> has_conflict: True
+    resp2 = await client.post("/api/v1/timetables/conflicts/check", json=payload, headers=headers)
+    assert resp2.status_code == 200
+    res_data2 = resp2.json()
+    assert res_data2["data"]["has_conflict"] is True
+
+
+@pytest.mark.anyio
+async def test_timetable_copy_and_bulk_operations(setup_timetable_test_data, client: AsyncClient) -> None:
+    data = setup_timetable_test_data
+    school_id = data["school_a"].id
+    headers = data["auth_headers"]
+
+    # 1. Create a slot on MONDAY period 1
+    create_payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "teacher_subject_assignment_id": str(data["tsa_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "day_of_week": "MONDAY",
+        "period_number": 1,
+        "start_time": "08:30:00",
+        "end_time": "09:15:00",
+        "period_type": "REGULAR",
+        "room_number": "Room 101",
+    }
+    resp_create = await client.post("/api/v1/timetables", json=create_payload, headers=headers)
+    assert resp_create.status_code == 201
+
+    # 2. Copy day MONDAY -> TUESDAY
+    copy_day_payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "source_day": "MONDAY",
+        "target_day": "TUESDAY",
+        "overwrite": True,
+    }
+    resp_copy = await client.post("/api/v1/timetables/copy-day", json=copy_day_payload, headers=headers)
+    assert resp_copy.status_code == 200
+    assert resp_copy.json()["data"]["copied_count"] >= 1
+
+    # 3. Bulk update status to INACTIVE (unpublish)
+    bulk_payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "status": "INACTIVE",
+    }
+    resp_bulk = await client.post("/api/v1/timetables/bulk-status", json=bulk_payload, headers=headers)
+    assert resp_bulk.status_code == 200
+    assert resp_bulk.json()["data"]["updated_count"] >= 2
+
+    # 4. Clear TUESDAY schedule
+    clear_payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(data["ay_a"].id),
+        "class_id": str(data["class_a"].id),
+        "section_id": str(data["sec_a"].id),
+        "day_of_week": "TUESDAY",
+    }
+    resp_clear = await client.post("/api/v1/timetables/clear-day", json=clear_payload, headers=headers)
+    assert resp_clear.status_code == 200
+    assert resp_clear.json()["data"]["cleared_count"] >= 1
+

@@ -107,7 +107,7 @@ async def get_current_user(
 
     # Distinguish platform super administrators (who have global / cross-tenant switching authority)
     is_platform_admin = user.is_superuser or any(
-        role.code in ("SUPER_ADMIN", "SYSTEM_ADMIN") for role in user.roles
+        role.code in ("SUPER_ADMIN", "SYSTEM_ADMIN", "PLATFORM_ADMIN") for role in user.roles
     )
 
     if is_platform_admin:
@@ -195,9 +195,25 @@ class require_permission:
 
 
 def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.is_superuser or any(r.code in ("SUPER_ADMIN", "SYSTEM_ADMIN") for r in current_user.roles):
+    if current_user.is_superuser or any(r.code in ("SUPER_ADMIN", "SYSTEM_ADMIN", "PLATFORM_ADMIN") for r in current_user.roles):
         return current_user
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Access denied. Super administrator privileges required."
     )
+
+
+def require_platform_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Ensures the user has platform-level administrative privileges (SUPER_ADMIN, SYSTEM_ADMIN, or PLATFORM_ADMIN).
+    Used for platform-scoped operations like creating new school campuses and tenants.
+    """
+    is_platform_admin = current_user.is_superuser or any(
+        r.code in ("SUPER_ADMIN", "SYSTEM_ADMIN", "PLATFORM_ADMIN") for r in current_user.roles
+    )
+    if not is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Platform administrator privileges required to create school campuses."
+        )
+    return current_user

@@ -40,6 +40,8 @@ class StudentDto {
   final String? withdrawnAt;
   final String? graduatedAt;
 
+  String get fullName => '$firstName $lastName'.trim();
+
   const StudentDto({
     required this.id,
     required this.tenantId,
@@ -219,6 +221,9 @@ class GuardianDto {
   final String updatedAt;
   final String? deletedAt;
   final String? loginId;
+  final String? userId;
+
+  String get fullName => '$firstName $lastName'.trim();
 
   const GuardianDto({
     required this.id,
@@ -255,6 +260,7 @@ class GuardianDto {
     required this.updatedAt,
     this.deletedAt,
     this.loginId,
+    this.userId,
   });
 
   factory GuardianDto.fromJson(Map<String, dynamic> json) {
@@ -293,6 +299,7 @@ class GuardianDto {
       updatedAt: json['updated_at'] as String,
       deletedAt: json['deleted_at'] as String?,
       loginId: json['login_id'] as String?,
+      userId: json['user_id'] as String?,
     );
   }
 
@@ -324,6 +331,97 @@ class GuardianDto {
 }
 
 @immutable
+class LinkedStudentDto {
+  final String id;
+  final String firstName;
+  final String? middleName;
+  final String lastName;
+  final String admissionNumber;
+  final String rollNumber;
+  final String status;
+  final String? photoUrl;
+  final String academicYearId;
+  final String? academicYearName;
+  final String classId;
+  final String? className;
+  final String sectionId;
+  final String? sectionName;
+  final String? classTeacherId;
+  final String? classTeacherName;
+  final String? classTeacherPhotoUrl;
+  final String? admissionDate;
+
+  const LinkedStudentDto({
+    required this.id,
+    required this.firstName,
+    this.middleName,
+    required this.lastName,
+    required this.admissionNumber,
+    required this.rollNumber,
+    required this.status,
+    this.photoUrl,
+    required this.academicYearId,
+    this.academicYearName,
+    required this.classId,
+    this.className,
+    required this.sectionId,
+    this.sectionName,
+    this.classTeacherId,
+    this.classTeacherName,
+    this.classTeacherPhotoUrl,
+    this.admissionDate,
+  });
+
+  String get fullName => '$firstName ${middleName ?? ''} $lastName'.replaceAll('  ', ' ').trim();
+
+  factory LinkedStudentDto.fromJson(Map<String, dynamic> json) {
+    return LinkedStudentDto(
+      id: json['id']?.toString() ?? '',
+      firstName: json['first_name']?.toString() ?? '',
+      middleName: json['middle_name']?.toString(),
+      lastName: json['last_name']?.toString() ?? '',
+      admissionNumber: json['admission_number']?.toString() ?? '',
+      rollNumber: json['roll_number']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'ACTIVE',
+      photoUrl: json['photo_url']?.toString(),
+      academicYearId: json['academic_year_id']?.toString() ?? '',
+      academicYearName: json['academic_year_name']?.toString(),
+      classId: json['class_id']?.toString() ?? '',
+      className: json['class_name']?.toString(),
+      sectionId: json['section_id']?.toString() ?? '',
+      sectionName: json['section_name']?.toString(),
+      classTeacherId: json['class_teacher_id']?.toString(),
+      classTeacherName: json['class_teacher_name']?.toString(),
+      classTeacherPhotoUrl: json['class_teacher_photo_url']?.toString(),
+      admissionDate: json['admission_date']?.toString() ?? json['admissionDate']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'first_name': firstName,
+      'middle_name': middleName,
+      'last_name': lastName,
+      'admission_number': admissionNumber,
+      'roll_number': rollNumber,
+      'status': status,
+      'photo_url': photoUrl,
+      'academic_year_id': academicYearId,
+      'academic_year_name': academicYearName,
+      'class_id': classId,
+      'class_name': className,
+      'section_id': sectionId,
+      'section_name': sectionName,
+      'class_teacher_id': classTeacherId,
+      'class_teacher_name': classTeacherName,
+      'class_teacher_photo_url': classTeacherPhotoUrl,
+      'admission_date': admissionDate,
+    };
+  }
+}
+
+@immutable
 class StudentGuardianDto {
   final String id;
   final String tenantId;
@@ -339,6 +437,10 @@ class StudentGuardianDto {
   final String updatedAt;
   final String? deletedAt;
   final GuardianDto? guardian; // Optionally resolved locally/nested
+  final LinkedStudentDto? student; // Enriched student summary with class teacher
+
+  bool get canPickup => canPickupStudent;
+  bool get receiveNotifications => receivesNotifications;
 
   const StudentGuardianDto({
     required this.id,
@@ -355,6 +457,7 @@ class StudentGuardianDto {
     required this.updatedAt,
     this.deletedAt,
     this.guardian,
+    this.student,
   });
 
   factory StudentGuardianDto.fromJson(Map<String, dynamic> json) {
@@ -366,13 +469,20 @@ class StudentGuardianDto {
       guardianId: json['guardian_id'] as String,
       relationship: json['relationship'] as String,
       isPrimary: json['is_primary'] as bool? ?? false,
-      canPickupStudent: json['can_pickup_student'] as bool? ?? true,
-      receivesNotifications: json['receives_notifications'] as bool? ?? true,
+      canPickupStudent: json['can_pickup_student'] as bool? ??
+          json['can_pickup'] as bool? ??
+          json['canPickup'] as bool? ??
+          true,
+      receivesNotifications: json['receives_notifications'] as bool? ??
+          json['receive_notifications'] as bool? ??
+          json['receiveNotifications'] as bool? ??
+          true,
       version: json['version'] as int? ?? 1,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
       deletedAt: json['deleted_at'] as String?,
       guardian: json['guardian'] != null ? GuardianDto.fromJson(Map<String, dynamic>.from(json['guardian'] as Map)) : null,
+      student: json['student'] != null ? LinkedStudentDto.fromJson(Map<String, dynamic>.from(json['student'] as Map)) : null,
     );
   }
 
@@ -394,6 +504,7 @@ class StudentGuardianDto {
     bool? canPickupStudent,
     bool? receivesNotifications,
     GuardianDto? guardian,
+    LinkedStudentDto? student,
   }) {
     return StudentGuardianDto(
       id: id,
@@ -410,6 +521,8 @@ class StudentGuardianDto {
       updatedAt: updatedAt,
       deletedAt: deletedAt,
       guardian: guardian ?? this.guardian,
+      student: student ?? this.student,
     );
   }
 }
+

@@ -8,7 +8,8 @@ class AttendanceResponseEntity extends Equatable {
   final String academicYearId;
   final String attendanceSessionId;
   final String studentId;
-  final String timetableId;
+  final String? timetableId;
+  final String? sessionType;
   final String classId;
   final String sectionId;
   final String? teacherId;
@@ -26,7 +27,8 @@ class AttendanceResponseEntity extends Equatable {
     required this.academicYearId,
     required this.attendanceSessionId,
     required this.studentId,
-    required this.timetableId,
+    this.timetableId,
+    this.sessionType,
     required this.classId,
     required this.sectionId,
     this.teacherId,
@@ -47,6 +49,7 @@ class AttendanceResponseEntity extends Equatable {
         attendanceSessionId,
         studentId,
         timetableId,
+        sessionType,
         classId,
         sectionId,
         teacherId,

@@ -17,47 +17,94 @@ ROLE_NAMES_MAP = {
 
 ROLE_PERMISSIONS_MAP = {
     "ADMIN": [
+        # School & Base Structure
+        "tenant.read", "school.read", "school.update",
+        "academic_year.create", "academic_year.read", "academic_year.update", "academic_year.delete",
+        "class.create", "class.read", "class.update", "class.delete", "class.archive", "class.promote",
+        "section.create", "section.read", "section.update", "section.delete",
+        "subject.create", "subject.read", "subject.update", "subject.delete",
+        "syllabus.create", "syllabus.read", "syllabus.update", "syllabus.delete",
+        "timetable.create", "timetable.read", "timetable.update", "timetable.delete",
+        # Students & Guardians
+        "student.create", "student.read", "student.update", "student.delete",
+        "guardian.create", "guardian.read", "guardian.update", "guardian.delete",
+        # Teachers & Assignments
+        "teacher.create", "teacher.read", "teacher.update", "teacher.delete",
+        "teacher_subject_assignment.create", "teacher_subject_assignment.read", "teacher_subject_assignment.update", "teacher_subject_assignment.delete",
+        # Attendance & Leaves
+        "attendance.create", "attendance.read", "attendance.update", "attendance.delete",
+        "staff_attendance.create", "staff_attendance.read", "staff_attendance.update", "staff_attendance.admin",
+        "teacher_leave.create", "teacher_leave.read", "teacher_leave.review", "teacher_leave.cancel", "teacher_leave.admin",
+        # Examinations, Marks & Report Cards
+        "exam.create", "exam.read", "exam.update", "exam.delete",
+        "marks.create", "marks.read", "marks.update", "marks.delete", "marks.publish",
+        "report_card.generate", "report_card.read", "report_card.download", "report_card.publish",
+        # Homework
+        "homework.create", "homework.read", "homework.update", "homework.delete",
         # Fee Management
         "fee.create", "fee.read", "fee.update", "fee.delete", "fee.pay", "fee.cancel", "fee.report",
-        # Teacher Leaves
-        "teacher_leave.read", "teacher_leave.review", "teacher_leave.admin",
-        # Staff Attendance
-        "staff_attendance.read", "staff_attendance.admin",
-        # School Planner (Events & Announcements)
+        # School Planner & Notifications
         "event.create", "event.read", "event.update", "event.delete", "event.publish",
         "announcement.create", "announcement.read", "announcement.update", "announcement.delete", "announcement.publish",
-        # Notifications
-        "notification.read", "notification.mark_read",
-        # Base Administration Permissions
-        "tenant.read", "school.read", "school.update", "academic_year.create", "academic_year.read", "academic_year.update",
-        "role.create", "role.read", "role.update", "permission.read", "user.create", "user.read", "user.update", "user.delete",
-        # Settings & Reports (Seeded in app/main.py)
+        "notification.create", "notification.read", "notification.update", "notification.delete", "notification.mark_read",
+        # User Management & Identity
+        "user.create", "user.read", "user.update",
+        "identity.create", "identity.read", "identity.update", "identity.provision", "identity.reset_password",
+        "role.create", "role.read", "role.update", "permission.read",
+        # Settings & Reports & Intelligence
         "reports.read", "reports.academic.read", "reports.attendance.read", "reports.fees.read", "reports.ai.read", "reports.export",
-        "settings.read", "settings.update", "settings.school.update", "settings.academic.update", "settings.grading.update", "settings.exam.update", "settings.report_card.update"
+        "ai.use",
+        "settings.read", "settings.update", "settings.school.update", "settings.academic.update", "settings.grading.update", "settings.exam.update", "settings.report_card.update",
+        # Migrations
+        "migration.create", "migration.read", "migration.execute", "migration.cancel"
     ],
     "PRINCIPAL": [
-        # Core Administrative Permissions
-        "student.read", "teacher.read", "attendance.read", "exam.read", "marks.read",
-        "marks.publish", "homework.read", "report_card.read", "report_card.download", "report_card.publish",
-        "class.read", "section.read", "academic_year.read", "academic_year.create",
-        # Staff Attendance
-        "staff_attendance.read", "staff_attendance.admin",
+        # School & Base Structure
+        "tenant.read", "school.read", "school.update",
+        "academic_year.create", "academic_year.read", "academic_year.update",
+        "class.create", "class.read", "class.update", "class.delete", "class.archive", "class.promote",
+        "section.create", "section.read", "section.update", "section.delete",
+        "subject.create", "subject.read", "subject.update", "subject.delete",
+        "syllabus.create", "syllabus.read", "syllabus.update", "syllabus.delete",
+        "timetable.create", "timetable.read", "timetable.update", "timetable.delete",
+        # Students & Guardians
+        "student.create", "student.read", "student.update", "student.delete",
+        "guardian.create", "guardian.read", "guardian.update", "guardian.delete",
+        # Teachers & Assignments
+        "teacher.create", "teacher.read", "teacher.update", "teacher.delete",
+        "teacher_subject_assignment.create", "teacher_subject_assignment.read", "teacher_subject_assignment.update", "teacher_subject_assignment.delete",
+        # Attendance & Leaves
+        "attendance.create", "attendance.read", "attendance.update", "attendance.delete",
+        "staff_attendance.create", "staff_attendance.read", "staff_attendance.update", "staff_attendance.admin",
+        "teacher_leave.create", "teacher_leave.read", "teacher_leave.review", "teacher_leave.cancel", "teacher_leave.admin",
+        # Examinations, Marks & Report Cards
+        "exam.create", "exam.read", "exam.update", "exam.delete",
+        "marks.create", "marks.read", "marks.update", "marks.delete", "marks.publish",
+        "report_card.generate", "report_card.read", "report_card.download", "report_card.publish",
+        # Homework
+        "homework.create", "homework.read", "homework.update", "homework.delete",
         # Fee Management
         "fee.create", "fee.read", "fee.update", "fee.delete", "fee.pay", "fee.cancel", "fee.report",
-        # Notifications
-        "notification.read", "notification.mark_read",
-        # Leaves Management
-        "teacher_leave.read", "teacher_leave.review", "teacher_leave.admin",
-        # School Planner
+        # School Planner & Notifications
         "event.create", "event.read", "event.update", "event.delete", "event.publish",
         "announcement.create", "announcement.read", "announcement.update", "announcement.delete", "announcement.publish",
+        "notification.create", "notification.read", "notification.update", "notification.delete", "notification.mark_read",
+        # User Management & Identity
+        "user.create", "user.read", "user.update",
+        "identity.create", "identity.read", "identity.update", "identity.provision", "identity.reset_password",
+        "role.read", "permission.read",
+        # Settings & Reports & Intelligence
+        "reports.read", "reports.academic.read", "reports.attendance.read", "reports.fees.read", "reports.ai.read", "reports.export",
+        "ai.use",
+        "settings.read", "settings.update", "settings.school.update", "settings.academic.update", "settings.grading.update", "settings.exam.update", "settings.report_card.update",
         # Migrations
-        "migration.read", "migration.create", "migration.execute", "migration.cancel"
+        "migration.create", "migration.read", "migration.execute", "migration.cancel"
     ],
     "TEACHER": [
         # Base Academic Permissions
         "academic_year.read", "class.read", "section.read", "subject.read", "teacher.read",
         "teacher_subject_assignment.read", "timetable.read", "student.read",
+        "syllabus.read", "syllabus.update",
         # Student Attendance
         "attendance.read", "attendance.create", "attendance.update",
         # Homework
@@ -76,11 +123,16 @@ ROLE_PERMISSIONS_MAP = {
         "fee.read"
     ],
     "PARENT": [
-        # Read-only Access for Fees, Notifications, Events & Announcements
+        # Student & Guardian Read Access
+        "student.read", "guardian.read",
+        # Academics & Attendance Read Access
+        "attendance.read", "homework.read", "exam.read", "marks.read",
+        "report_card.read", "report_card.download",
+        # Fee Read & Online Payment Access
+        "fee.read", "fee.pay",
+        # Events, Announcements & Notifications Read Access
         "event.read", "announcement.read",
-        "notification.read", "notification.mark_read",
-        "fee.read",
-        "guardian.read"
+        "notification.read", "notification.mark_read"
     ],
     "STUDENT": [],
     "STAFF": [

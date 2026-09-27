@@ -50,6 +50,11 @@ class EventsNotifier extends StateNotifier<EventsState> {
       },
     );
 
+    final currentSchoolId = await _sessionManager.getSchoolId();
+    if (currentSchoolId != schoolId) {
+      return;
+    }
+
     result.when(
       onSuccess: (list) {
         state = EventsSuccess(list);
@@ -114,6 +119,11 @@ class EventDetailNotifier extends StateNotifier<EventDetailState> {
         return SchoolEvent.fromJson(payload['data'] as Map<String, dynamic>);
       },
     );
+
+    final currentSchoolId = await _sessionManager.getSchoolId();
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (event) {

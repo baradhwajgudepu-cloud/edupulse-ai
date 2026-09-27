@@ -62,3 +62,64 @@ class TimetableResponse(TimetableBase):
     deleted_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class TimetableCopyDayRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    class_id: uuid.UUID
+    section_id: uuid.UUID
+    source_day: DayOfWeek
+    target_day: DayOfWeek
+
+class TimetableCopySectionRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    source_class_id: uuid.UUID
+    source_section_id: uuid.UUID
+    target_class_id: uuid.UUID
+    target_section_id: uuid.UUID
+
+class TimetableClearDayRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    class_id: uuid.UUID
+    section_id: uuid.UUID
+    day_of_week: DayOfWeek
+
+class TimetableBulkStatusRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    class_id: uuid.UUID
+    section_id: uuid.UUID
+    status: TimetableStatus
+
+class TimetableConflictCheckRequest(BaseModel):
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    class_id: uuid.UUID
+    section_id: uuid.UUID
+    day_of_week: DayOfWeek
+    period_number: int = Field(..., ge=1)
+    start_time: time
+    end_time: time
+    teacher_id: Optional[uuid.UUID] = None
+    room_id: Optional[uuid.UUID] = None
+    exclude_timetable_id: Optional[uuid.UUID] = None
+
+class TimetableConflictCheckResponse(BaseModel):
+    has_conflict: bool
+    conflict_type: Optional[str] = None
+    conflict_message: Optional[str] = None
+
+class TimetableMoveRequest(BaseModel):
+    source_id: uuid.UUID
+    target_day_of_week: DayOfWeek
+    target_period_number: int = Field(..., ge=1, le=12)
+    school_id: uuid.UUID
+    academic_year_id: uuid.UUID
+
+class TimetableMoveResponse(BaseModel):
+    moved_slot: TimetableResponse
+    swapped_slot: Optional[TimetableResponse] = None
+    message: str
+

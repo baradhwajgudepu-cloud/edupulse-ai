@@ -107,5 +107,128 @@ class AcademicRepository {
       onFailure: (failure) => ApiResult.failure(failure),
     );
   }
+
+  Future<ApiResult<Map<String, dynamic>>> getAcademicPlanningSummary({
+    required String schoolId,
+    required String academicYearId,
+  }) async {
+    return _datasource.getAcademicPlanningSummary(
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+    );
+  }
+
+  Future<ApiResult<AcademicHeatmapData>> getAcademicHeatmap({
+    required String schoolId,
+    String? academicYearId,
+  }) async {
+    final result = await _datasource.getAcademicHeatmap(
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(AcademicHeatmapData.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<List<SyllabusRecoveryPlan>>> getRecoveryPlans({
+    required String schoolId,
+    String? classId,
+    String? sectionId,
+    String? subjectId,
+    String? teacherId,
+    String? status,
+  }) async {
+    final result = await _datasource.getRecoveryPlans(
+      schoolId: schoolId,
+      classId: classId,
+      sectionId: sectionId,
+      subjectId: subjectId,
+      teacherId: teacherId,
+      status: status,
+    );
+    return result.when(
+      onSuccess: (list) => ApiResult.success(
+        list.map((e) => SyllabusRecoveryPlan.fromJson(e)).toList(),
+      ),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<TeacherAbsenceImpact>> getTeacherAbsenceImpact({
+    required String schoolId,
+    required String teacherId,
+    required String absenceDate,
+  }) async {
+    final result = await _datasource.getTeacherAbsenceImpact(
+      schoolId: schoolId,
+      teacherId: teacherId,
+      absenceDate: absenceDate,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(TeacherAbsenceImpact.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<SyllabusRecoveryPlan>> updateRecoveryPlanItem({
+    required String planId,
+    required String itemId,
+    required Map<String, dynamic> data,
+  }) async {
+    final result = await _datasource.updateRecoveryPlanItem(
+      planId: planId,
+      itemId: itemId,
+      data: data,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(SyllabusRecoveryPlan.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<SyllabusRecoveryPlan>> regenerateRecoveryPlan({
+    required String planId,
+    String? reason,
+  }) async {
+    final result = await _datasource.regenerateRecoveryPlan(
+      planId: planId,
+      reason: reason,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(SyllabusRecoveryPlan.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<SyllabusRecoveryPlan>> approveRecoveryPlan({
+    required String planId,
+    String? remarks,
+  }) async {
+    final result = await _datasource.approveRecoveryPlan(
+      planId: planId,
+      remarks: remarks,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(SyllabusRecoveryPlan.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
+
+  Future<ApiResult<SyllabusRecoveryPlan>> rejectRecoveryPlan({
+    required String planId,
+    required String remarks,
+  }) async {
+    final result = await _datasource.rejectRecoveryPlan(
+      planId: planId,
+      remarks: remarks,
+    );
+    return result.when(
+      onSuccess: (json) => ApiResult.success(SyllabusRecoveryPlan.fromJson(json)),
+      onFailure: (failure) => ApiResult.failure(failure),
+    );
+  }
 }
+
 

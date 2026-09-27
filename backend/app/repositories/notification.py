@@ -75,6 +75,7 @@ class NotificationRepository:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         user_roles: List[str],
+        school_id: Optional[uuid.UUID] = None,
         notification_type: Optional[NotificationType] = None,
         priority: Optional[NotificationPriority] = None,
         status: Optional[NotificationStatus] = None,
@@ -82,30 +83,60 @@ class NotificationRepository:
         skip: int = 0,
         limit: int = 100
     ) -> List[Notification]:
-        # Formulate query matching targeted user OR broadcast matching user's roles
-        role_enum_values = []
-        for r in user_roles:
-            try:
-                role_enum_values.append(NotificationTargetRole[r])
-            except KeyError:
-                pass
+        is_staff = any(r in user_roles for r in ["SUPER_ADMIN", "ADMIN", "PRINCIPAL", "STAFF"])
 
         conditions = [
             Notification.tenant_id == tenant_id,
             Notification.deleted_at.is_(None),
             Notification.is_active.is_(True),
-            or_(
-                Notification.scheduled_at.is_(None),
-                Notification.published_at.is_not(None)
-            ),
-            or_(
-                Notification.target_user_id == user_id,
-                and_(
-                    Notification.target_user_id.is_(None),
-                    Notification.target_role.in_(role_enum_values)
+        ]
+
+        if school_id:
+            conditions.append(Notification.school_id == school_id)
+            if not is_staff:
+                role_enum_values = []
+                for r in user_roles:
+                    try:
+                        role_enum_values.append(NotificationTargetRole[r])
+                    except KeyError:
+                        pass
+                conditions.append(
+                    or_(
+                        Notification.target_user_id == user_id,
+                        and_(
+                            Notification.target_user_id.is_(None),
+                            Notification.target_role.in_(role_enum_values)
+                        )
+                    )
+                )
+                conditions.append(
+                    or_(
+                        Notification.scheduled_at.is_(None),
+                        Notification.published_at.is_not(None)
+                    )
+                )
+        else:
+            role_enum_values = []
+            for r in user_roles:
+                try:
+                    role_enum_values.append(NotificationTargetRole[r])
+                except KeyError:
+                    pass
+            conditions.append(
+                or_(
+                    Notification.scheduled_at.is_(None),
+                    Notification.published_at.is_not(None)
                 )
             )
-        ]
+            conditions.append(
+                or_(
+                    Notification.target_user_id == user_id,
+                    and_(
+                        Notification.target_user_id.is_(None),
+                        Notification.target_role.in_(role_enum_values)
+                    )
+                )
+            )
 
         if notification_type:
             conditions.append(Notification.notification_type == notification_type)

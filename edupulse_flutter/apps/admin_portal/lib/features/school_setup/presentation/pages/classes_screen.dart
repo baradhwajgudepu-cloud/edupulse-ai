@@ -83,14 +83,22 @@ class _ClassesScreenState extends ConsumerState<ClassesScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await context.push('${AppRoutes.classes}/new?school_id=$schoolId');
-          _refreshData();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Create Class'),
-      ),
+      floatingActionButton: isMobile
+          ? FloatingActionButton(
+              onPressed: () async {
+                await context.push('${AppRoutes.classes}/new?school_id=$schoolId');
+                _refreshData();
+              },
+              child: const Icon(Icons.add),
+            )
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                await context.push('${AppRoutes.classes}/new?school_id=$schoolId');
+                _refreshData();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Create Class'),
+            ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

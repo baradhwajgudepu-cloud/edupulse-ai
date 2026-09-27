@@ -21,9 +21,9 @@ class MarksRepository:
             Marks.school_id == school_id,
             Marks.tenant_id == tenant_id,
             Marks.deleted_at.is_(None)
-        )
+        ).options(joinedload(Marks.subject))
         result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.unique().scalar_one_or_none()
 
     async def get_by_student_and_schedule(
         self, exam_schedule_id: uuid.UUID, student_id: uuid.UUID, tenant_id: uuid.UUID
@@ -33,9 +33,9 @@ class MarksRepository:
             Marks.student_id == student_id,
             Marks.tenant_id == tenant_id,
             Marks.deleted_at.is_(None)
-        )
+        ).options(joinedload(Marks.subject))
         result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.unique().scalar_one_or_none()
 
     async def get_by_schedule_id(
         self, exam_schedule_id: uuid.UUID, tenant_id: uuid.UUID
@@ -44,9 +44,9 @@ class MarksRepository:
             Marks.exam_schedule_id == exam_schedule_id,
             Marks.tenant_id == tenant_id,
             Marks.deleted_at.is_(None)
-        )
+        ).options(joinedload(Marks.subject))
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def get_class_students_sorted(
         self, class_id: uuid.UUID, section_id: uuid.UUID, school_id: uuid.UUID, tenant_id: uuid.UUID
@@ -71,11 +71,15 @@ class MarksRepository:
         return students
 
     async def get_parent_marks(
-        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID
+        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID, parent_user_id: Optional[uuid.UUID] = None
     ) -> List[Marks]:
         # 1. Fetch Guardian and linked students
+        match_conditions = [Guardian.email == parent_email]
+        if parent_user_id:
+            match_conditions.append(Guardian.user_id == parent_user_id)
+
         stmt_g = select(Guardian).where(
-            Guardian.email == parent_email,
+            or_(*match_conditions),
             Guardian.school_id == school_id,
             Guardian.tenant_id == tenant_id,
             Guardian.deleted_at.is_(None)

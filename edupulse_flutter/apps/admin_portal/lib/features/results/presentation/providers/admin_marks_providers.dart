@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../data/models/admin_marks_models.dart';
@@ -61,6 +62,8 @@ class AdminMarksFiltersNotifier extends StateNotifier<AdminMarksFiltersState> {
   void setExamination(String? examId) {
     state = state.copyWith(
       examinationId: examId,
+      clearClass: true,
+      clearSection: true,
       clearSchedule: true,
     );
   }
@@ -154,7 +157,7 @@ final marksExamSchedulesProvider = FutureProvider.autoDispose.family<List<AdminE
 
   return result.when(
     onSuccess: (schedules) => schedules,
-    onFailure: (failure) => [],
+    onFailure: (failure) => throw Exception(failure.message),
   );
 });
 
@@ -587,8 +590,8 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
         final savedCount = data['saved_count'] ?? 0;
         final errors = (data['errors'] as List?)?.map((e) => e.toString()).toList() ?? [];
 
-        final successMsg = 'Imported marks for $savedCount students successfully.' +
-            (errors.isNotEmpty ? ' (${errors.length} warning(s))' : '');
+        final warnMsg = errors.isNotEmpty ? ' (${errors.length} warning(s))' : '';
+        final successMsg = 'Imported marks for $savedCount students successfully.$warnMsg';
 
         state = state.copyWith(
           isSaving: false,
@@ -656,6 +659,11 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
     required String examId,
     required List<int> fileBytes,
     required String fileName,
+    List<String>? classIds,
+    List<String>? sectionIds,
+    String? academicYearId,
+    String? scope,
+    String? duplicateBehavior,
   }) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null) {
@@ -669,9 +677,16 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
       'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
     });
 
+    final queryParams = <String, dynamic>{'school_id': schoolId};
+    if (classIds != null && classIds.isNotEmpty) queryParams['class_ids'] = classIds.join(',');
+    if (sectionIds != null && sectionIds.isNotEmpty) queryParams['section_ids'] = sectionIds.join(',');
+    if (academicYearId != null && academicYearId.isNotEmpty) queryParams['academic_year_id'] = academicYearId;
+    if (scope != null && scope.isNotEmpty) queryParams['scope'] = scope;
+    if (duplicateBehavior != null && duplicateBehavior.isNotEmpty) queryParams['duplicate_behavior'] = duplicateBehavior;
+
     final result = await apiClient.post(
       '/marks/examinations/$examId/bulk-upload-preview',
-      queryParameters: {'school_id': schoolId},
+      queryParameters: queryParams,
       data: formData,
       mapper: (json) => ExamWideUploadPreviewModel.fromJson(json['data'] as Map<String, dynamic>),
     );
@@ -695,6 +710,11 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
     required String examId,
     required List<ExamWideUploadRowModel> rows,
     bool autoApprove = false,
+    String duplicateBehavior = 'UPDATE_EXISTING',
+    List<String>? classIds,
+    List<String>? sectionIds,
+    String? academicYearId,
+    String? scope,
   }) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null) {
@@ -709,6 +729,11 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
       'school_id': schoolId,
       'rows': rows.map((r) => r.toJson()).toList(),
       'auto_approve': autoApprove,
+      'duplicate_behavior': duplicateBehavior,
+      if (classIds != null && classIds.isNotEmpty) 'class_ids': classIds,
+      if (sectionIds != null && sectionIds.isNotEmpty) 'section_ids': sectionIds,
+      if (academicYearId != null) 'academic_year_id': academicYearId,
+      if (scope != null) 'scope': scope,
     };
 
     final result = await apiClient.post(
@@ -780,16 +805,25 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
     );
   }
 
-  Future<void> downloadExamWideTemplate({required String examId, String examName = 'Examination'}) async {
+  Future<void> downloadExamWideTemplate({
+    required String examId,
+    String examName = 'Examination',
+    List<String>? classIds,
+    List<String>? sectionIds,
+  }) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null) {
       throw Exception('Please select a school first.');
     }
 
     final apiClient = _ref.read(apiClientProvider);
+    final queryParams = <String, dynamic>{'school_id': schoolId};
+    if (classIds != null && classIds.isNotEmpty) queryParams['class_ids'] = classIds.join(',');
+    if (sectionIds != null && sectionIds.isNotEmpty) queryParams['section_ids'] = sectionIds.join(',');
+
     final result = await apiClient.get<List<int>>(
       '/marks/examinations/$examId/template',
-      queryParameters: {'school_id': schoolId},
+      queryParameters: queryParams,
       options: Options(responseType: ResponseType.bytes),
       mapper: (data) {
         if (data is List<int>) return data;
@@ -809,6 +843,125 @@ class AdminMarksBoardNotifier extends StateNotifier<AdminMarksBoardState> {
         state = state.copyWith(
           errorMessage: 'Failed to download exam template: ${failure.message}',
         );
+      },
+    );
+  }
+
+  Future<void> downloadClassAllSubjectsTemplate({
+    required String examId,
+    required String classId,
+    required String sectionId,
+    String? className,
+    String? sectionName,
+  }) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) {
+      throw Exception('Please select a school first.');
+    }
+
+    final apiClient = _ref.read(apiClientProvider);
+    final result = await apiClient.get<List<int>>(
+      '/marks/examinations/$examId/class-all-subjects-template',
+      queryParameters: {
+        'class_id': classId,
+        'section_id': sectionId,
+        'school_id': schoolId,
+      },
+      options: Options(responseType: ResponseType.bytes),
+      mapper: (data) {
+        if (data is List<int>) return data;
+        if (data is List) return data.cast<int>();
+        return <int>[];
+      },
+    );
+
+    result.when(
+      onSuccess: (bytes) {
+        final cClean = (className ?? 'Class').replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+        final sClean = (sectionName ?? 'Section').replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+        final filename = '${cClean}_${sClean}_All_Subjects_Marks_Template.xlsx';
+        const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        downloadBytes(filename, bytes, mimeType);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(
+          errorMessage: 'Failed to download template: ${failure.message}',
+        );
+        throw Exception(failure.message);
+      },
+    );
+  }
+
+  Future<ClassAllSubjectsUploadResultModel> uploadClassAllSubjectsMarks({
+    required String examId,
+    required String classId,
+    required String sectionId,
+    required List<int> fileBytes,
+    required String fileName,
+  }) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) {
+      throw Exception('Please select a school first.');
+    }
+
+    state = state.copyWith(isSaving: true, clearError: true, clearSuccess: true);
+
+    final tenantId = _ref.read(activeTenantIdProvider);
+    final filters = _ref.read(adminMarksFiltersProvider);
+    final academicYearId = filters.academicYearId;
+    debugPrint('''
+[MARKS UPLOAD TRACE]
+timestamp: ${DateTime.now().toUtc().toIso8601String()}
+selected academic year ID: $academicYearId
+selected examination ID: $examId
+selected class ID: $classId
+selected section ID: $sectionId
+selected school ID: $schoolId
+selected tenant ID: $tenantId
+file name: $fileName
+file size: ${fileBytes.length} bytes
+endpoint URL: /marks/examinations/$examId/upload-class-all-subjects
+HTTP method: POST
+multipart field names: ['file']
+''');
+
+    final apiClient = _ref.read(apiClientProvider);
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+    });
+
+    final result = await apiClient.post(
+      '/marks/examinations/$examId/upload-class-all-subjects',
+      queryParameters: {
+        'class_id': classId,
+        'section_id': sectionId,
+        'school_id': schoolId,
+      },
+      data: formData,
+      mapper: (json) => ClassAllSubjectsUploadResultModel.fromJson(
+        json['data'] as Map<String, dynamic>,
+      ),
+    );
+
+    return result.when(
+      onSuccess: (summary) async {
+        if (state.activeSchedule != null) {
+          await loadMarksForSchedule(state.activeSchedule!);
+        }
+        final warnMsg = summary.validationErrors.isNotEmpty ? ' (${summary.validationErrors.length} validation warning(s))' : '';
+        final successMsg = 'Successfully processed marks for ${summary.totalStudentsProcessed} students across ${summary.totalSubjectsDetected} subjects.$warnMsg';
+        state = state.copyWith(
+          isSaving: false,
+          successMessage: successMsg,
+        );
+        return summary;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(
+          isSaving: false,
+          errorMessage: 'Failed to upload marks: ${failure.message}',
+        );
+        throw Exception(failure.message);
       },
     );
   }

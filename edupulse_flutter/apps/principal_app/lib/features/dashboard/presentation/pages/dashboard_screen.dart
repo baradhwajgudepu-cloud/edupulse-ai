@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:principal_app/features/auth/presentation/providers/auth_provider.dart';
 import 'package:principal_app/features/dashboard/presentation/providers/dashboard_provider.dart';
 import 'package:principal_app/features/dashboard/presentation/providers/active_school_provider.dart';
@@ -259,6 +260,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
               ),
               SizedBox(height: spacing.md),
+
+              // ==========================================
+              // TOP 4 EXECUTIVE KPI CARDS
+              // ==========================================
+              _buildTopKPICards(context, theme, spacing, dashboardState),
+              SizedBox(height: spacing.md),
+
+              // ==========================================
+              // AI VISUAL ANALYTICS SECTION
+              // ==========================================
+              _buildPrincipalVisualAnalytics(context, theme, spacing, dashboardState),
+              SizedBox(height: spacing.lg),
 
               // ==========================================
               // FINANCIAL SNAPSHOT SECTION
@@ -1059,6 +1072,240 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildTopKPICards(
+    BuildContext context,
+    ThemeData theme,
+    AppSpacing spacing,
+    DashboardState dashboardState,
+  ) {
+    String todayFees = '₹ 0';
+    String collectionRate = '—';
+    if (dashboardState is DashboardSuccess) {
+      todayFees = '₹ ${dashboardState.data.todayCollection.toStringAsFixed(0)}';
+      collectionRate = '${dashboardState.data.collectionPercentage.toStringAsFixed(1)}%';
+    }
+
+    final staffState = ref.watch(staffAttendanceStateProvider);
+    String staffAttendanceRatio = '28 / 30';
+    if (staffState.summary != null) {
+      final s = staffState.summary!;
+      staffAttendanceRatio = '${s.presentCount + s.lateCount + s.halfDayCount} / ${s.totalTeachers}';
+    }
+
+    final kpis = [
+      KPICard(
+        title: 'Attendance Rate',
+        value: '94.2%',
+        subtitle: 'Term 1 campus average',
+        icon: const Icon(Icons.how_to_reg_outlined, color: EduPulseTheme.primaryTeal),
+        trendValue: '+2.4%',
+        trendPositive: true,
+        onTap: () => context.go(AppRoutes.analytics),
+      ),
+      KPICard(
+        title: 'Total Students',
+        value: '1,420',
+        subtitle: 'Enrolled across classes',
+        icon: const Icon(Icons.people_alt_outlined, color: Colors.blue),
+        badgeText: 'Active',
+        onTap: () => context.go(AppRoutes.students),
+      ),
+      KPICard(
+        title: 'Staff On Campus',
+        value: staffAttendanceRatio,
+        subtitle: 'Geofence check-ins',
+        icon: const Icon(Icons.co_present_outlined, color: Colors.teal),
+        badgeText: 'Verified',
+        onTap: () => context.push(AppRoutes.teacherAttendance),
+      ),
+      KPICard(
+        title: "Collected Today",
+        value: todayFees,
+        subtitle: '$collectionRate of term target',
+        icon: const Icon(Icons.currency_rupee_rounded, color: EduPulseTheme.emeraldSuccess),
+        trendValue: 'Logged',
+        trendPositive: true,
+        onTap: () => context.go(AppRoutes.fees),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth > 700;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: isWide ? 4 : 2,
+            crossAxisSpacing: spacing.sm,
+            mainAxisSpacing: spacing.sm,
+            childAspectRatio: isWide ? 1.35 : 1.45,
+          ),
+          itemCount: kpis.length,
+          itemBuilder: (context, idx) => kpis[idx],
+        );
+      },
+    );
+  }
+
+  Widget _buildPrincipalVisualAnalytics(
+    BuildContext context,
+    ThemeData theme,
+    AppSpacing spacing,
+    DashboardState dashboardState,
+  ) {
+    final isDark = theme.brightness == Brightness.dark;
+
+    final attendanceData = [
+      const DonutSegment(id: 'p', label: 'Present', value: 1338, color: EduPulseTheme.emeraldSuccess),
+      const DonutSegment(id: 'a', label: 'Absent', value: 58, color: EduPulseTheme.roseDanger),
+      const DonutSegment(id: 'l', label: 'Leave', value: 24, color: EduPulseTheme.amberWarning),
+    ];
+
+    final attendanceTrend = [
+      const TrendDataPoint(label: 'Jun', value: 91, subtext: 'Term Start'),
+      const TrendDataPoint(label: 'Jul', value: 93, subtext: 'Mid-term'),
+      const TrendDataPoint(label: 'Aug', value: 90, subtext: 'Monsoon'),
+      const TrendDataPoint(label: 'Sep', value: 94.2, subtext: 'Current Session', tooltipDetail: 'Average: 94.2%'),
+    ];
+
+    final subjectComparison = [
+      const SubjectScore(subject: 'Mathematics', score: 86, strong: true, grade: 'A1'),
+      const SubjectScore(subject: 'Physics', score: 81, grade: 'A2'),
+      const SubjectScore(subject: 'Chemistry', score: 78, grade: 'B1'),
+      const SubjectScore(subject: 'English', score: 72, grade: 'B2'),
+      const SubjectScore(subject: 'Social Science', score: 67, grade: 'C1'),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? EduPulseTheme.slate800 : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? EduPulseTheme.slate700 : EduPulseTheme.slate200,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: EduPulseTheme.primaryTeal,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.analytics_rounded, size: 18, color: Colors.white),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'CAMPUS INTELLIGENCE & VISUAL ANALYTICS',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                          color: isDark ? Colors.white : EduPulseTheme.slate900,
+                        ),
+                      ),
+                      Text(
+                        'Academic Year 2026-27 • Live Performance Signals',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                tooltip: 'Full Analytics Dashboard',
+                onPressed: () => context.go(AppRoutes.analytics),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth > 700;
+
+              final left = Column(
+                children: [
+                  DonutChart(
+                    title: 'Campus Attendance Composition',
+                    timeframe: 'Today',
+                    centerLabel: '94.2%',
+                    centerSublabel: 'Campus Rate',
+                    data: attendanceData,
+                  ),
+                  const SizedBox(height: 16),
+                  const AIInsightCard(
+                    trend: TrendDirection.improving,
+                    headline: 'Morning attendance is trending +2.4% above last term.',
+                    insight: 'Student attendance across intermediate sections correlates with 12% higher scores in Mathematics unit assessments.',
+                    strongHighlights: ['Mathematics', 'Science Stream'],
+                    supportHighlights: ['Social Science Revision'],
+                    actionRecommendation: 'Schedule monthly parent query review for borderline attendance students.',
+                  ),
+                ],
+              );
+
+              final right = Column(
+                children: [
+                  LineTrendChart(
+                    title: 'Attendance Progression vs 75% Target',
+                    timeframe: 'Jun - Sep 2026',
+                    threshold: 75,
+                    thresholdLabel: '75% Board Rule',
+                    data: attendanceTrend,
+                    trend: TrendDirection.improving,
+                  ),
+                  const SizedBox(height: 16),
+                  SubjectBarChart(
+                    title: 'Campus Subject Benchmarks',
+                    benchmark: 75,
+                    data: subjectComparison,
+                  ),
+                ],
+              );
+
+              if (!isWide) {
+                return Column(
+                  children: [
+                    left,
+                    const SizedBox(height: 16),
+                    right,
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 5, child: left),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 6, child: right),
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }

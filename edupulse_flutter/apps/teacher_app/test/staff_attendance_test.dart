@@ -4,10 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:teacher_app/features/staff_attendance/domain/entities/staff_attendance_entity.dart';
+import 'package:teacher_app/features/staff_attendance/domain/entities/school_geofence_entity.dart';
 import 'package:teacher_app/features/staff_attendance/domain/repositories/staff_attendance_repository.dart';
 import 'package:teacher_app/features/staff_attendance/presentation/providers/staff_attendance_provider.dart';
 import 'package:teacher_app/features/staff_attendance/presentation/pages/staff_attendance_screen.dart';
 import 'package:teacher_app/features/staff_attendance/presentation/widgets/staff_attendance_status_card.dart';
+import 'package:teacher_app/features/staff_attendance/presentation/widgets/geofence_status_banner.dart';
+import 'package:teacher_app/core/providers/school_context_provider.dart';
 
 // Mock Geolocator Platform implementation
 class MockGeolocatorPlatform extends GeolocatorPlatform {
@@ -37,8 +40,8 @@ class MockGeolocatorPlatform extends GeolocatorPlatform {
     }
     if (mockPosition == null) {
       return Position(
-        longitude: 12.9716,
-        latitude: 77.5946,
+        longitude: 77.5946,
+        latitude: 12.9716,
         timestamp: DateTime.now(),
         accuracy: 10,
         altitude: 0,
@@ -66,6 +69,27 @@ class FakeStaffAttendanceRepository implements StaffAttendanceRepository {
   StaffAttendanceEntity? todayStatus;
   ApiFailure? customFailure;
 
+  SchoolGeofenceEntity? mockGeofence = const SchoolGeofenceEntity(
+    schoolId: 'school_123',
+    enabled: true,
+    latitude: 12.9716,
+    longitude: 77.5946,
+    radiusMeters: 100,
+    isConfigured: true,
+  );
+
+  @override
+  Future<ApiResult<SchoolGeofenceEntity>> getSchoolGeofence(String schoolId) async {
+    if (mockGeofence != null) {
+      return ApiResult.success(mockGeofence!);
+    }
+    return const ApiResult.failure(ApiFailure(
+      message: "Geofence not configured",
+      type: ApiFailureType.validation,
+      statusCode: 400,
+    ));
+  }
+
   @override
   Future<ApiResult<StaffAttendanceEntity?>> getTodayStatus() async {
     getStatusCallCount++;
@@ -83,6 +107,7 @@ class FakeStaffAttendanceRepository implements StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkIn({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) async {
@@ -115,6 +140,7 @@ class FakeStaffAttendanceRepository implements StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkOut({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) async {
@@ -163,18 +189,22 @@ void main() {
     fakeRepository = FakeStaffAttendanceRepository();
   });
 
-  ProviderContainer createContainer() {
+  ProviderContainer createContainer({String? schoolId = 'school_123'}) {
     return ProviderContainer(
       overrides: [
         staffAttendanceRepositoryProvider.overrideWithValue(fakeRepository),
+        if (schoolId != null)
+          activeSchoolIdProvider.overrideWith((ref) => schoolId),
       ],
     );
   }
 
-  Widget createTestWidget() {
+  Widget createTestWidget({String? schoolId = 'school_123'}) {
     return ProviderScope(
       overrides: [
         staffAttendanceRepositoryProvider.overrideWithValue(fakeRepository),
+        if (schoolId != null)
+          activeSchoolIdProvider.overrideWith((ref) => schoolId),
       ],
       child: const MaterialApp(
         home: StaffAttendanceScreen(),
@@ -288,6 +318,73 @@ void main() {
     final state = container.read(staffAttendanceStateProvider);
     expect(state, isA<StaffAttendanceError>());
     expect((state as StaffAttendanceError).message, "Outside Boundary Limit");
+  });
+
+  test('checkIn with mocked GPS location is rejected when geofence enabled', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    container.read(staffAttendanceStateProvider.notifier).state = const StaffAttendanceNotCheckedIn();
+    mockGeolocator.mockPosition = Position(
+      longitude: 77.5946,
+      latitude: 12.9716,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: true,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.checkIn();
+
+    final state = container.read(staffAttendanceStateProvider);
+    expect(state, isA<StaffAttendanceError>());
+    expect((state as StaffAttendanceError).message, contains("Mocked GPS location detected"));
+    expect(fakeRepository.checkInCallCount, 0);
+  });
+
+  test('checkOut with mocked GPS location is rejected when geofence enabled', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    final checkInEntity = StaffAttendanceEntity(
+      id: "att_123",
+      tenantId: "tenant_abc",
+      teacherId: "teacher_xyz",
+      schoolId: "school_123",
+      attendanceDate: "2026-08-18",
+      checkInTime: "2026-08-18T09:00:00Z",
+      isMockedLocation: false,
+      status: "CHECKED_IN",
+    );
+    container.read(staffAttendanceStateProvider.notifier).state = StaffAttendanceCheckedIn(checkInEntity);
+
+    mockGeolocator.mockPosition = Position(
+      longitude: 77.5946,
+      latitude: 12.9716,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: true,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.checkOut();
+
+    final state = container.read(staffAttendanceStateProvider);
+    expect(state, isA<StaffAttendanceError>());
+    expect((state as StaffAttendanceError).message, contains("Mocked GPS location detected"));
+    expect(fakeRepository.checkOutCallCount, 0);
   });
 
   test('checkIn location service disabled error returns correct error', () async {
@@ -423,5 +520,218 @@ void main() {
     expect(find.text("Attendance Completed"), findsOneWidget);
     expect(find.text("Check In"), findsNothing);
     expect(find.text("Check Out"), findsNothing);
+  });
+
+  test('Geofencing enabled: check-in outside radius is blocked on client', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    // User is ~2.2 km away from school
+    mockGeolocator.mockPosition = Position(
+      latitude: 12.9916,
+      longitude: 77.5946,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: false,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.fetchTodayStatus();
+    await notifier.checkIn();
+
+    // CheckIn call was blocked: repository.checkIn was never called
+    expect(fakeRepository.checkInCallCount, 0);
+    final currentState = container.read(staffAttendanceStateProvider);
+    expect(currentState, isA<StaffAttendanceError>());
+    final errorState = currentState as StaffAttendanceError;
+    expect(errorState.message, contains('outside the school attendance location'));
+    expect(errorState.message, contains('Allowed: 100m'));
+  });
+
+  test('Geofencing enabled: check-in inside radius succeeds', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    // User is at school (0 meters away)
+    mockGeolocator.mockPosition = Position(
+      latitude: 12.9716,
+      longitude: 77.5946,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: false,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.fetchTodayStatus();
+    await notifier.checkIn();
+
+    expect(fakeRepository.checkInCallCount, 1);
+    expect(container.read(staffAttendanceStateProvider), isA<StaffAttendanceCheckedIn>());
+  });
+
+  test('Geofencing disabled: check-in outside radius is allowed', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    // School geofencing is disabled
+    fakeRepository.mockGeofence = const SchoolGeofenceEntity(
+      schoolId: 'school_123',
+      enabled: false,
+      latitude: 12.9716,
+      longitude: 77.5946,
+      radiusMeters: 100,
+      isConfigured: true,
+    );
+
+    // User is ~2.2 km away
+    mockGeolocator.mockPosition = Position(
+      latitude: 12.9916,
+      longitude: 77.5946,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: false,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.fetchTodayStatus();
+    await notifier.checkIn();
+
+    // Should succeed and call checkIn
+    expect(fakeRepository.checkInCallCount, 1);
+    expect(container.read(staffAttendanceStateProvider), isA<StaffAttendanceCheckedIn>());
+  });
+
+  test('Geofencing enabled: check-out outside radius is blocked, preserves checked-in data', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    fakeRepository.todayStatus = StaffAttendanceEntity(
+      id: "att_123",
+      tenantId: "tenant_abc",
+      teacherId: "teacher_xyz",
+      schoolId: "school_123",
+      attendanceDate: "2026-08-18",
+      checkInTime: "2026-08-18T09:30:00Z",
+      checkInDistanceMeters: 5.0,
+      isMockedLocation: false,
+      status: "CHECKED_IN",
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.fetchTodayStatus();
+    expect(container.read(staffAttendanceStateProvider), isA<StaffAttendanceCheckedIn>());
+
+    // Move outside radius (~2.2 km away)
+    mockGeolocator.mockPosition = Position(
+      latitude: 12.9916,
+      longitude: 77.5946,
+      timestamp: DateTime.now(),
+      accuracy: 10,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: false,
+    );
+
+    await notifier.checkOut();
+
+    // Check-out blocked: repository.checkOut was never called
+    expect(fakeRepository.checkOutCallCount, 0);
+    final state = container.read(staffAttendanceStateProvider);
+    expect(state, isA<StaffAttendanceError>());
+    final err = state as StaffAttendanceError;
+    expect(err.message, contains('outside the school attendance location'));
+    expect(err.existingData, isNotNull);
+    expect(err.existingData!.status, equals('CHECKED_IN'));
+  });
+
+  test('GPS accuracy > 100m is rejected', () async {
+    final container = createContainer();
+    addTearDown(container.dispose);
+
+    mockGeolocator.mockPosition = Position(
+      latitude: 12.9716,
+      longitude: 77.5946,
+      timestamp: DateTime.now(),
+      accuracy: 250, // inaccurate fix
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      isMocked: false,
+    );
+
+    final notifier = container.read(staffAttendanceStateProvider.notifier);
+    await notifier.fetchTodayStatus();
+    await notifier.checkIn();
+
+    expect(fakeRepository.checkInCallCount, 0);
+    final state = container.read(staffAttendanceStateProvider);
+    expect(state, isA<StaffAttendanceError>());
+    expect((state as StaffAttendanceError).message, contains('GPS accuracy is too low'));
+  });
+
+  testWidgets('Geofence disabled displays informational banner', (tester) async {
+    fakeRepository.todayStatus = null;
+    fakeRepository.mockGeofence = const SchoolGeofenceEntity(
+      schoolId: 'school_123',
+      enabled: false,
+      latitude: 12.9716,
+      longitude: 77.5946,
+      radiusMeters: 100,
+      isConfigured: true,
+    );
+
+    await tester.pumpWidget(createTestWidget());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Attendance is not location restricted (Geofence Disabled).'), findsOneWidget);
+    expect(find.textContaining('Location restriction is disabled'), findsOneWidget);
+  });
+
+  testWidgets('Geofence unconfigured displays error banner and disables check-in', (tester) async {
+    fakeRepository.todayStatus = null;
+    fakeRepository.mockGeofence = const SchoolGeofenceEntity(
+      schoolId: 'school_123',
+      enabled: true,
+      latitude: null,
+      longitude: null,
+      radiusMeters: 100,
+      isConfigured: false,
+    );
+
+    await tester.pumpWidget(createTestWidget());
+    await tester.pumpAndSettle();
+
+    expect(find.text('School attendance location is not configured. Sign-in cannot be verified.'), findsOneWidget);
+    expect(find.textContaining('School attendance geofence coordinates are not configured'), findsOneWidget);
+
+    // Tapping Check In should not trigger checkInCallCount because button is disabled
+    await tester.tap(find.text('Check In'));
+    await tester.pumpAndSettle();
+    expect(fakeRepository.checkInCallCount, 0);
   });
 }

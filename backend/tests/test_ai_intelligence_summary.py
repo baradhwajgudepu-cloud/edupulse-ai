@@ -24,10 +24,20 @@ async def test_ai_intelligence_summary_endpoint():
         if not tenant:
             pytest.skip("No test tenant available")
 
-        res_u = await session.execute(select(User).where(User.tenant_id == tenant.id).limit(1))
+        from app.models.role import Role
+        res_u = await session.execute(
+            select(User)
+            .join(User.roles)
+            .where(User.tenant_id == tenant.id, Role.code.in_(["ADMIN", "PRINCIPAL", "SUPER_ADMIN"]))
+            .limit(1)
+        )
         user = res_u.scalar_one_or_none()
         if not user:
-            pytest.skip("No test user available")
+            # Fallback to superuser
+            res_u = await session.execute(select(User).where(User.is_superuser == True).limit(1))
+            user = res_u.scalar_one_or_none()
+        if not user:
+            pytest.skip("No test user with reports access available")
 
         # Generate token
         token = create_access_token(

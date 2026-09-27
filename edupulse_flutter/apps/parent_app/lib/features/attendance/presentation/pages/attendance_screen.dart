@@ -33,26 +33,19 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   void _loadRecords({bool isRefresh = false}) {
     final authState = ref.read(authStateProvider);
     if (authState is Authenticated) {
-      final schoolId = authState.user.schools.firstOrNull ?? '16730f87-bf8d-44e0-acf9-4b055a778b58';
-      
-      String studentId = 'a8bc2968-3d0d-431d-ab06-b90f518a0801';
-      String academicYearId = '113282c1-9831-4e54-a00e-1746d3c2829d';
-      
-      final dbState = ref.read(dashboardStateProvider);
-      if (dbState is DashboardSuccess) {
-        final selected = dbState.data.selectedStudent;
-        if (selected != null) {
-          studentId = selected.id;
-          academicYearId = selected.academicYearId;
-        }
-      }
+      final schoolId = authState.user.schools.firstOrNull;
+      if (schoolId == null) return;
 
-      ref.read(attendanceStateProvider.notifier).fetchAttendance(
-            studentId: studentId,
-            academicYearId: academicYearId,
-            schoolId: schoolId,
-            isRefresh: isRefresh,
-          );
+      final dbState = ref.read(dashboardStateProvider);
+      if (dbState is DashboardSuccess && dbState.data.selectedStudent != null) {
+        final selected = dbState.data.selectedStudent!;
+        ref.read(attendanceStateProvider.notifier).fetchAttendance(
+              studentId: selected.id,
+              academicYearId: selected.academicYearId,
+              schoolId: schoolId,
+              isRefresh: isRefresh,
+            );
+      }
     }
   }
 
@@ -67,6 +60,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final spacing =
         theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
+
+    ref.listen(dashboardStateProvider, (previous, next) {
+      if (next is DashboardSuccess && next.data.selectedStudent != null) {
+        _loadRecords();
+      }
+    });
 
     ref.listen<AttendanceState>(attendanceStateProvider, (previous, next) {
       if (next is AttendanceSuccess && next.isFromCache) {

@@ -13,6 +13,7 @@ class ReportCardGenerateRequest(BaseModel):
     school_id: uuid.UUID
     examination_id: Optional[uuid.UUID] = None
     academic_year_id: Optional[uuid.UUID] = None
+    report_card_type: Optional[str] = "CONSOLIDATED"
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "generated_from_live_data": True,
         "show_attendance": True,
@@ -26,11 +27,18 @@ class ReportCardClassGenerateRequest(BaseModel):
     school_id: uuid.UUID
     examination_id: Optional[uuid.UUID] = None
     academic_year_id: Optional[uuid.UUID] = None
+    report_card_type: Optional[str] = "CONSOLIDATED"
     settings: Dict[str, Any] = Field(default_factory=lambda: {
         "generated_from_live_data": True,
         "show_attendance": True,
         "language": "en"
     })
+
+class ReportCardRejectRequest(BaseModel):
+    rejection_reason: str = Field(..., min_length=3, max_length=500)
+
+class ReportCardUnpublishRequest(BaseModel):
+    reason: Optional[str] = Field("Reopened for correction", max_length=500)
 
 # ==================================================
 # Database Entity Response Schema
@@ -64,7 +72,9 @@ class ReportCardResponse(BaseModel):
 # Dynamic Preview & Summary Schemas
 # ==================================================
 class ReportCardSubjectMarkRow(BaseModel):
+    subject_id: Optional[uuid.UUID] = None
     subject_name: str
+    subject_code: Optional[str] = None
     maximum_marks: int
     marks_obtained: Optional[float] = None
     result_status: str
@@ -86,12 +96,19 @@ class ReportCardPreviewResponse(BaseModel):
     overall_percentage: float
     overall_grade: str
     promotion_status: str
+    class_rank: Optional[str] = None
+    section_rank: Optional[str] = None
     
     subject_marks: List[ReportCardSubjectMarkRow]
     teacher_remarks: Optional[str] = None
     principal_remarks: Optional[str] = None
     ai_narrative: str
     
+    report_card_type: Optional[str] = "CONSOLIDATED"
+    calculation_method: Optional[str] = None
+    examination_weightages: Optional[Dict[str, float]] = None
+    consolidated_subject_marks: Optional[List[Dict[str, Any]]] = None
+
     is_valid: bool = True
     missing_reasons: List[str] = []
 
@@ -138,7 +155,9 @@ class VerificationResponse(BaseModel):
 # Student Academic History Schemas
 # ==================================================
 class ExamSubjectMark(BaseModel):
+    subject_id: Optional[uuid.UUID] = None
     subject_name: str
+    subject_code: Optional[str] = None
     max_marks: int
     marks_obtained: Optional[float] = None
     grade: str

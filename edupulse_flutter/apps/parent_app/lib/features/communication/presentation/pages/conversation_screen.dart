@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_models/edupulse_models.dart';
-import 'package:go_router/go_router.dart';
 import '../providers/communication_provider.dart';
 import 'package:edupulse_api/edupulse_api.dart';
-import 'package:edupulse_config/edupulse_config.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_auth/edupulse_auth.dart';
+import 'package:edupulse_files/edupulse_files.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
+import 'package:parent_app/features/homework/presentation/providers/homework_provider.dart';
 
 class ConversationScreen extends ConsumerStatefulWidget {
   final String requestId;
@@ -56,6 +58,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         if (file.bytes != null) {
           final sizeMb = file.size / (1024 * 1024);
           if (sizeMb > 10.0) {
+            if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('File size exceeds the 10MB limit.')),
             );
@@ -69,6 +72,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         }
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking file: $e')),
       );
@@ -161,13 +165,63 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   Future<void> _downloadFile(CommunicationAttachment att) async {
     final config = ref.read(buildConfigProvider);
-    final url = '${config.apiBaseUrl}${att.fileUrl}';
-    
-    // We can open the URL in browser or download.
-    // For simplicity in UI, we can launch the url or show a dialog.
-    // We'll show a snackbar showing simulated download path
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Downloading ${att.fileName} from $url...')),
+    final session = ref.read(sessionManagerProvider);
+    final token = await session.getAccessToken();
+
+    final cleanBaseUrl = config.apiBaseUrl.endsWith('/')
+        ? config.apiBaseUrl.substring(0, config.apiBaseUrl.length - 1)
+        : config.apiBaseUrl;
+    final fileUrl = att.fileUrl.startsWith('/') ? att.fileUrl : '/${att.fileUrl}';
+    final fullUrl = att.fileUrl.startsWith('http') ? att.fileUrl : '$cleanBaseUrl$fileUrl';
+
+    final tenantId = ref.read(activeTenantIdProvider) ?? config.tenantId;
+    final authState = ref.read(authStateProvider);
+    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '';
+
+    final headers = {
+      'Authorization': 'Bearer $token',
+      'X-Tenant-ID': tenantId,
+      'X-School-ID': schoolId,
+    };
+
+    final downloadUseCase = ref.read(downloadAttachmentUseCaseProvider);
+    final result = await downloadUseCase(
+      url: fullUrl,
+      filename: att.fileName,
+      headers: headers,
+    );
+
+    if (!mounted) return;
+
+    result.when(
+      onSuccess: (path) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${att.fileName} downloaded successfully'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => FileViewer(
+                      path: path,
+                      title: att.fileName,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+      onFailure: (failure) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: ${failure.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      },
     );
   }
 

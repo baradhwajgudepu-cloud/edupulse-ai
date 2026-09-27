@@ -79,10 +79,14 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
     final session = ref.read(sessionManagerProvider);
     final token = await session.getAccessToken();
 
-    final url = '${config.apiBaseUrl}/fees/receipts/$receiptNumber/download';
+    final cleanBaseUrl = config.apiBaseUrl.endsWith('/')
+        ? config.apiBaseUrl.substring(0, config.apiBaseUrl.length - 1)
+        : config.apiBaseUrl;
+    final url = '$cleanBaseUrl/fees/receipts/$receiptNumber/download';
+    final tenantId = ref.read(activeTenantIdProvider) ?? config.tenantId;
     final headers = {
       'Authorization': 'Bearer $token',
-      'X-Tenant-ID': config.tenantId,
+      'X-Tenant-ID': tenantId,
       'X-School-ID': schoolId,
     };
 
@@ -405,17 +409,47 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
       decimalDigits: 0,
     );
 
-    // Get selected student from dashboard state
-    String studentId = 'a8bc2968-3d0d-431d-ab06-b90f518a0801';
-    String studentName = 'Rahul Sharma';
     final dbState = ref.watch(dashboardStateProvider);
-    if (dbState is DashboardSuccess) {
-      final selected = dbState.data.selectedStudent;
-      if (selected != null) {
-        studentId = selected.id;
-        studentName = selected.fullName;
+    if (dbState is! DashboardSuccess || dbState.data.selectedStudent == null) {
+      if (dbState is DashboardLoading || dbState is DashboardInitial) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Fees Ledger'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          body: const Center(child: CircularProgressIndicator()),
+        );
       }
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Fees Ledger'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.person_off_outlined, size: 64, color: theme.colorScheme.outline),
+              SizedBox(height: spacing.md),
+              Text(
+                'No student selected',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      );
     }
+
+    final selected = dbState.data.selectedStudent!;
+    final studentId = selected.id;
+    final studentName = selected.fullName;
 
     final screenDataAsync = ref.watch(feesScreenDataProvider(studentId));
 
@@ -462,7 +496,7 @@ class _FeesScreenState extends ConsumerState<FeesScreen> {
           final academicYearId = assignments.isNotEmpty ? assignments.first['academic_year_id'] as String : '';
           
           final authState = ref.watch(authStateProvider);
-          final schoolId = authState is Authenticated ? (authState.user.schools.firstOrNull ?? '16730f87-bf8d-44e0-acf9-4b055a778b58') : '16730f87-bf8d-44e0-acf9-4b055a778b58';
+          final schoolId = authState is Authenticated ? (authState.user.schools.firstOrNull ?? '') : '';
 
           if (assignments.isEmpty && payments.isEmpty) {
             return Center(

@@ -79,6 +79,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
           ),
           IconButton(
+            icon: const CircleAvatar(
+              radius: 14,
+              child: Icon(Icons.person, size: 18),
+            ),
+            tooltip: 'Profile & Settings',
+            onPressed: () => context.push(AppRoutes.profile),
+          ),
+          IconButton(
             icon: const Icon(Icons.logout),
             tooltip: local?.translate('logout') ?? 'Logout',
             onPressed: () {
@@ -222,29 +230,129 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (data.students.length > 1) ...[
-                    DropdownButtonFormField<StudentProfile>(
-                      initialValue: data.selectedStudent,
-                      items: data.students.map((student) {
-                        return DropdownMenuItem(
-                          value: student,
-                          child: Text(student.fullName),
-                        );
-                      }).toList(),
-                      onChanged: (newStudent) {
-                        if (newStudent != null) {
-                          ref.read(dashboardStateProvider.notifier).selectStudent(newStudent);
-                        }
-                      },
-                      decoration: InputDecoration(
-                        labelText: 'Select Child',
-                        prefixIcon: const Icon(Icons.face_rounded),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius.sm),
+                    Container(
+                      padding: EdgeInsets.all(spacing.md),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surface,
+                        borderRadius: BorderRadius.circular(radius.md),
+                        border: Border.all(
+                          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
                         ),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: spacing.md,
-                          vertical: spacing.sm,
-                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.people_alt_rounded, size: 16, color: EduPulseTheme.primaryTeal),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'My Children (${data.students.length})',
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: theme.colorScheme.onSurface,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                'Tap to switch active profile',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: data.students.map((student) {
+                                final isSelected = data.selectedStudent?.id == student.id;
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 10.0),
+                                  child: InkWell(
+                                    onTap: () {
+                                      if (!isSelected) {
+                                        ref.read(dashboardStateProvider.notifier).selectStudent(student);
+                                      }
+                                    },
+                                    borderRadius: BorderRadius.circular(radius.sm),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? EduPulseTheme.primaryTeal
+                                            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                                        borderRadius: BorderRadius.circular(radius.sm),
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? EduPulseTheme.primaryTeal
+                                              : theme.colorScheme.outlineVariant,
+                                          width: isSelected ? 1.5 : 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 14,
+                                            backgroundColor: isSelected
+                                                ? Colors.white
+                                                : EduPulseTheme.primaryTeal.withValues(alpha: 0.15),
+                                            child: Text(
+                                              student.firstName.isNotEmpty
+                                                  ? student.firstName[0].toUpperCase()
+                                                  : 'S',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.bold,
+                                                color: isSelected
+                                                    ? EduPulseTheme.primaryTeal
+                                                    : EduPulseTheme.primaryTeal,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                student.fullName,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: isSelected ? Colors.white : theme.colorScheme.onSurface,
+                                                ),
+                                              ),
+                                              Text(
+                                                '${student.className}-${student.sectionName.replaceAll('Section ', '')}',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: isSelected
+                                                      ? Colors.white.withValues(alpha: 0.85)
+                                                      : theme.colorScheme.onSurfaceVariant,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (isSelected) ...[
+                                            const SizedBox(width: 8),
+                                            const Icon(Icons.check_circle, size: 14, color: Colors.white),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     SizedBox(height: spacing.md),

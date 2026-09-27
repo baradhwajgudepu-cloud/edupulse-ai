@@ -67,14 +67,22 @@ class _AcademicYearsScreenState extends ConsumerState<AcademicYearsScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await context.push('${AppRoutes.schools}/$schoolId/academic-years/new');
-          _refreshData();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('New Academic Year'),
-      ),
+      floatingActionButton: isMobile
+          ? FloatingActionButton(
+              onPressed: () async {
+                await context.push('${AppRoutes.schools}/$schoolId/academic-years/new');
+                _refreshData();
+              },
+              child: const Icon(Icons.add),
+            )
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                await context.push('${AppRoutes.schools}/$schoolId/academic-years/new');
+                _refreshData();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('New Academic Year'),
+            ),
       body: state.isLoading
           ? const Center(child: CircularProgressIndicator())
           : state.error != null

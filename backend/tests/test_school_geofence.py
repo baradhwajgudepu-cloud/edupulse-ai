@@ -250,7 +250,7 @@ async def test_check_in_validation_flows(client: AsyncClient, db_session: AsyncS
 
     # 1. Missing coordinates returns HTTP 400
     app.dependency_overrides[get_current_user] = lambda: teacher
-    checkin_payload = {"latitude": TEST_LAT, "longitude": TEST_LON, "is_mocked": False}
+    checkin_payload = {"latitude": TEST_LAT, "longitude": TEST_LON, "accuracy": 10.0, "is_mocked": False}
     resp = await client.post("/api/v1/staff-attendance/check-in", json=checkin_payload, headers=headers)
     assert resp.status_code == 400
     assert "School geolocation coordinates are not configured" in resp.json()["message"]
@@ -265,13 +265,13 @@ async def test_check_in_validation_flows(client: AsyncClient, db_session: AsyncS
     await db_session.commit()
 
     # 3. Check-in outside radius fails (e.g. check-in at 10km away)
-    checkin_payload_far = {"latitude": TEST_LAT + 0.1, "longitude": TEST_LON + 0.1, "is_mocked": False}
+    checkin_payload_far = {"latitude": TEST_LAT + 0.1, "longitude": TEST_LON + 0.1, "accuracy": 10.0, "is_mocked": False}
     resp = await client.post("/api/v1/staff-attendance/check-in", json=checkin_payload_far, headers=headers)
     assert resp.status_code == 400
     assert "outside the permitted school geofence" in resp.json()["message"]
 
     # 4. Check-in inside radius succeeds
-    checkin_payload_near = {"latitude": TEST_LAT, "longitude": TEST_LON, "is_mocked": False}
+    checkin_payload_near = {"latitude": TEST_LAT, "longitude": TEST_LON, "accuracy": 10.0, "is_mocked": False}
     resp = await client.post("/api/v1/staff-attendance/check-in", json=checkin_payload_near, headers=headers)
     assert resp.status_code == 201
     data = resp.json()["data"]
@@ -280,7 +280,7 @@ async def test_check_in_validation_flows(client: AsyncClient, db_session: AsyncS
 
     # 5. Teacher cannot override school coordinates through the API (verified by checkin response capturing teacher's payload coordinates, not matching school's coordinates)
     # Teacher check out at slightly offset location but inside geofence
-    checkout_payload_offset = {"latitude": TEST_LAT + 0.0001, "longitude": TEST_LON, "is_mocked": False}
+    checkout_payload_offset = {"latitude": TEST_LAT + 0.0001, "longitude": TEST_LON, "accuracy": 10.0, "is_mocked": False}
     resp_co = await client.post("/api/v1/staff-attendance/check-out", json=checkout_payload_offset, headers=headers)
     assert resp_co.status_code == 200
     co_data = resp_co.json()["data"]

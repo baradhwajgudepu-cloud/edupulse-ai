@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/school_setup_providers.dart';
+import 'package:edupulse_network/edupulse_network.dart';
 import '../../../../core/routing/routes.dart';
+import '../widgets/quick_school_onboarding_dialog.dart';
 
 class SchoolsScreen extends ConsumerStatefulWidget {
   const SchoolsScreen({super.key});
@@ -39,7 +41,7 @@ class _SchoolsScreenState extends ConsumerState<SchoolsScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          await context.push('${AppRoutes.schools}/new');
+          await QuickSchoolOnboardingDialog.show(context);
           ref.read(schoolsListProvider.notifier).fetchSchools();
         },
         icon: const Icon(Icons.add),
@@ -62,7 +64,41 @@ class _SchoolsScreenState extends ConsumerState<SchoolsScreen> {
                   ),
                 )
               : state.schools.isEmpty
-                  ? const Center(child: Text('No school campuses registered yet.'))
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(20),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.school_outlined, size: 48, color: theme.colorScheme.primary),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No School Campuses Registered Yet',
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Onboard your school in seconds with minimal setup and configure ERP modules progressively.',
+                            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 20),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              await QuickSchoolOnboardingDialog.show(context);
+                              ref.read(schoolsListProvider.notifier).fetchSchools();
+                            },
+                            icon: const Icon(Icons.add_business_rounded),
+                            label: const Text('Create School'),
+                          ),
+                        ],
+                      ),
+                    )
                   : Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
@@ -132,15 +168,21 @@ class _SchoolsScreenState extends ConsumerState<SchoolsScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      OutlinedButton.icon(
+                      ElevatedButton.icon(
                         onPressed: () {
                           ref.read(selectedSchoolIdProvider.notifier).state = school.id;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Active school changed to ${school.name}')),
-                          );
+                          ref.read(selectedTenantIdProvider.notifier).state = school.tenantId;
+                          context.go(AppRoutes.dashboard);
                         },
-                        icon: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_off),
-                        label: Text(isSelected ? 'Selected' : 'Select Campus'),
+                        icon: const Icon(Icons.launch_rounded, size: 14),
+                        label: const Text('Open School'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0F766E),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          elevation: 0,
+                        ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.arrow_forward_ios, size: 16),
@@ -208,17 +250,23 @@ class _SchoolsScreenState extends ConsumerState<SchoolsScreen> {
                 DataCell(
                   Row(
                     children: [
-                      IconButton(
-                        tooltip: 'Select Campus',
-                        icon: Icon(isSelected ? Icons.check_circle : Icons.circle_outlined,
-                            color: isSelected ? theme.colorScheme.primary : null),
+                      ElevatedButton.icon(
                         onPressed: () {
                           ref.read(selectedSchoolIdProvider.notifier).state = school.id;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Active school changed to ${school.name}')),
-                          );
+                          ref.read(selectedTenantIdProvider.notifier).state = school.tenantId;
+                          context.go(AppRoutes.dashboard);
                         },
+                        icon: const Icon(Icons.launch_rounded, size: 14),
+                        label: const Text('Open School'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0F766E),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          elevation: 0,
+                        ),
                       ),
+                      const SizedBox(width: 8),
                       IconButton(
                         tooltip: 'Edit details',
                         icon: const Icon(Icons.edit_outlined),

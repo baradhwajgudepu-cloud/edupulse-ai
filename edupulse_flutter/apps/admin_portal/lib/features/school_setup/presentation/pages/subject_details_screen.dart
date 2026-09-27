@@ -31,12 +31,19 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
   final _theoryMarksController = TextEditingController(text: '80');
   final _practicalMarksController = TextEditingController(text: '0');
   final _passMarksController = TextEditingController(text: '35');
+  final _maxMarksController = TextEditingController(text: '100');
   final _displayColorController = TextEditingController();
   final _displayOrderController = TextEditingController();
 
   String _selectedCategory = 'CORE';
   String _selectedType = 'THEORY';
   String _selectedStatus = 'ACTIVE';
+  String _sourceType = 'SCHOOL_ADDED';
+  bool _isExaminationApplicable = true;
+  bool _isMarksApplicable = true;
+  bool _appearsInReportCard = true;
+  bool _includedInConsolidatedResult = true;
+  bool _includedInRankCalculation = true;
   String? _selectedAyId;
 
   @override
@@ -63,6 +70,7 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
       _theoryMarksController.text = s.theoryMarks.toString();
       _practicalMarksController.text = s.practicalMarks.toString();
       _passMarksController.text = s.passMarks.toString();
+      _maxMarksController.text = s.maxMarks.toString();
       _displayColorController.text = s.displayColor ?? '';
       _displayOrderController.text = s.displayOrder?.toString() ?? '';
       _selectedCategory = s.category;
@@ -70,6 +78,12 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
       _selectedStatus = s.status;
       _selectedAyId = s.academicYearId;
       _entityVersion = s.version;
+      _sourceType = s.sourceType;
+      _isExaminationApplicable = s.isExaminationApplicable;
+      _isMarksApplicable = s.isMarksApplicable;
+      _appearsInReportCard = s.appearsInReportCard;
+      _includedInConsolidatedResult = s.includedInConsolidatedResult;
+      _includedInRankCalculation = s.includedInRankCalculation;
     });
   }
 
@@ -84,6 +98,7 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
     _theoryMarksController.dispose();
     _practicalMarksController.dispose();
     _passMarksController.dispose();
+    _maxMarksController.dispose();
     _displayColorController.dispose();
     _displayOrderController.dispose();
     super.dispose();
@@ -101,8 +116,9 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
     final theory = int.tryParse(_theoryMarksController.text) ?? 0;
     final practical = int.tryParse(_practicalMarksController.text) ?? 0;
     final pass = int.tryParse(_passMarksController.text) ?? 0;
+    final maxMarks = int.tryParse(_maxMarksController.text) ?? 100;
 
-    if (pass > (theory + practical)) {
+    if (theory + practical > 0 && pass > (theory + practical)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pass marks cannot exceed the sum of theory and practical marks'), backgroundColor: Colors.red),
       );
@@ -123,6 +139,13 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
       'theory_marks': theory,
       'practical_marks': practical,
       'pass_marks': pass,
+      'max_marks': maxMarks,
+      'source_type': _sourceType,
+      'is_examination_applicable': _isExaminationApplicable,
+      'is_marks_applicable': _isMarksApplicable,
+      'appears_in_report_card': _appearsInReportCard,
+      'included_in_consolidated_result': _includedInConsolidatedResult,
+      'included_in_rank_calculation': _includedInRankCalculation,
       'display_color': _displayColorController.text.isEmpty ? null : _displayColorController.text,
       'display_order': _displayOrderController.text.isEmpty ? null : int.tryParse(_displayOrderController.text),
       'status': _selectedStatus,
@@ -271,6 +294,16 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
                     children: [
                       Text('Subject Information', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        value: _sourceType,
+                        decoration: const InputDecoration(labelText: 'Curriculum Source Type*', border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem(value: 'SCHOOL_ADDED', child: Text('School Added (School-Specific Subject)')),
+                          DropdownMenuItem(value: 'BOARD_OFFICIAL', child: Text('Official Board (CBSE / ICSE / State)')),
+                        ],
+                        onChanged: (v) => setState(() => _sourceType = v!),
+                      ),
+                      const SizedBox(height: 16),
                       TextFormField(
                         controller: _nameController,
                         decoration: const InputDecoration(labelText: 'Subject Name*', hintText: 'e.g. Mathematics', border: OutlineInputBorder()),
@@ -302,7 +335,7 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
                             child: DropdownButtonFormField<String>(
                               value: _selectedCategory,
                               decoration: const InputDecoration(labelText: 'Category*', border: OutlineInputBorder()),
-                              items: ['CORE', 'ELECTIVE', 'LANGUAGE', 'OPTIONAL', 'LAB', 'SPORTS', 'ARTS', 'CO_CURRICULAR']
+                              items: ['CORE', 'LANGUAGE', 'ELECTIVE', 'ADDITIONAL', 'VOCATIONAL', 'SKILL', 'REMEDIAL', 'OPTIONAL', 'LAB', 'SPORTS', 'ARTS', 'CO_CURRICULAR', 'OTHER']
                                   .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                                   .toList(),
                               onChanged: (v) => setState(() => _selectedCategory = v!),
@@ -372,6 +405,15 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
                         children: [
                           Expanded(
                             child: TextFormField(
+                              controller: _maxMarksController,
+                              decoration: const InputDecoration(labelText: 'Max Marks*', border: OutlineInputBorder()),
+                              keyboardType: TextInputType.number,
+                              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
                               controller: _theoryMarksController,
                               decoration: const InputDecoration(labelText: 'Theory Marks*', border: OutlineInputBorder()),
                               keyboardType: TextInputType.number,
@@ -399,6 +441,39 @@ class _SubjectDetailsScreenState extends ConsumerState<SubjectDetailsScreen> {
                             ),
                           ),
                         ],
+                      ),
+                      const Divider(height: 32),
+                      Text('Assessment & Report Card Rules', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        title: const Text('Examination Applicable'),
+                        subtitle: const Text('Subject appears in examinations'),
+                        value: _isExaminationApplicable,
+                        onChanged: (v) => setState(() => _isExaminationApplicable = v),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Marks Applicable'),
+                        subtitle: const Text('Evaluated using numerical marks rather than grade-only'),
+                        value: _isMarksApplicable,
+                        onChanged: (v) => setState(() => _isMarksApplicable = v),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Appears in Report Card'),
+                        subtitle: const Text('Print and display this subject on student report cards'),
+                        value: _appearsInReportCard,
+                        onChanged: (v) => setState(() => _appearsInReportCard = v),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Included in Consolidated Result'),
+                        subtitle: const Text('Count toward total percentage and grade average'),
+                        value: _includedInConsolidatedResult,
+                        onChanged: (v) => setState(() => _includedInConsolidatedResult = v),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Included in Rank Calculation'),
+                        subtitle: const Text('Count toward student class/section rank calculation'),
+                        value: _includedInRankCalculation,
+                        onChanged: (v) => setState(() => _includedInRankCalculation = v),
                       ),
                     ],
                   ),

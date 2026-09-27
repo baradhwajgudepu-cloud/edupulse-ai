@@ -171,11 +171,15 @@ class HomeworkRepository:
         return result.unique().scalar_one_or_none()
 
     async def get_parent_homeworks(
-        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID, limit: int = 50
+        self, parent_email: str, school_id: uuid.UUID, tenant_id: uuid.UUID, limit: int = 50, parent_user_id: Optional[uuid.UUID] = None
     ) -> List[Homework]:
         # 1. Load active Guardian and nested Student links
+        match_conditions = [Guardian.email == parent_email]
+        if parent_user_id:
+            match_conditions.append(Guardian.user_id == parent_user_id)
+
         stmt_g = select(Guardian).where(
-            Guardian.email == parent_email,
+            or_(*match_conditions),
             Guardian.school_id == school_id,
             Guardian.tenant_id == tenant_id,
             Guardian.deleted_at.is_(None)

@@ -1,3 +1,4 @@
+import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'domain/entities/session_token.dart';
 import 'session_manager.dart';
@@ -49,7 +50,15 @@ class TokenProviderImpl implements AuthTokenProvider {
         await _sessionManager.saveSession(newToken);
         return newToken;
       } catch (e) {
-        await _sessionManager.clearSession();
+        bool isAuthRejection = false;
+        if (e is DioException) {
+          isAuthRejection = e.response?.statusCode == 401;
+        }
+        if (isAuthRejection) {
+          await _sessionManager.clearSession('TokenProviderImpl.refreshSession.401_rejected');
+        } else {
+          EduLogger.w('Token refresh failed due to non-auth error ($e). Session preserved.');
+        }
         rethrow;
       }
     });

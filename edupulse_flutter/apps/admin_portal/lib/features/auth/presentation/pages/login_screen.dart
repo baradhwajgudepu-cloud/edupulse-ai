@@ -49,6 +49,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   void _submit() async {
+    ref.read(authLockMessageProvider.notifier).state = null;
     if (_formKey.currentState?.validate() ?? false) {
       final email = _emailController.text.trim();
       final prefs = await SharedPreferences.getInstance();
@@ -73,9 +74,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final gradients = theme.extension<AppGradients>() ?? const AppGradients.standard();
 
     ref.listen<AuthState>(authStateProvider, (previous, next) {
-      if (next is AuthError) {
+      if (next is AccountLocked) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.lock_person_outlined, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    next.message ?? AccountLocked.defaultLockedMessage,
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: theme.colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            width: 380,
+          ),
+        );
+      } else if (next is AuthError) {
         String errorMsg = next.message;
-        if (next.message == 'SERVER_UNREACHABLE') {
+        if (isAccountLockedError(message: next.message)) {
+          errorMsg = AccountLocked.defaultLockedMessage;
+        } else if (next.message == 'SERVER_UNREACHABLE') {
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -95,25 +117,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ],
             ),
           );
-        } else {
-          if (next.message == 'ACCESS_DENIED') {
-            errorMsg = 'Access Denied: Insufficient administrative privileges.';
-          }
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(errorMsg)),
-                ],
-              ),
-              backgroundColor: theme.colorScheme.error,
-              behavior: SnackBarBehavior.floating,
-              width: 380,
-            ),
-          );
+          return;
+        } else if (next.message == 'ACCESS_DENIED') {
+          errorMsg = 'Access Denied: Insufficient administrative privileges.';
         }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text(errorMsg)),
+              ],
+            ),
+            backgroundColor: theme.colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            width: 380,
+          ),
+        );
       } else if (next is Authenticated) {
         context.go(AppRoutes.dashboard);
       }
@@ -121,6 +142,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final authState = ref.watch(authStateProvider);
     final isLoading = authState is AuthLoading;
+    final lockMessage = ref.watch(authLockMessageProvider) ??
+        (authState is AccountLocked ? authState.message : null);
 
     return Scaffold(
       body: Container(
@@ -187,7 +210,54 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
-                        const SizedBox(height: 32),
+                        if (lockMessage != null) ...[
+                          const SizedBox(height: 20),
+                          Container(
+                            key: const Key('account_locked_banner'),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.errorContainer.withValues(alpha: 0.8),
+                              borderRadius: BorderRadius.circular(radius.md),
+                              border: Border.all(
+                                color: theme.colorScheme.error.withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.lock_person_outlined,
+                                  color: theme.colorScheme.error,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Account Locked',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: theme.colorScheme.onErrorContainer,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        lockMessage,
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: theme.colorScheme.onErrorContainer,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 28),
                         Semantics(
                           label: 'Email Input Field',
                           child: TextFormField(
@@ -329,14 +399,34 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ),
                         ),
                         const SizedBox(height: 24),
-                        Center(
-                          child: Text(
-                            'Version 1.0.0',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.5),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              'Version 1.0.0  •  ',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.6),
+                              ),
                             ),
-                          ),
+                            InkWell(
+                              key: const Key('public_footer_privacy_policy_link'),
+                              onTap: () => context.push(AppRoutes.privacyPolicy),
+                              borderRadius: BorderRadius.circular(4),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                child: Text(
+                                  'Privacy Policy',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

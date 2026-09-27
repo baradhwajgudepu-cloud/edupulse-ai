@@ -421,3 +421,33 @@ class GuardianService:
         await self.student_guardian_repo.db.commit()
         await self.student_guardian_repo.db.refresh(db_obj)
         return db_obj
+
+    async def update_photo(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        guardian_id: uuid.UUID,
+        photo_url: Optional[str],
+        photo_storage_key: Optional[str] = None
+    ) -> Guardian:
+        """
+        Updates the photo_url and internal photo_storage_key for a guardian within school and tenant scope.
+        """
+        guardian = await self.guardian_repo.get_by_id(guardian_id, school_id, tenant_id)
+        if not guardian:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Guardian profile not found."
+            )
+        guardian.photo_url = photo_url
+        settings_copy = dict(guardian.settings or {})
+        if photo_storage_key:
+            settings_copy["photo_storage_key"] = photo_storage_key
+            settings_copy["photo_updated_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            settings_copy.pop("photo_storage_key", None)
+            settings_copy.pop("photo_updated_at", None)
+        guardian.settings = settings_copy
+        await self.guardian_repo.db.commit()
+        return await self.guardian_repo.get_by_id(guardian_id, school_id, tenant_id)
+

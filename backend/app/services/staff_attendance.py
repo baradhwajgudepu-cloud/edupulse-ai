@@ -1,7 +1,8 @@
 import uuid
 import math
+import logging
 from datetime import date, datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, Union
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
@@ -13,6 +14,8 @@ from app.repositories.staff_attendance import StaffAttendanceRepository
 from app.repositories.teacher import TeacherRepository
 from app.repositories.school import SchoolRepository
 from app.schemas.staff_attendance import StaffCheckInRequest, StaffCheckOutRequest
+
+logger = logging.getLogger(__name__)
 
 class StaffAttendanceService:
     """
@@ -135,6 +138,111 @@ class StaffAttendanceService:
             "status": status_str
         }
 
+    def _evaluate_geofence_and_record_policy(
+        self,
+        school: School,
+        latitude: float,
+        longitude: float,
+        accuracy: Optional[float],
+        is_mocked: bool,
+        action_name: str,
+        tenant_id: uuid.UUID,
+        teacher_id: uuid.UUID,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        """
+        Validates geofence attendance policy strictly on the server.
+
+        Returns:
+            Tuple[Optional[float], Optional[str]]: (distance_meters, exemption_tag)
+
+        Enforcement rules:
+        1. If geofence is disabled by authorized admin in school configuration:
+           - Allow sign-in/out.
+           - Calculate distance if coordinates exist.
+           - Generate structured audit log without coordinate PII.
+           - Return (distance, exemption_tag) to record in remarks.
+        2. If geofence is enabled:
+           - Reject immediately if is_mocked is True (simulated/mocked GPS providers cannot bypass geofence).
+           - Verify school has configured coordinates and positive radius (fail safely with HTTP 400 if not).
+           - Verify client provided valid GPS accuracy (reject if None or > 100.0m with HTTP 400).
+           - Calculate Haversine distance.
+           - Apply deterministic GPS tolerance: min(accuracy, 15.0, radius * 0.1).
+           - Reject with HTTP 400 if distance > radius + tolerance.
+           - Return (distance, None).
+        """
+        gf_settings = (school.settings or {}).get("geofence", {}) if school.settings else {}
+        geofence_enabled = gf_settings.get("enabled", True)
+        actor_id = gf_settings.get("updated_by") or (str(school.updated_by) if school.updated_by else "SYSTEM_DEFAULT")
+        updated_at = gf_settings.get("updated_at") or (school.updated_at.isoformat() if school.updated_at else "UNKNOWN_TIME")
+
+        if not geofence_enabled:
+            # Policy explicitly disabled by authorized administrator
+            distance = None
+            if school.latitude is not None and school.longitude is not None:
+                distance = self.haversine_distance(latitude, longitude, school.latitude, school.longitude)
+
+            logger.warning(
+                "Geofence exemption applied for %s: tenant_id=%s, school_id=%s, teacher_id=%s, actor_id=%s, config_updated_at=%s",
+                action_name, tenant_id, school.id, teacher_id, actor_id, updated_at
+            )
+            exemption_tag = f"[GEOFENCE_EXEMPTION: Authorized school geofence restriction disabled | Actor: {actor_id}]"
+            return distance, exemption_tag
+
+        # Geofence is ENABLED: Reject mocked/simulated GPS locations
+        if is_mocked:
+            logger.warning(
+                "Mocked GPS location rejected for %s: tenant_id=%s, school_id=%s, teacher_id=%s",
+                action_name, tenant_id, school.id, teacher_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Mocked GPS location detected. {action_name} cannot be verified using simulated location providers."
+            )
+
+        # Geofence is ENABLED: Fail-safe verification
+        if school.latitude is None or school.longitude is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"School geolocation coordinates are not configured. {action_name} cannot be verified."
+            )
+
+        if school.geofence_radius_meters is None or school.geofence_radius_meters <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"School geofence radius is not configured. {action_name} cannot be verified."
+            )
+
+        if accuracy is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GPS accuracy reading is required to verify school attendance location. Please enable high-accuracy location services."
+            )
+
+        if accuracy > 100.0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"GPS accuracy is too low ({accuracy:.1f}m > 100m). Please wait for a better GPS fix."
+            )
+
+        distance = self.haversine_distance(latitude, longitude, school.latitude, school.longitude)
+
+        # Deterministic GPS accuracy model
+        tolerance = min(accuracy, 15.0, float(school.geofence_radius_meters) * 0.1)
+        effective_max_distance = float(school.geofence_radius_meters) + tolerance
+
+        if distance > effective_max_distance:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{action_name} failed. You are outside the school attendance location. "
+                    f"Please move within the permitted area and try again. "
+                    f"(Distance: {round(distance, 1)}m, Allowed: {school.geofence_radius_meters}m; "
+                    f"outside the permitted school geofence)"
+                )
+            )
+
+        return distance, None
+
     async def check_in(self, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: StaffCheckInRequest) -> Dict[str, Any]:
         """
         Records today's staff check-in after validation against school geofence.
@@ -153,23 +261,25 @@ class StaffAttendanceService:
                 detail="School not found for teacher profile."
             )
 
-        if school.latitude is None or school.longitude is None:
+        # Coordinate validity check
+        if math.isnan(payload.latitude) or math.isinf(payload.latitude) or \
+           math.isnan(payload.longitude) or math.isinf(payload.longitude):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="School geolocation coordinates are not configured."
+                detail="Invalid location coordinates provided."
             )
 
-        # Geofence distance calculation
-        distance = self.haversine_distance(
-            payload.latitude, payload.longitude,
-            school.latitude, school.longitude
+        # Geofence validation & policy evaluation
+        distance, exemption_tag = self._evaluate_geofence_and_record_policy(
+            school=school,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            accuracy=payload.accuracy,
+            is_mocked=payload.is_mocked,
+            action_name="Check-in",
+            tenant_id=tenant_id,
+            teacher_id=teacher.id,
         )
-
-        if distance > school.geofence_radius_meters:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Check-in failed. You are outside the permitted school geofence. Distance: {round(distance, 1)}m, Allowed: {school.geofence_radius_meters}m."
-            )
 
         # Duplicate check-in prevention
         existing = await self.staff_attendance_repo.get_by_date(teacher.id, date.today(), tenant_id)
@@ -178,6 +288,10 @@ class StaffAttendanceService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Today's check-in has already been recorded."
             )
+
+        remarks = payload.remarks
+        if exemption_tag:
+            remarks = f"{remarks} | {exemption_tag}" if remarks else exemption_tag
 
         now = datetime.now(timezone.utc)
         db_obj = StaffAttendance(
@@ -191,7 +305,7 @@ class StaffAttendanceService:
             check_in_longitude=payload.longitude,
             check_in_distance_meters=distance,
             is_mocked_location=payload.is_mocked,
-            remarks=payload.remarks,
+            remarks=remarks,
             created_by=user_id,
             updated_by=user_id
         )
@@ -237,11 +351,25 @@ class StaffAttendanceService:
                 detail="School not found for teacher profile."
             )
 
-        if school.latitude is None or school.longitude is None:
+        # Coordinate validity check
+        if math.isnan(payload.latitude) or math.isinf(payload.latitude) or \
+           math.isnan(payload.longitude) or math.isinf(payload.longitude):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="School geolocation coordinates are not configured."
+                detail="Invalid location coordinates provided."
             )
+
+        # Geofence validation & policy evaluation
+        distance, exemption_tag = self._evaluate_geofence_and_record_policy(
+            school=school,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            accuracy=payload.accuracy,
+            is_mocked=payload.is_mocked,
+            action_name="Check-out",
+            tenant_id=tenant_id,
+            teacher_id=teacher.id,
+        )
 
         record = await self.staff_attendance_repo.get_by_date(teacher.id, date.today(), tenant_id)
         if not record:
@@ -256,18 +384,6 @@ class StaffAttendanceService:
                 detail="Already checked out for today."
             )
 
-        # Geofence distance calculation
-        distance = self.haversine_distance(
-            payload.latitude, payload.longitude,
-            school.latitude, school.longitude
-        )
-
-        if distance > school.geofence_radius_meters:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Check-out failed. You are outside the permitted school geofence. Distance: {round(distance, 1)}m, Allowed: {school.geofence_radius_meters}m."
-            )
-
         now = datetime.now(timezone.utc)
         record.check_out_time = now
         record.check_out_latitude = payload.latitude
@@ -278,8 +394,15 @@ class StaffAttendanceService:
         if payload.is_mocked:
             record.is_mocked_location = True
             
+        out_remarks_parts = []
         if payload.remarks:
-            record.remarks = f"{record.remarks} | Out: {payload.remarks}" if record.remarks else payload.remarks
+            out_remarks_parts.append(f"Out: {payload.remarks}")
+        if exemption_tag and (not record.remarks or exemption_tag not in record.remarks):
+            out_remarks_parts.append(exemption_tag)
+
+        if out_remarks_parts:
+            joined_out = " | ".join(out_remarks_parts)
+            record.remarks = f"{record.remarks} | {joined_out}" if record.remarks else joined_out
 
         await self.staff_attendance_repo.update(record)
         await self.staff_attendance_repo.db.commit()

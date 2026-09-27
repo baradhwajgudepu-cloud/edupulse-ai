@@ -111,7 +111,9 @@ final reportsDashboardProvider = FutureProvider.autoDispose<Map<String, dynamic>
         authState.user.roles.any((r) => 
             r.toUpperCase() == 'SUPER_ADMIN' || 
             r.toUpperCase() == 'TENANT_ADMIN' || 
-            r.toUpperCase() == 'CHAIRMAN');
+            r.toUpperCase() == 'CHAIRMAN' ||
+            r.toUpperCase() == 'ADMIN' ||
+            r.toUpperCase() == 'ADMINISTRATOR');
   }
 
   if (schoolId == null) {
@@ -279,7 +281,9 @@ final reportsAIIntelligenceProvider = FutureProvider.autoDispose<Map<String, dyn
         authState.user.roles.any((r) => 
             r.toUpperCase() == 'SUPER_ADMIN' || 
             r.toUpperCase() == 'TENANT_ADMIN' || 
-            r.toUpperCase() == 'CHAIRMAN');
+            r.toUpperCase() == 'CHAIRMAN' ||
+            r.toUpperCase() == 'ADMIN' ||
+            r.toUpperCase() == 'ADMINISTRATOR');
   }
 
   if (schoolId == null && !isTenantScopedAdmin) {

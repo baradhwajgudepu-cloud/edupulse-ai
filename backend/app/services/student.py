@@ -142,6 +142,51 @@ class StudentService:
         db_obj.is_active = True
 
         await self._safe_commit(db_obj, obj_in)
+
+        # Auto-assign active class fee structures for newly enrolled student
+        try:
+            from app.models.fee import FeeStructure, StudentFeeAssignment, FeeAssignmentStatus
+            from decimal import Decimal
+            stmt_fs = select(FeeStructure).where(
+                FeeStructure.tenant_id == tenant_id,
+                FeeStructure.school_id == obj_in.school_id,
+                FeeStructure.academic_year_id == obj_in.academic_year_id,
+                (FeeStructure.class_id == obj_in.class_id) | (FeeStructure.class_id.is_(None)),
+                FeeStructure.deleted_at.is_(None)
+            )
+            res_fs = await self.student_repo.db.execute(stmt_fs)
+            active_structures = res_fs.scalars().all()
+            new_assignments = 0
+            for fs in active_structures:
+                stmt_fa = select(StudentFeeAssignment).where(
+                    StudentFeeAssignment.student_id == db_obj.id,
+                    StudentFeeAssignment.fee_structure_id == fs.id,
+                    StudentFeeAssignment.tenant_id == tenant_id
+                )
+                res_fa = await self.student_repo.db.execute(stmt_fa)
+                if not res_fa.scalar_one_or_none():
+                    new_fa = StudentFeeAssignment(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        academic_year_id=fs.academic_year_id,
+                        student_id=db_obj.id,
+                        fee_structure_id=fs.id,
+                        assigned_amount=fs.amount,
+                        paid_amount=Decimal("0.00"),
+                        discount_amount=Decimal("0.00"),
+                        fine_amount=Decimal("0.00"),
+                        status=FeeAssignmentStatus.UNPAID,
+                        created_by=created_by,
+                        version=1
+                    )
+                    self.student_repo.db.add(new_fa)
+                    new_assignments += 1
+            if new_assignments > 0:
+                await self.student_repo.db.commit()
+        except Exception as fee_err:
+            import logging
+            logging.getLogger(__name__).warning(f"Auto-assigning fees for new student {db_obj.id} encountered: {fee_err}")
+
         return await self.student_repo.get_by_id(db_obj.id, obj_in.school_id, tenant_id)
 
     async def update_student(
@@ -205,83 +250,82 @@ class StudentService:
 
         update_data = obj_in.model_dump(exclude_unset=True)
 
-        # Re-allocation validations
+        # Re-allocation validations (only run when academic placement actually changes)
         if obj_in.academic_year_id or obj_in.class_id or obj_in.section_id:
             target_ay_id = obj_in.academic_year_id or db_obj.academic_year_id
             target_class_id = obj_in.class_id or db_obj.class_id
             target_section_id = obj_in.section_id or db_obj.section_id
             
-            ay = await self.ay_repo.get_by_id(target_ay_id, school_id, tenant_id)
-            if not ay:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Academic year not found or school mismatch."
-                )
-            if ay.status == AcademicYearStatus.ARCHIVED:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot assign student inside an archived academic year."
-                )
+            is_placement_changed = (
+                target_ay_id != db_obj.academic_year_id or
+                target_class_id != db_obj.class_id or
+                target_section_id != db_obj.section_id
+            )
 
-            class_obj = await self.class_repo.get_by_id(target_class_id, school_id, tenant_id)
-            if not class_obj:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Class not found or school mismatch."
-                )
-            if class_obj.academic_year_id != target_ay_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Target class does not belong to the specified academic year."
-                )
-            from app.models.class_entity import ClassStatus
-            if class_obj.status != ClassStatus.ACTIVE:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Target class is not active."
-                )
-
-            section_obj = await self.section_repo.get_by_id(target_section_id, school_id, tenant_id)
-            if not section_obj:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Section not found or school mismatch."
-                )
-            if section_obj.class_id != target_class_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Target section does not belong to the specified class."
-                )
-            from app.models.section import SectionStatus
-            if section_obj.status != SectionStatus.ACTIVE:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Target section is not active."
-                )
-
-            if (target_ay_id == db_obj.academic_year_id and
-                target_class_id == db_obj.class_id and
-                target_section_id == db_obj.section_id):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Student is already assigned to this class and section."
-                )
-
-            if target_section_id != db_obj.section_id:
-                stmt = select(func.count(Student.id)).where(
-                    Student.section_id == target_section_id,
-                    Student.deleted_at.is_(None)
-                )
-                res = await self.student_repo.db.execute(stmt)
-                active_count = res.scalar() or 0
-                if active_count >= section_obj.capacity:
+            if is_placement_changed:
+                ay = await self.ay_repo.get_by_id(target_ay_id, school_id, tenant_id)
+                if not ay:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Academic year not found or school mismatch."
+                    )
+                if ay.status == AcademicYearStatus.ARCHIVED:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Target section capacity exceeded: {active_count}/{section_obj.capacity} students."
+                        detail="Cannot assign student inside an archived academic year."
                     )
 
-            if target_class_id != db_obj.class_id or target_section_id != db_obj.section_id:
-                update_data["transferred_at"] = datetime.now(timezone.utc)
+                class_obj = await self.class_repo.get_by_id(target_class_id, school_id, tenant_id)
+                if not class_obj:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Class not found or school mismatch."
+                    )
+                if class_obj.academic_year_id != target_ay_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Target class does not belong to the specified academic year."
+                    )
+                from app.models.class_entity import ClassStatus
+                if class_obj.status != ClassStatus.ACTIVE:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Target class is not active."
+                    )
+
+                section_obj = await self.section_repo.get_by_id(target_section_id, school_id, tenant_id)
+                if not section_obj:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Section not found or school mismatch."
+                    )
+                if section_obj.class_id != target_class_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Target section does not belong to the specified class."
+                    )
+                from app.models.section import SectionStatus
+                if section_obj.status != SectionStatus.ACTIVE:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Target section is not active."
+                    )
+
+                if target_section_id != db_obj.section_id:
+                    stmt = select(func.count(Student.id)).where(
+                        Student.section_id == target_section_id,
+                        Student.deleted_at.is_(None)
+                    )
+                    res = await self.student_repo.db.execute(stmt)
+                    active_count = res.scalar() or 0
+                    if active_count >= section_obj.capacity:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Target section capacity exceeded: {active_count}/{section_obj.capacity} students."
+                        )
+
+                if target_class_id != db_obj.class_id or target_section_id != db_obj.section_id:
+                    update_data["transferred_at"] = datetime.now(timezone.utc)
 
         # 5. Lifecycle audit stamps matching status changes
         if "status" in update_data:
@@ -326,6 +370,35 @@ class StudentService:
         await self.student_repo.db.commit()
         await self.student_repo.db.refresh(db_obj)
         return db_obj
+
+    async def update_photo(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        photo_url: Optional[str],
+        photo_storage_key: Optional[str] = None
+    ) -> Student:
+        """
+        Updates the photo_url and internal photo_storage_key for a student within school and tenant scope.
+        """
+        student = await self.student_repo.get_by_id(student_id, school_id, tenant_id)
+        if not student:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Student not found."
+            )
+        student.photo_url = photo_url
+        settings_copy = dict(student.settings or {})
+        if photo_storage_key:
+            settings_copy["photo_storage_key"] = photo_storage_key
+            settings_copy["photo_updated_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            settings_copy.pop("photo_storage_key", None)
+            settings_copy.pop("photo_updated_at", None)
+        student.settings = settings_copy
+        await self.student_repo.db.commit()
+        return await self.student_repo.get_by_id(student_id, school_id, tenant_id)
 
     async def _safe_commit(self, db_obj: Student, obj_in: StudentCreate | StudentUpdate) -> None:
         from sqlalchemy.exc import IntegrityError

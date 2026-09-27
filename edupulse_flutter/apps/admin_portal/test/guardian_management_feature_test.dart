@@ -29,13 +29,21 @@ class FakeTestSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class FakeGuardianApiClient extends BaseApiClient {
@@ -60,6 +68,22 @@ class FakeGuardianApiClient extends BaseApiClient {
     }
     if (simulateError) {
       return ApiResult.failure(const ApiFailure(message: 'Simulated API connection failure', type: ApiFailureType.unknown));
+    }
+
+    if (path.contains('/auth/me')) {
+      return ApiResult.success(mapper({
+        'data': {
+          'id': 'user_1',
+          'email': 'admin@edupulse.org',
+          'first_name': 'Admin',
+          'last_name': 'User',
+          'tenant_id': 'tenant_1',
+          'is_superuser': true,
+          'roles': ['SUPER_ADMIN'],
+          'schools': ['school_1'],
+          'is_active': true,
+        }
+      }));
     }
 
     if (path.contains('/guardians/') && !path.endsWith('/guardians')) {
@@ -557,9 +581,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Open drawer/sidebar or check navigation item
-      final guardiansTile = find.widgetWithText(ListTile, 'Guardians');
-      expect(guardiansTile, findsOneWidget);
-      await tester.tap(guardiansTile);
+      final guardiansItem = find.text('Parents & Guardians');
+      expect(guardiansItem, findsOneWidget);
+      await tester.tap(guardiansItem);
       await tester.pumpAndSettle();
 
       expect(find.text('Guardians Registry Page'), findsOneWidget);
@@ -600,9 +624,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Test route navigation triggers exist
-      expect(find.widgetWithText(ListTile, 'Students'), findsOneWidget);
-      expect(find.widgetWithText(ListTile, 'Teachers & Staff'), findsOneWidget);
-      expect(find.widgetWithText(ListTile, 'Attendance'), findsOneWidget);
+      expect(find.text('Students'), findsOneWidget);
+      expect(find.text('Teachers & Staff'), findsOneWidget);
+      expect(find.text('Attendance'), findsOneWidget);
     });
   });
 }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/routing/routes.dart';
 import '../../../../core/auth/portal_permissions.dart';
 import '../providers/attendance_providers.dart';
 import '../widgets/attendance_dashboard_view.dart';
@@ -12,8 +15,31 @@ import '../../../school_setup/presentation/providers/school_setup_providers.dart
 
 class AttendanceScreen extends ConsumerStatefulWidget {
   final int initialTab;
+  final String? initialMarkClassId;
+  final String? initialMarkSectionId;
+  final DateTime? initialMarkDate;
+  final String? initialMarkAyId;
+  final String? initialStatus;
+  final String? initialClassId;
+  final String? initialSectionId;
+  final DateTime? initialDate;
+  final DateTime? initialStartDate;
+  final DateTime? initialEndDate;
 
-  const AttendanceScreen({super.key, this.initialTab = 0});
+  const AttendanceScreen({
+    super.key,
+    this.initialTab = 0,
+    this.initialMarkClassId,
+    this.initialMarkSectionId,
+    this.initialMarkDate,
+    this.initialMarkAyId,
+    this.initialStatus,
+    this.initialClassId,
+    this.initialSectionId,
+    this.initialDate,
+    this.initialStartDate,
+    this.initialEndDate,
+  });
 
   @override
   ConsumerState<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -35,8 +61,62 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> with Single
     _tabController = TabController(length: _tabCount, vsync: this, initialIndex: safeInitialIndex);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshActiveTab();
+      if (mounted) {
+        _applyInitialParameters();
+        _refreshActiveTab();
+      }
     });
+  }
+
+  void _applyInitialParameters() {
+    if (widget.initialMarkClassId != null ||
+        widget.initialMarkSectionId != null ||
+        widget.initialMarkDate != null ||
+        widget.initialMarkAyId != null) {
+      final current = ref.read(dailyAttendanceMarkProvider);
+      if (current.classId != widget.initialMarkClassId ||
+          current.sectionId != widget.initialMarkSectionId ||
+          current.academicYearId != widget.initialMarkAyId ||
+          (widget.initialMarkDate != null && current.attendanceDate != widget.initialMarkDate)) {
+        ref.read(dailyAttendanceMarkProvider.notifier).setSelection(
+          academicYearId: widget.initialMarkAyId,
+          classId: widget.initialMarkClassId,
+          sectionId: widget.initialMarkSectionId,
+          attendanceDate: widget.initialMarkDate,
+        );
+      }
+    }
+
+    if (widget.initialStatus != null ||
+        widget.initialClassId != null ||
+        widget.initialSectionId != null ||
+        widget.initialDate != null ||
+        widget.initialStartDate != null ||
+        widget.initialEndDate != null) {
+      final start = widget.initialStartDate ?? widget.initialDate;
+      final end = widget.initialEndDate ?? widget.initialDate;
+
+      ref.read(attendanceRegisterProvider.notifier).setFilters(
+        status: widget.initialStatus,
+        classId: widget.initialClassId,
+        sectionId: widget.initialSectionId,
+        startDate: start,
+        endDate: end,
+      );
+
+      if (widget.initialStatus != null) {
+        ref.read(attendanceFiltersProvider.notifier).setStatus(widget.initialStatus);
+      }
+      if (widget.initialClassId != null) {
+        ref.read(attendanceFiltersProvider.notifier).setClass(widget.initialClassId);
+      }
+      if (widget.initialSectionId != null) {
+        ref.read(attendanceFiltersProvider.notifier).setSection(widget.initialSectionId);
+      }
+      if (start != null) {
+        ref.read(attendanceFiltersProvider.notifier).setDate(start);
+      }
+    }
   }
 
   @override
@@ -47,6 +127,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> with Single
       if (_tabController.index != safeIndex) {
         _tabController.animateTo(safeIndex);
       }
+    }
+    if (oldWidget.initialStatus != widget.initialStatus ||
+        oldWidget.initialClassId != widget.initialClassId ||
+        oldWidget.initialSectionId != widget.initialSectionId ||
+        oldWidget.initialDate != widget.initialDate ||
+        oldWidget.initialStartDate != widget.initialStartDate ||
+        oldWidget.initialEndDate != widget.initialEndDate ||
+        oldWidget.initialMarkClassId != widget.initialMarkClassId ||
+        oldWidget.initialMarkSectionId != widget.initialMarkSectionId ||
+        oldWidget.initialMarkDate != widget.initialMarkDate ||
+        oldWidget.initialMarkAyId != widget.initialMarkAyId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _applyInitialParameters();
+        }
+      });
     }
   }
 
@@ -209,9 +305,105 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> with Single
             child: TabBarView(
               controller: _tabController,
               children: [
-                const AttendanceDashboardView(),
-                const AttendanceMarkView(),
-                const AttendanceRegisterView(),
+                AttendanceDashboardView(
+                  onNavigateToTab: (tabIndex, {statusFilter, pendingOnly}) {
+                    if (statusFilter != null) {
+                      ref.read(attendanceFiltersProvider.notifier).setStatus(statusFilter);
+                    }
+                    _tabController.animateTo(tabIndex.clamp(0, _tabCount - 1));
+                  },
+                  onNavigateToRegister: ({status, date, startDate, endDate, classId, sectionId}) {
+                    final targetStart = startDate ?? date;
+                    final targetEnd = endDate ?? date;
+                    ref.read(attendanceRegisterProvider.notifier).setFilters(
+                      status: status,
+                      classId: classId,
+                      sectionId: sectionId,
+                      startDate: targetStart,
+                      endDate: targetEnd,
+                    );
+                    if (status != null) {
+                      ref.read(attendanceFiltersProvider.notifier).setStatus(status);
+                    }
+                    if (classId != null) {
+                      ref.read(attendanceFiltersProvider.notifier).setClass(classId);
+                    }
+                    if (sectionId != null) {
+                      ref.read(attendanceFiltersProvider.notifier).setSection(sectionId);
+                    }
+                    if (targetStart != null) {
+                      ref.read(attendanceFiltersProvider.notifier).setDate(targetStart);
+                    }
+
+                    final q = <String, String>{};
+                    if (status != null) q['status'] = status;
+                    if (targetStart != null) q['start_date'] = DateFormat('yyyy-MM-dd').format(targetStart);
+                    if (targetEnd != null) q['end_date'] = DateFormat('yyyy-MM-dd').format(targetEnd);
+                    if (classId != null) q['class_id'] = classId;
+                    if (sectionId != null) q['section_id'] = sectionId;
+
+                    final uri = Uri(path: AppRoutes.attendanceRegister, queryParameters: q.isEmpty ? null : q);
+                    try {
+                      GoRouter.of(context).go(uri.toString());
+                    } catch (_) {}
+                    _tabController.animateTo(2);
+                  },
+                  onNavigateToMark: ({classId, sectionId, date, academicYearId}) {
+                    final schoolId = ref.read(selectedSchoolIdProvider);
+                    String? ayId = academicYearId ?? ref.read(selectedAcademicYearIdProvider);
+                    if (ayId == null && schoolId != null) {
+                      final ayState = ref.read(academicYearsProvider(schoolId));
+                      if (ayState.years.isNotEmpty) {
+                        try {
+                          ayId = ayState.years.firstWhere((y) => y.isCurrent).id;
+                        } catch (_) {
+                          ayId = ayState.years.first.id;
+                        }
+                      }
+                    }
+
+                    ref.read(dailyAttendanceMarkProvider.notifier).setSelection(
+                      classId: classId,
+                      sectionId: sectionId,
+                      attendanceDate: date,
+                      academicYearId: ayId,
+                    );
+
+                    final q = <String, String>{};
+                    if (classId != null) q['class_id'] = classId;
+                    if (sectionId != null) q['section_id'] = sectionId;
+                    if (date != null) q['date'] = DateFormat('yyyy-MM-dd').format(date);
+                    if (ayId != null) q['ay_id'] = ayId;
+
+                    final uri = Uri(path: AppRoutes.attendanceMark, queryParameters: q.isEmpty ? null : q);
+                    try {
+                      GoRouter.of(context).go(uri.toString());
+                    } catch (_) {}
+                    _tabController.animateTo(1);
+                  },
+                ),
+                AttendanceMarkView(
+                  onBackToDashboard: () {
+                    try {
+                      GoRouter.of(context).go(AppRoutes.attendanceDashboard);
+                    } catch (_) {}
+                    _tabController.animateTo(0);
+                  },
+                ),
+                AttendanceRegisterView(
+                  onNavigateToMarkTab: () => _tabController.animateTo(1),
+                  onBackToDashboard: () {
+                    try {
+                      GoRouter.of(context).go(AppRoutes.attendanceDashboard);
+                    } catch (_) {}
+                    _tabController.animateTo(0);
+                  },
+                  onFiltersCleared: () {
+                    try {
+                      GoRouter.of(context).go(AppRoutes.attendanceRegister);
+                    } catch (_) {}
+                  },
+                ),
                 if (_canManageBulk) ...[
                   AttendanceUploadWizard(
                     onNavigateToHistory: () => _tabController.animateTo(4),

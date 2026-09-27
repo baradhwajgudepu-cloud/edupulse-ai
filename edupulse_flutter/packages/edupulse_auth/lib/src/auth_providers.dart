@@ -10,6 +10,7 @@ import 'domain/usecases/refresh_token_usecase.dart';
 import 'domain/usecases/validate_session_usecase.dart';
 import 'domain/usecases/forgot_password_usecase.dart';
 import 'domain/usecases/reset_password_usecase.dart';
+import 'domain/usecases/change_password_usecase.dart';
 import 'data/datasource/auth_remote_datasource.dart';
 import 'data/repositories/auth_repository_impl.dart';
 import 'session_manager.dart';
@@ -90,4 +91,9 @@ final forgotPasswordUseCaseProvider = Provider<ForgotPasswordUseCase>((ref) {
 final resetPasswordUseCaseProvider = Provider<ResetPasswordUseCase>((ref) {
   final repo = ref.watch(authRepositoryProvider);
   return ResetPasswordUseCase(repo);
+});
+
+final changePasswordUseCaseProvider = Provider<ChangePasswordUseCase>((ref) {
+  final repo = ref.watch(authRepositoryProvider);
+  return ChangePasswordUseCase(repo);
 });

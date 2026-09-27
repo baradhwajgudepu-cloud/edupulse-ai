@@ -1,15 +1,16 @@
 import uuid
 import os
+import io
 import logging
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Union
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -18,7 +19,7 @@ from app.models.fee import (
     StudentFeeAssignment, FeePayment, FeePaymentAllocation, FeeReceipt,
     ConcessionType, PaymentMethod, PaymentStatus, FeeAssignmentStatus, FineType
 )
-from app.models.student import Student
+from app.models.student import Student, StudentStatus
 from app.models.class_entity import Class
 from app.models.school import School
 from app.models.academic_year import AcademicYear
@@ -28,13 +29,13 @@ from app.services.notification import NotificationService
 from app.schemas.fee import (
     FeeTypeCreate, FeeTypeUpdate, ScholarshipCreate, ScholarshipUpdate,
     FeeStructureCreate, FeeStructureUpdate, FineRuleCreate, FineRuleUpdate,
-    StudentFeeAssignmentCreate, FeePaymentCreate, PaymentCancelRequest
+    StudentFeeAssignmentCreate, FeePaymentCreate, FeePaymentUpdate, PaymentCancelRequest
 )
 
 logger = logging.getLogger(__name__)
 
 def _generate_pdf_receipt(
-    pdf_path: str,
+    pdf_path: Union[str, io.BytesIO],
     receipt_number: str,
     school_name: str,
     student_name: str,
@@ -43,100 +44,241 @@ def _generate_pdf_receipt(
     payment_method: str,
     transaction_reference: Optional[str],
     allocations: list,
-    total_amount_paid: Decimal
+    total_amount_paid: Decimal,
+    school_address: Optional[str] = None,
+    school_phone: Optional[str] = None,
+    school_email: Optional[str] = None,
+    admission_number: Optional[str] = None,
+    class_name: Optional[str] = None,
+    section_name: Optional[str] = None,
+    total_outstanding_remaining: Optional[Decimal] = None
 ):
-    doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=letter,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
     styles = getSampleStyleSheet()
     
-    # Custom Styles
-    title_style = ParagraphStyle(
-        'ReceiptTitle',
+    primary_color = colors.HexColor('#1E3A8A')
+    secondary_color = colors.HexColor('#2563EB')
+    dark_neutral = colors.HexColor('#1F2937')
+    muted_neutral = colors.HexColor('#4B5563')
+    light_bg = colors.HexColor('#F8FAFC')
+    border_color = colors.HexColor('#CBD5E1')
+    header_bg = colors.HexColor('#E2E8F0')
+    success_bg = colors.HexColor('#DCFCE7')
+
+    school_title_style = ParagraphStyle(
+        'SchoolTitle',
         parent=styles['Heading1'],
         fontName='Helvetica-Bold',
-        fontSize=20,
-        leading=24,
-        textColor=colors.HexColor('#1A237E'),
-        alignment=1, # Center
-        spaceAfter=15
+        fontSize=18,
+        leading=22,
+        textColor=primary_color,
+        alignment=1,
+        spaceAfter=4
     )
-    
+
+    school_subtitle_style = ParagraphStyle(
+        'SchoolSubtitle',
+        parent=styles['BodyText'],
+        fontName='Helvetica',
+        fontSize=9,
+        leading=13,
+        textColor=muted_neutral,
+        alignment=1,
+        spaceAfter=8
+    )
+
+    doc_title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading2'],
+        fontName='Helvetica-Bold',
+        fontSize=13,
+        leading=17,
+        textColor=secondary_color,
+        alignment=1,
+        spaceAfter=14
+    )
+
     label_style = ParagraphStyle(
         'LabelStyle',
         parent=styles['BodyText'],
         fontName='Helvetica-Bold',
-        fontSize=10,
-        leading=14,
-        textColor=colors.HexColor('#333333')
+        fontSize=9,
+        leading=13,
+        textColor=dark_neutral
     )
-    
+
     value_style = ParagraphStyle(
         'ValueStyle',
         parent=styles['BodyText'],
         fontName='Helvetica',
+        fontSize=9,
+        leading=13,
+        textColor=dark_neutral
+    )
+
+    section_header_style = ParagraphStyle(
+        'SectionHeader',
+        parent=styles['Heading3'],
+        fontName='Helvetica-Bold',
         fontSize=10,
         leading=14,
-        textColor=colors.HexColor('#222222')
-    )
-    
-    section_title_style = ParagraphStyle(
-        'SectionTitle',
-        parent=styles['Heading2'],
-        fontName='Helvetica-Bold',
-        fontSize=12,
-        leading=16,
-        textColor=colors.HexColor('#0D47A1'),
-        spaceBefore=15,
-        spaceAfter=5
+        textColor=primary_color,
+        spaceBefore=12,
+        spaceAfter=6
     )
 
     story = [
-        Paragraph(school_name, title_style),
-        Paragraph("FEE PAYMENT RECEIPT", ParagraphStyle('Sub', parent=title_style, fontSize=14, leading=18, spaceAfter=20)),
-        Spacer(1, 10)
+        Paragraph(school_name.upper(), school_title_style),
     ]
-    
-    # Metadata Table
-    metadata_data = [
-        [Paragraph("<b>Receipt Number:</b>", label_style), Paragraph(receipt_number, value_style),
-         Paragraph("<b>Date:</b>", label_style), Paragraph(payment_date, value_style)],
-        [Paragraph("<b>Student Name:</b>", label_style), Paragraph(student_name, value_style),
-         Paragraph("<b>Academic Year:</b>", label_style), Paragraph(academic_year_name, value_style)],
-        [Paragraph("<b>Payment Method:</b>", label_style), Paragraph(payment_method, value_style),
-         Paragraph("<b>Reference:</b>", label_style), Paragraph(transaction_reference or "N/A", value_style)]
+
+    contact_parts = []
+    if school_address:
+        contact_parts.append(school_address)
+    if school_phone:
+        contact_parts.append(f"Phone: {school_phone}")
+    if school_email:
+        contact_parts.append(f"Email: {school_email}")
+    contact_str = " | ".join(contact_parts) if contact_parts else "Affiliated Educational Institution"
+    story.append(Paragraph(contact_str, school_subtitle_style))
+    story.append(Paragraph("FEE PAYMENT RECEIPT", doc_title_style))
+
+    student_class_str = f"{class_name or ''} {section_name or ''}".strip()
+    meta_data = [
+        [
+            Paragraph("<b>Receipt No:</b>", label_style), Paragraph(receipt_number, value_style),
+            Paragraph("<b>Payment Date:</b>", label_style), Paragraph(payment_date, value_style)
+        ],
+        [
+            Paragraph("<b>Student Name:</b>", label_style), Paragraph(student_name, value_style),
+            Paragraph("<b>Academic Year:</b>", label_style), Paragraph(academic_year_name, value_style)
+        ],
+        [
+            Paragraph("<b>Admission No:</b>", label_style), Paragraph(admission_number or "N/A", value_style),
+            Paragraph("<b>Class / Section:</b>", label_style), Paragraph(student_class_str or "N/A", value_style)
+        ],
+        [
+            Paragraph("<b>Payment Mode:</b>", label_style), Paragraph(payment_method.replace('_', ' '), value_style),
+            Paragraph("<b>Transaction Ref:</b>", label_style), Paragraph(transaction_reference or "N/A", value_style)
+        ]
     ]
-    
-    meta_table = Table(metadata_data, colWidths=[100, 150, 100, 150])
+
+    meta_table = Table(meta_data, colWidths=[90, 180, 100, 170])
     meta_table.setStyle(TableStyle([
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('BACKGROUND', (0,0), (-1,-1), light_bg),
+        ('BOX', (0,0), (-1,-1), 0.5, border_color),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, border_color),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
     ]))
-    
     story.append(meta_table)
-    story.append(Spacer(1, 20))
-    story.append(Paragraph("Allocation Details", section_title_style))
-    
-    # Allocations Table
-    alloc_headers = [Paragraph("<b>Fee Type</b>", label_style), Paragraph("<b>Amount Allocated (INR)</b>", label_style)]
-    alloc_rows = [[Paragraph(item[0], value_style), Paragraph(f"{float(item[1]):.2f}", value_style)] for item in allocations]
-    
-    # Total row
-    alloc_rows.append([
-        Paragraph("<b>Total Amount Paid:</b>", label_style),
-        Paragraph(f"<b>{float(total_amount_paid):.2f}</b>", label_style)
-    ])
-    
-    alloc_table_data = [alloc_headers] + alloc_rows
-    alloc_table = Table(alloc_table_data, colWidths=[300, 200])
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("FEE ALLOCATION BREAKDOWN", section_header_style))
+
+    has_details = allocations and isinstance(allocations[0], dict)
+    if has_details:
+        alloc_headers = [
+            Paragraph("<b>Fee Component</b>", label_style),
+            Paragraph("<b>Assigned (₹)</b>", label_style),
+            Paragraph("<b>Concession (₹)</b>", label_style),
+            Paragraph("<b>Late Fine (₹)</b>", label_style),
+            Paragraph("<b>Paid Now (₹)</b>", label_style),
+            Paragraph("<b>Remaining (₹)</b>", label_style),
+        ]
+        alloc_rows = []
+        for item in allocations:
+            alloc_rows.append([
+                Paragraph(str(item.get("name", "Fee")), value_style),
+                Paragraph(f"{float(item.get('assigned', 0)):,.2f}", value_style),
+                Paragraph(f"{float(item.get('discount', 0)):,.2f}", value_style),
+                Paragraph(f"{float(item.get('fine', 0)):,.2f}", value_style),
+                Paragraph(f"<b>{float(item.get('paid', 0)):,.2f}</b>", value_style),
+                Paragraph(f"{float(item.get('remaining', 0)):,.2f}", value_style),
+            ])
+        alloc_rows.append([
+            Paragraph("<b>TOTAL PAID</b>", label_style),
+            Paragraph("", value_style),
+            Paragraph("", value_style),
+            Paragraph("", value_style),
+            Paragraph(f"<b>₹ {float(total_amount_paid):,.2f}</b>", label_style),
+            Paragraph("", value_style),
+        ])
+        alloc_table = Table([alloc_headers] + alloc_rows, colWidths=[150, 75, 75, 70, 85, 85])
+    else:
+        alloc_headers = [
+            Paragraph("<b>Fee Component</b>", label_style),
+            Paragraph("<b>Amount Allocated (₹)</b>", label_style)
+        ]
+        alloc_rows = []
+        for item in allocations:
+            name = item[0] if isinstance(item, (list, tuple)) else str(item)
+            amt = item[1] if isinstance(item, (list, tuple)) else Decimal("0.00")
+            alloc_rows.append([
+                Paragraph(str(name), value_style),
+                Paragraph(f"₹ {float(amt):,.2f}", value_style)
+            ])
+        alloc_rows.append([
+            Paragraph("<b>Total Amount Paid:</b>", label_style),
+            Paragraph(f"<b>₹ {float(total_amount_paid):,.2f}</b>", label_style)
+        ])
+        alloc_table = Table([alloc_headers] + alloc_rows, colWidths=[350, 190])
+
     alloc_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#E8EAF6')),
-        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#BDBDBD')),
-        ('PADDING', (0,0), (-1,-1), 6),
+        ('BACKGROUND', (0,0), (-1,0), header_bg),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#C8E6C9')),
+        ('GRID', (0,0), (-1,-1), 0.5, border_color),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
+        ('BACKGROUND', (0,-1), (-1,-1), success_bg),
     ]))
-    
     story.append(alloc_table)
+
+    if total_outstanding_remaining is not None:
+        story.append(Spacer(1, 8))
+        bal_text = f"<b>Total Outstanding Balance After This Payment: ₹ {float(total_outstanding_remaining):,.2f}</b>"
+        story.append(Paragraph(bal_text, ParagraphStyle('Bal', parent=value_style, fontSize=9, textColor=primary_color)))
+
+    story.append(Spacer(1, 30))
+
+    sig_data = [
+        [
+            Paragraph("_______________________________<br/><b>Student / Parent Signature</b>", ParagraphStyle('S1', parent=value_style, alignment=0)),
+            Paragraph("_______________________________<br/><b>Cashier / Authorized Signatory</b>", ParagraphStyle('S2', parent=value_style, alignment=2))
+        ]
+    ]
+    sig_table = Table(sig_data, colWidths=[270, 270])
+    sig_table.setStyle(TableStyle([
+        ('ALIGN', (0,0), (0,0), 'LEFT'),
+        ('ALIGN', (1,0), (1,0), 'RIGHT'),
+        ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+    ]))
+    story.append(sig_table)
+    story.append(Spacer(1, 14))
+
+    footer_style = ParagraphStyle(
+        'FooterStyle',
+        parent=styles['BodyText'],
+        fontName='Helvetica-Oblique',
+        fontSize=8,
+        textColor=muted_neutral,
+        alignment=1
+    )
+    story.append(Paragraph("This is an electronically generated official receipt issued by EduPulse AI School Management System.", footer_style))
+
     doc.build(story)
 
 class FeeService:
@@ -286,6 +428,13 @@ class FeeService:
                 await self.fee_repo.db.flush()
 
             await self.fee_repo.db.commit()
+            
+            # Auto-propagate fee structure to eligible students in the class
+            try:
+                await self.propagate_class_fee_structure(tenant_id, db_obj.id, current_user_id)
+            except Exception as pe:
+                logger.warning(f"Auto-propagation for fee structure {db_obj.id} encountered: {pe}")
+
             return await self.get_fee_structure(db_obj.id, tenant_id)
         except IntegrityError as e:
             await self.fee_repo.db.rollback()
@@ -363,6 +512,69 @@ class FeeService:
         await self.fee_repo.db.commit()
         await self.fee_repo.db.refresh(deleted)
         return deleted
+    async def propagate_class_fee_structure(
+        self,
+        tenant_id: uuid.UUID,
+        fee_structure_id: uuid.UUID,
+        current_user_id: Optional[uuid.UUID] = None
+    ) -> int:
+        """
+        Propagates a fee structure to all eligible active students in the target class
+        (or school if class_id is None). Idempotent: preserves existing assignments,
+        concessions, and payment histories.
+        """
+        fee_structure = await self.get_fee_structure(fee_structure_id, tenant_id)
+
+        # Query active enrolled students
+        conditions = [
+            Student.tenant_id == tenant_id,
+            Student.school_id == fee_structure.school_id,
+            Student.deleted_at.is_(None),
+            Student.status == StudentStatus.ACTIVE
+        ]
+        if fee_structure.class_id is not None:
+            conditions.append(Student.class_id == fee_structure.class_id)
+        if fee_structure.academic_year_id is not None:
+            conditions.append(Student.academic_year_id == fee_structure.academic_year_id)
+
+        stmt_students = select(Student).where(and_(*conditions))
+        res_students = await self.fee_repo.db.execute(stmt_students)
+        students = res_students.scalars().all()
+
+        assigned_count = 0
+        for student in students:
+            # Check existing assignment idempotently
+            stmt_existing = select(StudentFeeAssignment).where(
+                StudentFeeAssignment.student_id == student.id,
+                StudentFeeAssignment.fee_structure_id == fee_structure.id,
+                StudentFeeAssignment.tenant_id == tenant_id
+            )
+            res_existing = await self.fee_repo.db.execute(stmt_existing)
+            existing = res_existing.scalar_one_or_none()
+
+            if not existing:
+                new_assignment = StudentFeeAssignment(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_id,
+                    academic_year_id=fee_structure.academic_year_id,
+                    student_id=student.id,
+                    fee_structure_id=fee_structure.id,
+                    assigned_amount=fee_structure.amount,
+                    paid_amount=Decimal("0.00"),
+                    discount_amount=Decimal("0.00"),
+                    fine_amount=Decimal("0.00"),
+                    status=FeeAssignmentStatus.UNPAID,
+                    created_by=current_user_id,
+                    version=1
+                )
+                self.fee_repo.db.add(new_assignment)
+                assigned_count += 1
+
+        if assigned_count > 0:
+            await self.fee_repo.db.commit()
+
+        logger.info(f"Propagated fee structure {fee_structure_id} to {assigned_count} students (out of {len(students)} eligible).")
+        return assigned_count
 
     # --- STUDENT FEE ASSIGNMENTS ---
     async def assign_fee(
@@ -491,6 +703,23 @@ class FeeService:
 
             allocations_to_create.append((assignment, alloc_allocated))
 
+        # Check duplicate transaction reference if supplied
+        if obj_in.transaction_reference and obj_in.transaction_reference.strip():
+            ref_clean = obj_in.transaction_reference.strip()
+            stmt_dup = select(FeePayment).where(
+                FeePayment.tenant_id == tenant_id,
+                FeePayment.student_id == student_id,
+                FeePayment.transaction_reference == ref_clean,
+                FeePayment.status != PaymentStatus.CANCELLED,
+                FeePayment.deleted_at.is_(None)
+            )
+            res_dup = await self.fee_repo.db.execute(stmt_dup)
+            if res_dup.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Payment with transaction reference '{ref_clean}' is already recorded for this student."
+                )
+
         # Create Fee Payment Transaction
         payment = await self.fee_repo.create_payment(
             tenant_id=tenant_id,
@@ -526,56 +755,75 @@ class FeeService:
         # Generate receipt
         receipt_number = await self.fee_repo.get_next_receipt_number(tenant_id)
         
-        # Load School Name, Student Name, Academic Year Name
+        # Load School Name, Student Name, Academic Year Name, Class, Section
         stmt_st = select(Student).where(Student.id == student_id, Student.tenant_id == tenant_id)
         res_st = await self.fee_repo.db.execute(stmt_st)
         student = res_st.scalar_one_or_none()
-        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+        student_name = f"{student.first_name} {student.last_name}".strip() if student else "Unknown Student"
+        adm_no = student.admission_number if student else None
 
-        school_name = "Unknown School"
+        class_name = None
+        section_name = None
+        if student and student.class_id:
+            stmt_c = select(Class).where(Class.id == student.class_id)
+            res_c = await self.fee_repo.db.execute(stmt_c)
+            c_obj = res_c.scalar_one_or_none()
+            if c_obj:
+                class_name = c_obj.name
+        if student and student.section_id:
+            stmt_sec = select(Section).where(Section.id == student.section_id)
+            res_sec = await self.fee_repo.db.execute(stmt_sec)
+            sec_obj = res_sec.scalar_one_or_none()
+            if sec_obj:
+                section_name = sec_obj.name
+
+        school_name = "EduPulse School"
+        school_address = None
+        school_phone = None
+        school_email = None
         if school_id:
             stmt_sch = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
             res_sch = await self.fee_repo.db.execute(stmt_sch)
             school = res_sch.scalar_one_or_none()
             if school:
                 school_name = school.name
+                school_address = f"{school.address or ''}, {school.city or ''}, {school.state or ''}".strip(', ')
+                school_phone = school.phone
+                school_email = school.email
 
         stmt_ay = select(AcademicYear).where(AcademicYear.id == obj_in.academic_year_id, AcademicYear.tenant_id == tenant_id)
         res_ay = await self.fee_repo.db.execute(stmt_ay)
         ay = res_ay.scalar_one_or_none()
         ay_name = ay.name if ay else "Unknown Year"
 
-        # Prepare allocations details for PDF
+        # Prepare detailed allocations breakdown for PDF
         pdf_allocations = []
+        total_remaining = Decimal("0.00")
         for assignment, allocated_amount in allocations_to_create:
             structure = await self.fee_repo.get_fee_structure_by_id(assignment.fee_structure_id, tenant_id)
-            fee_type_name = "Fee"
+            fee_type_name = "Fee Component"
             if structure:
                 fee_type = await self.fee_repo.get_fee_type_by_id(structure.fee_type_id, tenant_id)
                 if fee_type:
                     fee_type_name = fee_type.name
-            pdf_allocations.append((fee_type_name, allocated_amount))
+            rem = Decimal(str(assignment.assigned_amount)) + Decimal(str(assignment.fine_amount)) - Decimal(str(assignment.discount_amount)) - Decimal(str(assignment.paid_amount))
+            rem = max(Decimal("0.00"), rem)
+            total_remaining += rem
+            pdf_allocations.append({
+                "name": fee_type_name,
+                "assigned": Decimal(str(assignment.assigned_amount)),
+                "discount": Decimal(str(assignment.discount_amount)),
+                "fine": Decimal(str(assignment.fine_amount)),
+                "paid": allocated_amount,
+                "remaining": rem
+            })
 
-        # Generate ReportLab PDF Receipt
-        import tempfile
-        
-        # Format dates
+        # Generate ReportLab PDF Receipt in-memory
         payment_date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        is_mock = self.storage_service.client is None
-        if is_mock:
-            receipts_dir = os.path.join("static", "receipts")
-            os.makedirs(receipts_dir, exist_ok=True)
-            pdf_path = os.path.join(receipts_dir, f"{receipt_number}.pdf")
-            temp_path = pdf_path
-        else:
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
-                temp_path = temp_file.name
-            pdf_path = f"receipts/{receipt_number}.pdf"
-
+        buf = io.BytesIO()
         try:
             _generate_pdf_receipt(
-                pdf_path=temp_path,
+                pdf_path=buf,
                 receipt_number=receipt_number,
                 school_name=school_name,
                 student_name=student_name,
@@ -584,27 +832,39 @@ class FeeService:
                 payment_method=obj_in.payment_method.value,
                 transaction_reference=obj_in.transaction_reference,
                 allocations=pdf_allocations,
-                total_amount_paid=total_payment_amount
+                total_amount_paid=total_payment_amount,
+                school_address=school_address,
+                school_phone=school_phone,
+                school_email=school_email,
+                admission_number=adm_no,
+                class_name=class_name,
+                section_name=section_name,
+                total_outstanding_remaining=total_remaining
             )
-            
-            with open(temp_path, "rb") as f:
-                pdf_bytes = f.read()
-                
-            await self.storage_service.upload(pdf_bytes, pdf_path, "application/pdf")
-            
-            if not is_mock:
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
+            pdf_bytes = buf.getvalue()
         except Exception as e:
-            logger.error(f"Failed to generate PDF receipt file: {str(e)}")
-            if not is_mock:
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
+            logger.error(f"Failed to generate PDF receipt: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to generate PDF receipt.")
+
+        # Persist locally and upload to storage
+        pdf_path = f"receipts/{receipt_number}.pdf"
+        try:
+            os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_bytes)
+        except Exception as fe:
+            logger.warning(f"Could not save local receipt {pdf_path}: {fe}")
+
+        receipts_dir = os.path.join("static", "receipts")
+        os.makedirs(receipts_dir, exist_ok=True)
+        local_path = os.path.join(receipts_dir, f"{receipt_number}.pdf")
+        try:
+            with open(local_path, "wb") as f:
+                f.write(pdf_bytes)
+        except Exception as fe:
+            logger.warning(f"Could not save local receipt {local_path}: {fe}")
+
+        await self.storage_service.upload(pdf_bytes, pdf_path, "application/pdf")
 
         # Create Receipt record
         receipt = await self.fee_repo.create_receipt(
@@ -631,6 +891,224 @@ class FeeService:
                 logger.error(f"Failed to send fee payment notification: {str(ne)}")
 
         return await self.fee_repo.get_payment_by_id(payment.id, tenant_id)
+
+    async def list_payments(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: Optional[uuid.UUID] = None,
+        student_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+        payment_method: Optional[PaymentMethod] = None,
+        payment_status: Optional[PaymentStatus] = None,
+        skip: int = 0,
+        limit: int = 50
+    ) -> Tuple[List[FeePayment], int]:
+        return await self.fee_repo.list_payments(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student_id,
+            academic_year_id=academic_year_id,
+            payment_method=payment_method.value if payment_method else None,
+            payment_status=payment_status.value if payment_status else None,
+            skip=skip,
+            limit=limit
+        )
+
+    async def update_payment(
+        self,
+        payment_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        obj_in: FeePaymentUpdate,
+        current_user_id: Optional[uuid.UUID] = None
+    ) -> FeePayment:
+        payment = await self.fee_repo.get_payment_by_id(payment_id, tenant_id)
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found.")
+        if payment.status == PaymentStatus.CANCELLED:
+            raise HTTPException(status_code=400, detail="Cannot edit a cancelled payment.")
+
+        if obj_in.payment_method is not None:
+            payment.payment_method = obj_in.payment_method.value
+        if obj_in.transaction_reference is not None:
+            payment.transaction_reference = obj_in.transaction_reference.strip() if obj_in.transaction_reference.strip() else None
+        if obj_in.remarks is not None:
+            payment.remarks = obj_in.remarks.strip() if obj_in.remarks.strip() else None
+
+        # If amount_paid is modified
+        if obj_in.amount_paid is not None and obj_in.amount_paid != payment.amount_paid:
+            diff = Decimal(str(obj_in.amount_paid)) - Decimal(str(payment.amount_paid))
+            if len(payment.allocations) == 1:
+                alloc = payment.allocations[0]
+                assignment = alloc.assignment
+                if not assignment:
+                    assignment = await self.fee_repo.get_fee_assignment_by_id(alloc.assignment_id, tenant_id)
+                new_allocated = Decimal(str(alloc.amount_allocated)) + diff
+                max_allowable = Decimal(str(assignment.assigned_amount)) + Decimal(str(assignment.fine_amount)) - Decimal(str(assignment.discount_amount)) - (Decimal(str(assignment.paid_amount)) - Decimal(str(alloc.amount_allocated)))
+                if new_allocated > max_allowable:
+                    raise HTTPException(status_code=400, detail=f"Updated amount ({new_allocated}) exceeds outstanding due ({max_allowable}).")
+                if new_allocated <= 0:
+                    raise HTTPException(status_code=400, detail="Updated payment amount must be greater than zero.")
+
+                assignment.paid_amount = Decimal(str(assignment.paid_amount)) + diff
+                outstanding = Decimal(str(assignment.assigned_amount)) + Decimal(str(assignment.fine_amount)) - Decimal(str(assignment.discount_amount)) - Decimal(str(assignment.paid_amount))
+                if outstanding <= Decimal("0.00"):
+                    assignment.status = FeeAssignmentStatus.PAID
+                else:
+                    assignment.status = FeeAssignmentStatus.PARTIALLY_PAID
+
+                alloc.amount_allocated = new_allocated
+                payment.amount_paid = Decimal(str(obj_in.amount_paid))
+                self.fee_repo.db.add(assignment)
+                self.fee_repo.db.add(alloc)
+
+        payment.updated_by = current_user_id
+        payment.updated_at = datetime.now(timezone.utc)
+        self.fee_repo.db.add(payment)
+        await self.fee_repo.db.commit()
+
+        if payment.receipt:
+            await self.regenerate_receipt_pdf(payment.receipt.receipt_number, tenant_id)
+
+        return await self.fee_repo.get_payment_by_id(payment.id, tenant_id)
+
+    async def regenerate_receipt_pdf(self, receipt_number: str, tenant_id: uuid.UUID) -> bytes:
+        receipt = await self.fee_repo.get_receipt_by_number(receipt_number, tenant_id)
+        if not receipt:
+            raise HTTPException(status_code=404, detail="Receipt not found.")
+        payment = receipt.payment
+        if not payment:
+            payment = await self.fee_repo.get_payment_by_id(receipt.payment_id, tenant_id)
+            if not payment:
+                raise HTTPException(status_code=404, detail="Payment for receipt not found.")
+
+        # Student & School details
+        stmt_st = select(Student).where(Student.id == payment.student_id, Student.tenant_id == tenant_id)
+        res_st = await self.fee_repo.db.execute(stmt_st)
+        student = res_st.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}".strip() if student else "Unknown Student"
+        adm_no = student.admission_number if student else None
+
+        class_name = None
+        section_name = None
+        if student and student.class_id:
+            stmt_c = select(Class).where(Class.id == student.class_id)
+            res_c = await self.fee_repo.db.execute(stmt_c)
+            c_obj = res_c.scalar_one_or_none()
+            if c_obj:
+                class_name = c_obj.name
+        if student and student.section_id:
+            stmt_sec = select(Section).where(Section.id == student.section_id)
+            res_sec = await self.fee_repo.db.execute(stmt_sec)
+            sec_obj = res_sec.scalar_one_or_none()
+            if sec_obj:
+                section_name = sec_obj.name
+
+        school_id = student.school_id if student else None
+        school_name = "EduPulse School"
+        school_address = None
+        school_phone = None
+        school_email = None
+        if school_id:
+            stmt_sch = select(School).where(School.id == school_id, School.tenant_id == tenant_id)
+            res_sch = await self.fee_repo.db.execute(stmt_sch)
+            school = res_sch.scalar_one_or_none()
+            if school:
+                school_name = school.name
+                school_address = f"{school.address or ''}, {school.city or ''}, {school.state or ''}".strip(', ')
+                school_phone = school.phone
+                school_email = school.email
+
+        stmt_ay = select(AcademicYear).where(AcademicYear.id == payment.academic_year_id, AcademicYear.tenant_id == tenant_id)
+        res_ay = await self.fee_repo.db.execute(stmt_ay)
+        ay = res_ay.scalar_one_or_none()
+        ay_name = ay.name if ay else "Unknown Year"
+
+        pdf_allocations = []
+        total_remaining = Decimal("0.00")
+        for alloc in payment.allocations:
+            assignment = alloc.assignment
+            if not assignment:
+                assignment = await self.fee_repo.get_fee_assignment_by_id(alloc.assignment_id, tenant_id)
+            fee_type_name = "Fee Component"
+            if assignment:
+                structure = await self.fee_repo.get_fee_structure_by_id(assignment.fee_structure_id, tenant_id)
+                if structure:
+                    ft = await self.fee_repo.get_fee_type_by_id(structure.fee_type_id, tenant_id)
+                    if ft:
+                        fee_type_name = ft.name
+                rem = Decimal(str(assignment.assigned_amount)) + Decimal(str(assignment.fine_amount)) - Decimal(str(assignment.discount_amount)) - Decimal(str(assignment.paid_amount))
+                rem = max(Decimal("0.00"), rem)
+                total_remaining += rem
+                pdf_allocations.append({
+                    "name": fee_type_name,
+                    "assigned": Decimal(str(assignment.assigned_amount)),
+                    "discount": Decimal(str(assignment.discount_amount)),
+                    "fine": Decimal(str(assignment.fine_amount)),
+                    "paid": alloc.amount_allocated,
+                    "remaining": rem,
+                })
+            else:
+                pdf_allocations.append({
+                    "name": fee_type_name,
+                    "assigned": alloc.amount_allocated,
+                    "discount": Decimal("0.00"),
+                    "fine": Decimal("0.00"),
+                    "paid": alloc.amount_allocated,
+                    "remaining": Decimal("0.00"),
+                })
+
+        payment_date_str = payment.payment_date.strftime("%Y-%m-%d %H:%M:%S") if hasattr(payment.payment_date, 'strftime') else str(payment.payment_date)
+
+        buf = io.BytesIO()
+        try:
+            _generate_pdf_receipt(
+                pdf_path=buf,
+                receipt_number=receipt_number,
+                school_name=school_name,
+                student_name=student_name,
+                academic_year_name=ay_name,
+                payment_date=payment_date_str,
+                payment_method=payment.payment_method.value if hasattr(payment.payment_method, 'value') else str(payment.payment_method),
+                transaction_reference=payment.transaction_reference,
+                allocations=pdf_allocations,
+                total_amount_paid=payment.amount_paid,
+                school_address=school_address,
+                school_phone=school_phone,
+                school_email=school_email,
+                admission_number=adm_no,
+                class_name=class_name,
+                section_name=section_name,
+                total_outstanding_remaining=total_remaining
+            )
+            pdf_bytes = buf.getvalue()
+        except Exception as e:
+            logger.error(f"Failed to regenerate PDF receipt: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to regenerate PDF receipt.")
+
+        pdf_path = f"receipts/{receipt_number}.pdf"
+        try:
+            os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_bytes)
+        except Exception as fe:
+            logger.warning(f"Could not save local receipt {pdf_path}: {fe}")
+
+        receipts_dir = os.path.join("static", "receipts")
+        os.makedirs(receipts_dir, exist_ok=True)
+        local_path = os.path.join(receipts_dir, f"{receipt_number}.pdf")
+        try:
+            with open(local_path, "wb") as f:
+                f.write(pdf_bytes)
+        except Exception as fe:
+            logger.warning(f"Could not save local receipt {local_path}: {fe}")
+
+        await self.storage_service.upload(pdf_bytes, pdf_path, "application/pdf")
+        if receipt.pdf_path != pdf_path:
+            receipt.pdf_path = pdf_path
+            self.fee_repo.db.add(receipt)
+            await self.fee_repo.db.commit()
+
+        return pdf_bytes
 
     # --- REVERT PAYMENT / CANCELLATION ---
     async def cancel_payment(
@@ -1003,6 +1481,8 @@ class FeeService:
             outstanding = Decimal(str(assign.assigned_amount)) + Decimal(str(assign.fine_amount)) - Decimal(str(assign.discount_amount)) - Decimal(str(assign.paid_amount))
 
             items.append({
+                "assignment_id": assign.id,
+                "academic_year_id": assign.academic_year_id,
                 "student_id": student.id,
                 "student_name": student_name,
                 "admission_number": student.admission_number,

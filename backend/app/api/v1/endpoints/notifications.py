@@ -18,6 +18,8 @@ from app.schemas.notification import (
 from app.schemas.response import APIResponse
 from app.models.user import User
 from app.models.notification import NotificationType, NotificationPriority, NotificationStatus, NotificationDelivery, NotificationTargetRole
+from app.models.tenant import Tenant
+from app.models.school import School
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +58,6 @@ async def create_notification(
                 school_id = current_user.schools[0].id
                 logger.info(f"Resolved default school_id from user profile: {school_id}")
             else:
-                from sqlalchemy import select
-                from app.models.school import School
                 stmt_s = select(School.id).where(School.tenant_id == tenant_id, School.deleted_at.is_(None))
                 res_s = await service.notification_repo.db.execute(stmt_s)
                 school_id = res_s.scalar_one_or_none()
@@ -98,22 +98,40 @@ async def create_notification(
             
             refreshed = created[0]
         else:
-            # Broadcast announcement
-            created_list = await service.dispatch_event(
+            # Broadcast notification to role / school
+            now_utc = datetime.now(timezone.utc)
+            is_future = obj_in.scheduled_at is not None and obj_in.scheduled_at > now_utc
+            published_at = None if is_future else now_utc
+
+            master_obj_in = obj_in.model_copy()
+            master_obj_in.published_at = published_at
+            master_obj_in.sender_id = current_user.id
+
+            db_master = await service.notification_repo.create(
                 tenant_id=tenant_id,
                 school_id=school_id,
-                event_type="ANNOUNCEMENT",
-                payload=obj_in.model_dump(),
+                obj_in=master_obj_in,
                 created_by=current_user.id
             )
-            if not created_list:
-                logger.warning(f"No matching active users found in target role {obj_in.target_role}.")
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="No matching active users found in target role."
-                )
-            
-            refreshed = created_list[0]
+            await service.notification_repo.db.flush()
+
+            # If immediate, dispatch deliveries for this broadcast notification
+            if not is_future:
+                try:
+                    stmt_t = select(Tenant).where(Tenant.id == tenant_id)
+                    res_t = await service.notification_repo.db.execute(stmt_t)
+                    tenant_obj = res_t.scalar_one_or_none()
+                    tenant_settings = tenant_obj.settings if tenant_obj else {}
+
+                    await service._dispatch_deliveries_for_notification(
+                        service.notification_repo.db, db_master, tenant_settings
+                    )
+                except Exception as ex_dispatch:
+                    logger.warning(f"Recipient dispatch notice for broadcast notification: {ex_dispatch}")
+
+            await service.notification_repo.db.commit()
+            await service.notification_repo.db.refresh(db_master)
+            refreshed = db_master
 
         return APIResponse(
             success=True,
@@ -146,6 +164,7 @@ async def create_notification(
     summary="Retrieve paginated list of user's own notifications"
 )
 async def list_notifications(
+    school_id: Optional[uuid.UUID] = Query(None, description="Optional target school ID to retrieve operational/school notifications"),
     notification_type: Optional[NotificationType] = None,
     priority: Optional[NotificationPriority] = None,
     notification_status: Optional[NotificationStatus] = Query(None, alias="status"),
@@ -157,13 +176,22 @@ async def list_notifications(
     service: NotificationService = Depends(get_notification_service)
 ) -> APIResponse[List[NotificationResponse]]:
     """
-    Returns list of notifications scoped to the current user and their active roles.
+    Returns list of notifications scoped to the current user or selected school operations.
     """
+    if school_id and not current_user.is_superuser:
+        stmt_s = select(School.id).where(School.id == school_id, School.tenant_id == tenant_id, School.deleted_at.is_(None))
+        res_s = await service.notification_repo.db.execute(stmt_s)
+        if not res_s.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="School not found in current tenant.")
+
     user_role_codes = [r.code for r in current_user.roles]
+    if current_user.is_superuser and "SUPER_ADMIN" not in user_role_codes:
+        user_role_codes.append("SUPER_ADMIN")
     results = await service.get_multi(
         tenant_id=tenant_id,
         user_id=current_user.id,
         user_roles=user_role_codes,
+        school_id=school_id,
         notification_type=notification_type,
         priority=priority,
         status=notification_status,
@@ -239,7 +267,6 @@ async def get_tenant_preferences(
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     service: NotificationService = Depends(get_notification_service)
 ) -> APIResponse[Dict[str, Any]]:
-    from app.models.tenant import Tenant
     stmt = select(Tenant).where(Tenant.id == tenant_id)
     res = await service.notification_repo.db.execute(stmt)
     tenant = res.scalar_one_or_none()
@@ -264,7 +291,6 @@ async def update_tenant_preferences(
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     service: NotificationService = Depends(get_notification_service)
 ) -> APIResponse[Dict[str, Any]]:
-    from app.models.tenant import Tenant
     stmt = select(Tenant).where(Tenant.id == tenant_id)
     res = await service.notification_repo.db.execute(stmt)
     tenant = res.scalar_one_or_none()
@@ -399,7 +425,6 @@ async def publish_notification(
         
     notif.published_at = datetime.now(timezone.utc)
     
-    from app.models.tenant import Tenant
     stmt_t = select(Tenant).where(Tenant.id == tenant_id)
     res_t = await service.notification_repo.db.execute(stmt_t)
     tenant_obj = res_t.scalar_one_or_none()

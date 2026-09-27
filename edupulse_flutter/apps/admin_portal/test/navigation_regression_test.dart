@@ -54,10 +54,21 @@ class FakeNavigationRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeNavigationSessionManager implements SessionManager {
   String? cachedTenantId;
+  String? cachedTenantName;
+  String? cachedSchoolId;
+  String? cachedSchoolName;
 
   @override
   Future<String?> getTenantId() async => cachedTenantId;
@@ -74,13 +85,27 @@ class FakeNavigationSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
-  Future<String?> getSchoolId() async => null; // Simulate initial load / no school context
+  Future<String?> getSchoolId() async => cachedSchoolId;
   @override
-  Future<void> saveSchoolId(String schoolId) async {}
+  Future<void> saveSchoolId(String schoolId) async {
+    cachedSchoolId = schoolId;
+  }
+  @override
+  Future<String?> getSchoolName() async => cachedSchoolName;
+  @override
+  Future<void> saveSchoolName(String schoolName) async {
+    cachedSchoolName = schoolName;
+  }
+  @override
+  Future<String?> getTenantName() async => cachedTenantName;
+  @override
+  Future<void> saveTenantName(String tenantName) async {
+    cachedTenantName = tenantName;
+  }
 }
 
 class FakeNavigationApiClient extends BaseApiClient {

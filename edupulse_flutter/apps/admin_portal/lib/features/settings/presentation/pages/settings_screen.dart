@@ -1,10 +1,15 @@
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import '../providers/settings_provider.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../school_setup/presentation/widgets/school_logo_uploader.dart';
+import '../widgets/school_geofence_card.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../bulk_import/presentation/widgets/reset_school_data_dialog.dart';
+import '../../../bulk_import/presentation/providers/school_onboarding_providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -15,7 +20,6 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
-  bool _isUploadingLogo = false;
   
   // Controllers
   late TextEditingController _nameController;
@@ -145,7 +149,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     
     // 1. Report Card config
     final rcSettings = settings['report_card_settings'] as Map<String, dynamic>? ?? {};
-    _repTitleController.text = rcSettings['title'] ?? 'Delhi Public School';
+    _repTitleController.text = rcSettings['title'] ?? school.name;
     _repLogoUrlController.text = rcSettings['logo_url'] ?? '';
     _principalSigController.text = rcSettings['principal_signature_label'] ?? 'Principal Signature';
     _classTeacherSigController.text = rcSettings['class_teacher_signature_label'] ?? 'Class Teacher Signature';
@@ -242,99 +246,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _handleUploadLogo(String schoolId) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['png', 'jpg', 'jpeg', 'webp'],
-      withData: true,
-    );
-
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.first;
-    if (file.bytes == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to read selected image bytes.'), backgroundColor: Colors.red),
-        );
-      }
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Image file exceeds the 5MB maximum size limit.'), backgroundColor: Colors.red),
-        );
-      }
-      return;
-    }
-
-    setState(() => _isUploadingLogo = true);
-    final newUrl = await ref.read(settingsNotifierProvider.notifier).uploadSchoolLogo(
-      schoolId: schoolId,
-      fileBytes: file.bytes!,
-      fileName: file.name,
-    );
-    setState(() => _isUploadingLogo = false);
-
-    if (mounted) {
-      if (newUrl != null) {
-        setState(() {
-          _logoUrlController.text = newUrl;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('School branding logo uploaded successfully.')),
-        );
-      } else {
-        final err = ref.read(settingsNotifierProvider).error;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Logo upload failed: $err'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _handleDeleteLogo(String schoolId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Remove School Logo'),
-        content: const Text('Are you sure you want to remove the current school logo?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    setState(() => _isUploadingLogo = true);
-    final success = await ref.read(settingsNotifierProvider.notifier).deleteSchoolLogo(schoolId: schoolId);
-    setState(() => _isUploadingLogo = false);
-
-    if (mounted) {
-      if (success) {
-        setState(() {
-          _logoUrlController.text = '';
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('School logo removed successfully.')),
-        );
-      } else {
-        final err = ref.read(settingsNotifierProvider).error;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to remove logo: $err'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
   Future<void> _handleSaveNotifSettings() async {
     final defaultChannels = <String>[];
     if (_tenantInApp) defaultChannels.add('IN_APP');
@@ -389,6 +300,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final theme = Theme.of(context);
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
+
+    final authState = ref.watch(authStateProvider);
+    final isSuperAdmin = authState is Authenticated &&
+        (authState.user.isSuperuser ||
+            authState.user.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN'));
+    final isTenantAdmin = authState is Authenticated &&
+        !isSuperAdmin &&
+        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN');
 
     ref.listen<String?>(selectedSchoolIdProvider, (previous, next) {
       if (next != null) {
@@ -451,105 +370,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // --- School Logo Section ---
-                                Text('School Logo & Branding', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 8),
-                                LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    final isNarrow = constraints.maxWidth < 480;
-                                    final hasLogo = _logoUrlController.text.trim().isNotEmpty;
-
-                                    final previewWidget = Container(
-                                      width: 100,
-                                      height: 100,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade100,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: Colors.grey.shade300),
-                                      ),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: hasLogo
-                                          ? (_logoUrlController.text.trim().startsWith('http')
-                                              ? Image.network(
-                                                  _logoUrlController.text.trim(),
-                                                  fit: BoxFit.contain,
-                                                  errorBuilder: (ctx, err, stack) => const Center(
-                                                    child: Icon(Icons.broken_image, color: Colors.grey, size: 36),
-                                                  ),
-                                                )
-                                              : Center(
-                                                  child: Icon(Icons.school, size: 48, color: theme.colorScheme.primary),
-                                                ))
-                                          : const Center(
-                                              child: Icon(Icons.image_outlined, size: 40, color: Colors.grey),
-                                            ),
-                                    );
-
-                                    final actionsWidget = Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          hasLogo ? 'Current Logo Active' : 'No Logo Uploaded',
-                                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'Accepted formats: PNG, JPG, JPEG, WebP (Max 5MB)',
-                                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Wrap(
-                                          spacing: 8,
-                                          runSpacing: 8,
-                                          children: [
-                                            ElevatedButton.icon(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: theme.colorScheme.primary,
-                                                foregroundColor: theme.colorScheme.onPrimary,
-                                              ),
-                                              onPressed: _isUploadingLogo ? null : () => _handleUploadLogo(school.id),
-                                              icon: _isUploadingLogo
-                                                  ? const SizedBox(
-                                                      width: 14,
-                                                      height: 14,
-                                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                                    )
-                                                  : const Icon(Icons.upload_file, size: 16),
-                                              label: Text(_isUploadingLogo
-                                                  ? 'Uploading...'
-                                                  : (hasLogo ? 'Replace Logo' : 'Upload Logo')),
-                                            ),
-                                            if (hasLogo)
-                                              OutlinedButton.icon(
-                                                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                                                onPressed: _isUploadingLogo ? null : () => _handleDeleteLogo(school.id),
-                                                icon: const Icon(Icons.delete_outline, size: 16),
-                                                label: const Text('Remove Logo'),
-                                              ),
-                                          ],
-                                        ),
-                                      ],
-                                    );
-
-                                    if (isNarrow) {
-                                      return Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Center(child: previewWidget),
-                                          const SizedBox(height: 12),
-                                          actionsWidget,
-                                        ],
-                                      );
-                                    } else {
-                                      return Row(
-                                        crossAxisAlignment: CrossAxisAlignment.center,
-                                        children: [
-                                          previewWidget,
-                                          const SizedBox(width: 16),
-                                          Expanded(child: actionsWidget),
-                                        ],
-                                      );
-                                    }
+                                SchoolLogoUploader(
+                                  schoolId: school.id,
+                                  currentLogoUrl: _logoUrlController.text.isNotEmpty ? _logoUrlController.text : null,
+                                  logoUpdatedAt: school.logoUpdatedAt,
+                                  schoolName: _nameController.text.isNotEmpty ? _nameController.text : school.name,
+                                  onLogoChanged: (newUrl) {
+                                    setState(() {
+                                      _logoUrlController.text = newUrl ?? '';
+                                    });
                                   },
                                 ),
                                 const SizedBox(height: 16),
@@ -705,6 +534,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         const SizedBox(height: 24),
 
+                        // --- School Geofence & Attendance Location ---
+                        SchoolGeofenceCard(school: school),
+                        const SizedBox(height: 24),
+
                         _buildSectionHeader('Academic Setup', Icons.calendar_month, theme),
                         const SizedBox(height: 12),
                         Card(
@@ -848,6 +681,78 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             label: const Text('Save Configuration Settings', style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
                         ),
+                        if (isSuperAdmin || isTenantAdmin) ...[
+                          const SizedBox(height: 40),
+                          _buildSectionHeader('Danger Zone: School Data Management', Icons.warning_amber_rounded, theme),
+                          const SizedBox(height: 12),
+                          Card(
+                            elevation: 0,
+                            color: Colors.red.shade50.withValues(alpha: 0.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(radius.md),
+                              side: BorderSide(color: Colors.red.shade300),
+                            ),
+                            child: Padding(
+                              padding: EdgeInsets.all(spacing.md),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(Icons.delete_forever, color: Colors.red.shade700, size: 24),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Reset School Data and Start Onboarding Again',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.red.shade900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Permanently delete operational and onboarding records (students, teachers, classes, sections, timetables, attendance, etc.) for this school campus and return the onboarding lifecycle to Step 1. The tenant, super admins, user accounts, and credentials will be preserved.',
+                                    style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade900),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  FilledButton.icon(
+                                    key: const ValueKey('settings_reset_school_data_button'),
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.red.shade700,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    icon: const Icon(Icons.delete_forever, size: 18),
+                                    label: const Text('Reset School Data...'),
+                                    onPressed: () async {
+                                      final result = await showDialog<bool>(
+                                        context: context,
+                                        builder: (ctx) => ResetSchoolDataDialog(
+                                          schoolId: school.id,
+                                          schoolName: school.name,
+                                          tenantName: null,
+                                          onResetComplete: () {
+                                            ref.read(schoolOnboardingProvider.notifier).reset();
+                                            ref.invalidate(schoolsListProvider);
+                                            ref.invalidate(currentSchoolProvider);
+                                          },
+                                        ),
+                                      );
+                                      if (result == true && context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('School data reset completed successfully.'),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

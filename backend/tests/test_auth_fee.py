@@ -865,3 +865,196 @@ async def test_get_outstanding_report(client: AsyncClient, setup_fee_test_data: 
     response_school_iso = await client.get(f"/api/v1/fees/reports/outstanding?school_id={other_school_id}", headers=headers)
     assert response_school_iso.status_code == 200
     assert len(response_school_iso.json()["data"]) == 0
+
+
+@pytest.mark.anyio
+async def test_fee_payment_update_list_and_receipt_regeneration(client: AsyncClient, setup_fee_test_data: dict, db_session: AsyncSession):
+    headers = setup_fee_test_data["admin_headers"]
+    tenant = setup_fee_test_data["tenant"]
+    school = setup_fee_test_data["school"]
+    ay = setup_fee_test_data["academic_year"]
+    cl = setup_fee_test_data["class"]
+    student = setup_fee_test_data["student"]
+
+    # Setup Type, Structure, Assignment
+    ft = FeeType(tenant_id=tenant.id, name="Computer Fee", code=f"COMP_{uuid.uuid4().hex[:6].upper()}", description="Computer lab fee")
+    db_session.add(ft)
+    await db_session.flush()
+
+    fs = FeeStructure(
+        tenant_id=tenant.id, school_id=school.id, fee_type_id=ft.id,
+        academic_year_id=ay.id, class_id=cl.id, amount=Decimal("1200.00"), due_date=date.today()
+    )
+    db_session.add(fs)
+    await db_session.flush()
+
+    assign = StudentFeeAssignment(
+        tenant_id=tenant.id, student_id=student.id, fee_structure_id=fs.id,
+        academic_year_id=ay.id, assigned_amount=Decimal("1200.00")
+    )
+    db_session.add(assign)
+    await db_session.commit()
+
+    # Collect Payment
+    pay_payload = {
+        "student_id": str(student.id),
+        "academic_year_id": str(ay.id),
+        "payment_method": "CASH",
+        "remarks": "Initial lab fee payment",
+        "transaction_reference": f"TXN-INIT-{uuid.uuid4().hex[:6]}",
+        "allocations": [{"assignment_id": str(assign.id), "amount_allocated": 500.0}]
+    }
+    create_res = await client.post("/api/v1/fees/payments", json=pay_payload, headers=headers)
+    assert create_res.status_code == 201
+    payment_data = create_res.json()["data"]
+    payment_id = payment_data["id"]
+    receipt_no = payment_data["receipt_number"]
+    assert receipt_no is not None
+
+    # Test GET /fees/payments
+    list_res = await client.get(f"/api/v1/fees/payments?student_id={student.id}", headers=headers)
+    assert list_res.status_code == 200
+    payments_list = list_res.json()["data"]
+    assert len(payments_list) >= 1
+    assert any(p["id"] == payment_id for p in payments_list)
+
+    # Test PUT /fees/payments/{payment_id}
+    update_payload = {
+        "payment_method": "ONLINE",
+        "transaction_reference": "TXN-UPDATED-999",
+        "remarks": "Updated to online mode"
+    }
+    update_res = await client.put(f"/api/v1/fees/payments/{payment_id}", json=update_payload, headers=headers)
+    assert update_res.status_code == 200
+    updated_data = update_res.json()["data"]
+    assert updated_data["payment_method"] == "ONLINE"
+    assert updated_data["transaction_reference"] == "TXN-UPDATED-999"
+    assert updated_data["remarks"] == "Updated to online mode"
+
+    # Test POST /fees/receipts/{receipt_number}/regenerate
+    regen_res = await client.post(f"/api/v1/fees/receipts/{receipt_no}/regenerate", headers=headers)
+    assert regen_res.status_code == 200
+    assert regen_res.json()["data"]["receipt_number"] == receipt_no
+
+    # Test GET /fees/receipts/{receipt_number}/download
+    download_res = await client.get(f"/api/v1/fees/receipts/{receipt_no}/download", headers=headers)
+    assert download_res.status_code == 200
+    assert download_res.headers["content-type"] == "application/pdf"
+    assert download_res.content.startswith(b"%PDF")
+
+@pytest.mark.anyio
+async def test_class_fee_structure_propagation_and_idempotency(
+    client: AsyncClient,
+    setup_fee_test_data: dict,
+    db_session: AsyncSession
+):
+    """
+    Verifies that creating a class fee structure propagates assignments to all eligible students
+    in that class, re-propagation is idempotent, and newly created students receive active fees.
+    """
+    headers = setup_fee_test_data["admin_headers"]
+    tenant = setup_fee_test_data["tenant"]
+    school = setup_fee_test_data["school"]
+    ay = setup_fee_test_data["academic_year"]
+
+    # 1. Create a dedicated Class and Section with 2 students
+    suffix = uuid.uuid4().hex[:6].lower()
+    cl_prop = Class(tenant_id=tenant.id, school_id=school.id, academic_year_id=ay.id, name=f"Prop Class {suffix}", code=f"PC-{suffix}", level=5, capacity=50)
+    db_session.add(cl_prop)
+    await db_session.flush()
+
+    sec_prop = Section(tenant_id=tenant.id, school_id=school.id, academic_year_id=ay.id, class_id=cl_prop.id, name="Section A", code=f"PSA-{suffix}", capacity=50)
+    db_session.add(sec_prop)
+    await db_session.flush()
+
+    st1 = Student(tenant_id=tenant.id, school_id=school.id, academic_year_id=ay.id, class_id=cl_prop.id, section_id=sec_prop.id, first_name="Prop", last_name="One", roll_number=f"P1-{suffix}", admission_number=f"ADM-P1-{suffix}", admission_date=date(2026, 1, 1), date_of_birth=date(2015, 1, 1), gender=StudentGender.FEMALE)
+    st2 = Student(tenant_id=tenant.id, school_id=school.id, academic_year_id=ay.id, class_id=cl_prop.id, section_id=sec_prop.id, first_name="Prop", last_name="Two", roll_number=f"P2-{suffix}", admission_number=f"ADM-P2-{suffix}", admission_date=date(2026, 1, 1), date_of_birth=date(2015, 2, 2), gender=StudentGender.MALE)
+    db_session.add_all([st1, st2])
+    await db_session.commit()
+
+    # 2. Create Fee Type
+    fee_type_payload = {"name": f"Tuition {suffix}", "code": f"TUI_{suffix[:4].upper()}", "description": "Tuition fees"}
+    ft_res = await client.post("/api/v1/fees/types", json=fee_type_payload, headers=headers)
+    assert ft_res.status_code == 201
+    fee_type_id = ft_res.json()["data"]["id"]
+
+    # 3. Create Fee Structure for cl_prop -> should auto-propagate to st1 and st2
+    fs_payload = {
+        "fee_type_id": fee_type_id,
+        "academic_year_id": str(ay.id),
+        "class_id": str(cl_prop.id),
+        "amount": 25000.00,
+        "due_date": "2026-06-30",
+        "description": "Annual Class 5 Tuition"
+    }
+    fs_res = await client.post("/api/v1/fees/structures", json=fs_payload, headers=headers)
+    assert fs_res.status_code == 201
+    fs_id = fs_res.json()["data"]["id"]
+
+    # 4. Verify both students have the fee assignment with assigned_amount = 25000.00
+    res_fa1 = await db_session.execute(
+        select(StudentFeeAssignment).where(
+            StudentFeeAssignment.student_id == st1.id,
+            StudentFeeAssignment.fee_structure_id == uuid.UUID(fs_id)
+        )
+    )
+    fa1 = res_fa1.scalar_one_or_none()
+    assert fa1 is not None
+    assert fa1.assigned_amount == Decimal("25000.00")
+    assert fa1.paid_amount == Decimal("0.00")
+    assert fa1.status == FeeAssignmentStatus.UNPAID
+
+    res_fa2 = await db_session.execute(
+        select(StudentFeeAssignment).where(
+            StudentFeeAssignment.student_id == st2.id,
+            StudentFeeAssignment.fee_structure_id == uuid.UUID(fs_id)
+        )
+    )
+    fa2 = res_fa2.scalar_one_or_none()
+    assert fa2 is not None
+    assert fa2.assigned_amount == Decimal("25000.00")
+
+    # 5. Idempotency test: Call /fees/structures/{id}/propagate again
+    prop_res = await client.post(f"/api/v1/fees/structures/{fs_id}/propagate", headers=headers)
+    assert prop_res.status_code == 200
+    assert prop_res.json()["data"]["assigned_count"] == 0
+
+    # 6. Verify total assignments for st1 is still exactly 1
+    res_all_st1 = await db_session.execute(
+        select(StudentFeeAssignment).where(
+            StudentFeeAssignment.student_id == st1.id,
+            StudentFeeAssignment.fee_structure_id == uuid.UUID(fs_id)
+        )
+    )
+    assert len(res_all_st1.scalars().all()) == 1
+
+    # 7. Student registration auto-assignment: register a 3rd student via Student API
+    st3_payload = {
+        "school_id": str(school.id),
+        "academic_year_id": str(ay.id),
+        "class_id": str(cl_prop.id),
+        "section_id": str(sec_prop.id),
+        "first_name": "New",
+        "last_name": "Student",
+        "roll_number": f"P3-{suffix}",
+        "admission_number": f"ADM-P3-{suffix}",
+        "admission_date": "2026-01-01",
+        "date_of_birth": "2015-03-03",
+        "gender": "MALE"
+    }
+    st3_res = await client.post("/api/v1/students", json=st3_payload, headers=headers)
+    assert st3_res.status_code == 201
+    st3_id = st3_res.json()["data"]["id"]
+
+    # Verify st3 automatically received the active fee structure
+    res_fa3 = await db_session.execute(
+        select(StudentFeeAssignment).where(
+            StudentFeeAssignment.student_id == uuid.UUID(st3_id),
+            StudentFeeAssignment.fee_structure_id == uuid.UUID(fs_id)
+        )
+    )
+    fa3 = res_fa3.scalar_one_or_none()
+    assert fa3 is not None
+    assert fa3.assigned_amount == Decimal("25000.00")
+    assert fa3.status == FeeAssignmentStatus.UNPAID
+

@@ -99,9 +99,10 @@ final resultsExaminationsProvider = FutureProvider.autoDispose<List<ExaminationD
   
   final apiClient = ref.watch(apiClientProvider);
   final academicYearQuery = filters.academicYearId != null ? '&academic_year_id=${filters.academicYearId}' : '';
+  final classQuery = filters.classId != null ? '&class_id=${filters.classId}' : '';
   
   final result = await apiClient.get(
-    '/examinations?school_id=$schoolId$academicYearQuery',
+    '/examinations?school_id=$schoolId$academicYearQuery$classQuery',
     mapper: (json) {
       final payload = json as Map<String, dynamic>;
       final list = payload['data'] as List<dynamic>? ?? const [];
@@ -246,6 +247,62 @@ final resultsDashboardStatsProvider = Provider.autoDispose<ResultsDashboardStats
     publishedCount: published,
     approvedCount: approved,
     underReviewCount: underReview,
+  );
+});
+
+// 5b. Results Readiness & Publication Evaluation Provider
+final resultsReadinessProvider = FutureProvider.autoDispose<ExaminationResultReadinessDto?>((ref) async {
+  final filters = ref.watch(resultsFiltersProvider);
+  final schoolId = ref.watch(selectedSchoolIdProvider);
+
+  if (schoolId == null || filters.examinationId == null || filters.examinationId!.isEmpty) {
+    return null;
+  }
+
+  final apiClient = ref.watch(apiClientProvider);
+  final qParams = <String, dynamic>{
+    'school_id': schoolId,
+    if (filters.academicYearId != null && filters.academicYearId!.isNotEmpty)
+      'academic_year_id': filters.academicYearId,
+    if (filters.classId != null && filters.classId!.isNotEmpty)
+      'class_id': filters.classId,
+    if (filters.sectionId != null && filters.sectionId!.isNotEmpty)
+      'section_id': filters.sectionId,
+  };
+
+  final result = await apiClient.get(
+    '/marks/examinations/${filters.examinationId}/result-readiness',
+    queryParameters: qParams,
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      final data = payload['data'] as Map<String, dynamic>? ?? payload;
+      return ExaminationResultReadinessDto.fromJson(data);
+    },
+  );
+
+  return result.when(
+    onSuccess: (readiness) => readiness,
+    onFailure: (failure) => throw Exception(failure.message),
+  );
+});
+
+final examReadinessFamilyProvider = FutureProvider.autoDispose.family<ExaminationResultReadinessDto?, String>((ref, examId) async {
+  final schoolId = ref.watch(selectedSchoolIdProvider);
+  if (schoolId == null || examId.isEmpty) return null;
+
+  final apiClient = ref.watch(apiClientProvider);
+  final result = await apiClient.get(
+    '/marks/examinations/$examId/result-readiness?school_id=$schoolId',
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      final data = payload['data'] as Map<String, dynamic>? ?? payload;
+      return ExaminationResultReadinessDto.fromJson(data);
+    },
+  );
+
+  return result.when(
+    onSuccess: (readiness) => readiness,
+    onFailure: (_) => null,
   );
 });
 
@@ -556,6 +613,60 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
     );
   }
 
+  Future<bool> reject({
+    required String id,
+    required String schoolId,
+    String? reason,
+    String? rejectionReason,
+  }) async {
+    state = state.copyWith(isLoading: true);
+    final r = rejectionReason ?? reason ?? 'Returned for corrections';
+    final result = await _apiClient.post(
+      '/report-cards/$id/reject',
+      queryParameters: {'school_id': schoolId},
+      data: {'rejection_reason': r},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        _ref.invalidate(resultsReportCardsProvider);
+        state = state.copyWith(isLoading: false, successMessage: 'Report card rejected and returned to draft.');
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> unpublish({
+    required String id,
+    required String schoolId,
+    String? reason,
+  }) async {
+    state = state.copyWith(isLoading: true);
+    final result = await _apiClient.post(
+      '/report-cards/$id/unpublish',
+      queryParameters: {'school_id': schoolId},
+      data: {'reason': reason ?? 'Reopened for correction'},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        _ref.invalidate(resultsReportCardsProvider);
+        state = state.copyWith(isLoading: false, successMessage: 'Report card unpublished successfully.');
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
   Future<bool> publish({
     required String classId,
     required String sectionId,
@@ -576,6 +687,76 @@ class ReportCardOperationsNotifier extends StateNotifier<ReportCardOperationsSta
       onSuccess: (_) {
         _ref.invalidate(resultsReportCardsProvider);
         state = state.copyWith(isLoading: false, successMessage: 'Approved report cards published.');
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> publishExaminationResults({
+    required String examId,
+    required String schoolId,
+    String? classId,
+    String? sectionId,
+  }) async {
+    state = state.copyWith(isLoading: true);
+    final result = await _apiClient.post(
+      '/marks/examinations/$examId/publish',
+      queryParameters: {
+        'school_id': schoolId,
+        if (classId != null && classId.isNotEmpty) 'class_id': classId,
+        if (sectionId != null && sectionId.isNotEmpty) 'section_id': sectionId,
+      },
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        _ref.invalidate(resultsReadinessProvider);
+        _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
+        state = state.copyWith(
+          isLoading: false,
+          successMessage: 'Examination results published successfully. Parent & student portals updated.',
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, error: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> unpublishExaminationResults({
+    required String examId,
+    required String schoolId,
+    String? classId,
+    String? sectionId,
+  }) async {
+    state = state.copyWith(isLoading: true);
+    final result = await _apiClient.post(
+      '/marks/examinations/$examId/unpublish',
+      queryParameters: {
+        'school_id': schoolId,
+        if (classId != null && classId.isNotEmpty) 'class_id': classId,
+        if (sectionId != null && sectionId.isNotEmpty) 'section_id': sectionId,
+      },
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        _ref.invalidate(resultsReadinessProvider);
+        _ref.invalidate(resultsReportCardsProvider);
+        _ref.invalidate(resultsDashboardStatsProvider);
+        state = state.copyWith(
+          isLoading: false,
+          successMessage: 'Examination results unpublished and reopened for editing.',
+        );
         return true;
       },
       onFailure: (failure) {

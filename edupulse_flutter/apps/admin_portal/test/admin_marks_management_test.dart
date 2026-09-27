@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:admin_portal/features/results/data/models/admin_marks_models.dart';
+import 'package:admin_portal/features/results/data/models/examination_models.dart';
 import 'package:admin_portal/features/results/presentation/providers/admin_marks_providers.dart';
 import 'package:admin_portal/features/school_setup/presentation/providers/school_setup_providers.dart';
 
@@ -320,6 +321,114 @@ void main() {
 
       expect(container.read(adminMarksFiltersProvider).academicYearId, isNull);
       expect(container.read(adminMarksBoardProvider).rows, isEmpty);
+    });
+
+    test('10. ExaminationModel getDisambiguatedTitle formats class scope, papers, and code', () {
+      final exam = ExaminationModel(
+        id: 'exam-1',
+        tenantId: 't-1',
+        schoolId: 's-1',
+        academicYearId: 'ay-1',
+        examName: 'Quarterly Examination 2026',
+        examType: 'EXAMINATION',
+        startDate: '2026-09-01',
+        endDate: '2026-09-10',
+        status: ExamStatusEnum.published,
+        isActive: true,
+        version: 1,
+        participatingClassIds: ['cls-5'],
+        totalPapersCount: 1,
+        settings: {'exam_code': 'EXAM_QUARTERLY_C5_2026'},
+        schedules: [
+          const ExamScheduleModel(
+            id: 's-1',
+            examId: 'exam-1',
+            classId: 'cls-5',
+            sectionId: 'sec-1',
+            subjectId: 'sub-1',
+            examDate: '2026-09-02',
+            startTime: '09:00:00',
+            endTime: '12:00:00',
+            maxMarks: 100,
+            passMarks: 35,
+            isActive: true,
+            version: 1,
+          ),
+        ],
+      );
+
+      final title = exam.getDisambiguatedTitle(
+        classIdToName: {'cls-5': 'Class 5'},
+      );
+
+      expect(title, contains('Quarterly Examination 2026'));
+      expect(title, contains('Class 5'));
+      expect(title, contains('1 paper'));
+      expect(title, contains('EXAM_QUARTERLY_C5_2026'));
+    });
+
+    test('11. ExaminationModel effectiveClassIds unions participatingClassIds and schedule classIds', () {
+      final exam = ExaminationModel(
+        id: 'exam-2',
+        tenantId: 't-1',
+        schoolId: 's-1',
+        academicYearId: 'ay-1',
+        examName: 'Quarterly Examination 2026',
+        examType: 'EXAMINATION',
+        startDate: '2026-09-01',
+        endDate: '2026-09-10',
+        status: ExamStatusEnum.published,
+        isActive: true,
+        version: 1,
+        participatingClassIds: ['cls-7'],
+        schedules: [
+          const ExamScheduleModel(
+            id: 's-1',
+            examId: 'exam-2',
+            classId: 'cls-6',
+            sectionId: 'sec-1',
+            subjectId: 'sub-1',
+            examDate: '2026-09-02',
+            startTime: '09:00:00',
+            endTime: '12:00:00',
+            maxMarks: 100,
+            passMarks: 35,
+            isActive: true,
+            version: 1,
+          ),
+          const ExamScheduleModel(
+            id: 's-2',
+            examId: 'exam-2',
+            classId: 'cls-7',
+            sectionId: 'sec-1',
+            subjectId: 'sub-1',
+            examDate: '2026-09-02',
+            startTime: '09:00:00',
+            endTime: '12:00:00',
+            maxMarks: 100,
+            passMarks: 35,
+            isActive: true,
+            version: 1,
+          ),
+          const ExamScheduleModel(
+            id: 's-3',
+            examId: 'exam-2',
+            classId: 'cls-8',
+            sectionId: 'sec-1',
+            subjectId: 'sub-1',
+            examDate: '2026-09-02',
+            startTime: '09:00:00',
+            endTime: '12:00:00',
+            maxMarks: 100,
+            passMarks: 35,
+            isActive: true,
+            version: 1,
+          ),
+        ],
+      );
+
+      expect(exam.participatingClassIds, ['cls-7']);
+      expect(exam.effectiveClassIds, {'cls-7', 'cls-6', 'cls-8'});
     });
   });
 }

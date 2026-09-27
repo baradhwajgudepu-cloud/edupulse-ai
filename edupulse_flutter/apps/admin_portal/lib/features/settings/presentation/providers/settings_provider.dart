@@ -47,6 +47,9 @@ class SettingsNotifier extends StateNotifier<AsyncValue<void>> {
     String? postalCode,
     String? logoUrl,
     Map<String, dynamic>? settings,
+    double? latitude,
+    double? longitude,
+    int? geofenceRadiusMeters,
   }) async {
     state = const AsyncValue.loading();
     
@@ -66,6 +69,9 @@ class SettingsNotifier extends StateNotifier<AsyncValue<void>> {
       'postal_code': postalCode,
       'logo_url': logoUrl,
       'settings': settings,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      if (geofenceRadiusMeters != null) 'geofence_radius_meters': geofenceRadiusMeters,
     };
 
     final result = await _apiClient.put(
@@ -82,6 +88,93 @@ class SettingsNotifier extends StateNotifier<AsyncValue<void>> {
         return true;
       },
       onFailure: (failure) {
+        state = AsyncValue.error(failure.message, StackTrace.current);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> updateSchoolGeofence({
+    required String schoolId,
+    required bool enabled,
+    double? latitude,
+    double? longitude,
+    required int radiusMeters,
+  }) async {
+    // Prevent duplicate submissions while saving
+    if (state.isLoading) return false;
+
+    state = const AsyncValue.loading();
+    final payload = {
+      'enabled': enabled,
+      'latitude': latitude,
+      'longitude': longitude,
+      'radius_meters': radiusMeters,
+    };
+
+    final result = await _apiClient.patch(
+      '/schools/$schoolId/geofence',
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return await result.when(
+      onSuccess: (_) {
+        state = const AsyncValue.data(null);
+        _ref.invalidate(currentSchoolProvider);
+        _ref.read(schoolsListProvider.notifier).fetchSchools();
+        return true;
+      },
+      onFailure: (failure) async {
+        final is404 = failure.statusCode == 404 ||
+            failure.message.contains('404') ||
+            failure.message.toLowerCase().contains('not found');
+
+        if (is404) {
+          // Fallback to PUT /schools/{school_id} supported by production backend
+          final currentSchool = _ref.read(currentSchoolProvider).asData?.value;
+          final existingSettings = currentSchool != null
+              ? Map<String, dynamic>.from(currentSchool.settings ?? {})
+              : <String, dynamic>{};
+
+          final existingGeofence = Map<String, dynamic>.from(
+              existingSettings['geofence'] as Map? ?? {});
+          existingGeofence['enabled'] = enabled;
+          existingGeofence['latitude'] = latitude;
+          existingGeofence['longitude'] = longitude;
+          existingGeofence['radius_meters'] = radiusMeters;
+          existingSettings['geofence'] = existingGeofence;
+
+          final fallbackPayload = {
+            'latitude': latitude,
+            'longitude': longitude,
+            'geofence_radius_meters': radiusMeters,
+            'settings': existingSettings,
+          };
+
+          final fallbackResult = await _apiClient.put(
+            '/schools/$schoolId',
+            data: fallbackPayload,
+            mapper: (json) => json,
+          );
+
+          return fallbackResult.when(
+            onSuccess: (_) {
+              state = const AsyncValue.data(null);
+              _ref.invalidate(currentSchoolProvider);
+              _ref.read(schoolsListProvider.notifier).fetchSchools();
+              return true;
+            },
+            onFailure: (fallbackFailure) {
+              state = AsyncValue.error(
+                fallbackFailure.message,
+                StackTrace.current,
+              );
+              return false;
+            },
+          );
+        }
+
         state = AsyncValue.error(failure.message, StackTrace.current);
         return false;
       },

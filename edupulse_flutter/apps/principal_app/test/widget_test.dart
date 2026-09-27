@@ -60,6 +60,23 @@ class FakeAuthRepository implements AuthRepository {
   Future<ApiResult<void>> requestPasswordReset({required String email}) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeSessionManager implements SessionManager {
@@ -85,10 +102,22 @@ class FakeSessionManager implements SessionManager {
   Future<String?> getRefreshToken() async => _shouldHaveSession ? 'mock_refresh' : null;
 
   @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+
+  @override
   Future<void> saveSession(SessionToken token) async {}
 
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
 
   @override
   Future<bool> hasSession() async => _shouldHaveSession;

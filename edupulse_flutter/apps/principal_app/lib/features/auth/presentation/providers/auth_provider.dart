@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
@@ -41,6 +42,21 @@ class AuthStateNotifier extends Notifier<AuthState> {
     state = Authenticated(user);
   }
 
+  String? _extractTenantIdFromJwt(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length < 2) return null;
+      final normalized = base64Url.normalize(parts[1]);
+      final payloadString = utf8.decode(base64Url.decode(normalized));
+      final payload = jsonDecode(payloadString) as Map<String, dynamic>;
+      final tid = payload['tenant_id'];
+      if (tid is String && tid.isNotEmpty && tid != 'None') {
+        return tid;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> checkAuth() async {
     final sessionManager = ref.read(sessionManagerProvider);
     final hasSession = await sessionManager.hasSession();
@@ -52,10 +68,21 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
     state = const AuthLoading();
 
-    // Restore cached tenant context first to prevent default fallback during validation
+    // Restore cached or token-embedded tenant context first to prevent default fallback during validation
+    final token = await sessionManager.getAccessToken();
+    String? tokenTenantId;
+    if (token != null && token.isNotEmpty) {
+      tokenTenantId = _extractTenantIdFromJwt(token);
+    }
+
     final cachedTenantId = await sessionManager.getTenantId();
-    if (cachedTenantId != null && cachedTenantId.isNotEmpty) {
-      ref.read(selectedTenantIdProvider.notifier).state = cachedTenantId;
+    final effectiveTenantId = tokenTenantId ?? cachedTenantId;
+
+    if (effectiveTenantId != null && effectiveTenantId.isNotEmpty) {
+      ref.read(selectedTenantIdProvider.notifier).state = effectiveTenantId;
+      if (tokenTenantId != null && tokenTenantId != cachedTenantId) {
+        await sessionManager.saveTenantId(tokenTenantId);
+      }
     }
 
     final validateSession = ref.read(validateSessionUseCaseProvider);
@@ -66,9 +93,11 @@ class AuthStateNotifier extends Notifier<AuthState> {
         if (user.schools.isNotEmpty) {
           // If no school selected yet, default to the first one assigned to the user
           final currentSchoolId = await sessionManager.getSchoolId();
-          if (currentSchoolId == null || currentSchoolId.isEmpty) {
-            await sessionManager.saveSchoolId(user.schools.first);
-          }
+          final targetSchoolId = (currentSchoolId != null && user.schools.contains(currentSchoolId))
+              ? currentSchoolId
+              : user.schools.first;
+          await sessionManager.saveSchoolId(targetSchoolId);
+          ref.read(activeSchoolIdProvider.notifier).state = targetSchoolId;
         }
         if (user.tenantId != null) {
           await sessionManager.saveTenantId(user.tenantId!);
@@ -86,6 +115,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
         EduLogger.w('Saved session was invalid or expired: ${failure.message}');
         await sessionManager.clearSession();
         ref.read(selectedTenantIdProvider.notifier).state = null;
+        ref.read(activeSchoolIdProvider.notifier).state = null;
         state = const Unauthenticated();
       },
     );
@@ -93,6 +123,9 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
   Future<void> login(String email, String password) async {
     state = const AuthLoading();
+    // Clear any prior active tenant / school context before initiating new login
+    ref.read(selectedTenantIdProvider.notifier).state = null;
+    ref.read(activeSchoolIdProvider.notifier).state = null;
 
     // Verify connectivity first
     final buildConfig = ref.read(buildConfigProvider);
@@ -116,6 +149,13 @@ class AuthStateNotifier extends Notifier<AuthState> {
         final sessionManager = ref.read(sessionManagerProvider);
         await sessionManager.saveSession(token);
 
+        // Immediately resolve and synchronize tenant context from JWT before validating session
+        final tokenTenantId = token.tenantId ?? _extractTenantIdFromJwt(token.accessToken);
+        if (tokenTenantId != null && tokenTenantId.isNotEmpty) {
+          ref.read(selectedTenantIdProvider.notifier).state = tokenTenantId;
+          await sessionManager.saveTenantId(tokenTenantId);
+        }
+
         // Fetch user data after successful token caching
         final validateSession = ref.read(validateSessionUseCaseProvider);
         final userResult = await validateSession();
@@ -124,6 +164,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
           onSuccess: (user) async {
             if (user.schools.isNotEmpty) {
               await sessionManager.saveSchoolId(user.schools.first);
+              ref.read(activeSchoolIdProvider.notifier).state = user.schools.first;
             }
             if (user.tenantId != null) {
               await sessionManager.saveTenantId(user.tenantId!);
@@ -132,7 +173,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
             state = Authenticated(user);
           },
           onFailure: (failure) async {
-        _logDiagnosticFailure(failure, 'async-onFailure');
+            _logDiagnosticFailure(failure, 'async-onFailure');
             debugPrint('[DEBUG] AuthStateNotifier.login user details retrieval FAILURE:');
             debugPrint('  • Resolved API Base URL: ${buildConfig.apiBaseUrl}');
             debugPrint('  • Actual Auth Endpoint: ${buildConfig.apiBaseUrl}auth/me');
@@ -140,6 +181,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
             EduLogger.e('Validate session failed with error: ${failure.message}');
             await sessionManager.clearSession();
             ref.read(selectedTenantIdProvider.notifier).state = null;
+            ref.read(activeSchoolIdProvider.notifier).state = null;
             state = AuthError(
                 'Failed to retrieve user details: ${failure.message}');
           },
@@ -250,7 +292,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
     try {
       if (error is Error && error.stackTrace != null) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
-      } else if (error is DioException && error.stackTrace != null) {
+      } else if (error is DioException) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
       }
     } catch (_) {}

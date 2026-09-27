@@ -7,6 +7,7 @@ import '../providers/school_setup_providers.dart';
 import '../../../students/presentation/providers/student_providers.dart';
 import '../../../guardians/presentation/providers/guardian_providers.dart';
 import '../../../teachers/presentation/providers/teachers_providers.dart';
+import '../widgets/school_logo_uploader.dart';
 
 class SchoolDetailsScreen extends ConsumerStatefulWidget {
   final String? schoolId;
@@ -378,6 +379,19 @@ class _SchoolDetailsScreenState extends ConsumerState<SchoolDetailsScreen> {
               if (_isEditMode) ...[
                 Text('Optimistic Lock Version: $_entityVersion', style: theme.textTheme.bodySmall),
                 const SizedBox(height: 12),
+              ],
+              if (_isEditMode && widget.schoolId != null) ...[
+                SchoolLogoUploader(
+                  schoolId: widget.schoolId!,
+                  currentLogoUrl: _logoUrlController.text.isNotEmpty ? _logoUrlController.text : null,
+                  schoolName: _nameController.text.isNotEmpty ? _nameController.text : 'School Campus',
+                  onLogoChanged: (newUrl) {
+                    setState(() {
+                      _logoUrlController.text = newUrl ?? '';
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
               ],
               Card(
                 elevation: 0,

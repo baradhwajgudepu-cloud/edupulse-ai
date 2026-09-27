@@ -8,9 +8,17 @@ import '../../../school_setup/data/models/school_setup_models.dart';
 import '../../../../core/routing/routes.dart';
 import '../../data/models/student_models.dart';
 import '../../../bulk_import/presentation/providers/web_download_helper.dart';
+import '../../../bulk_import/presentation/widgets/flexible_import_wizard_modal.dart';
+import '../widgets/student_360_modal.dart';
+import '../widgets/student_avatar.dart';
 
 class StudentsScreen extends ConsumerStatefulWidget {
-  const StudentsScreen({super.key});
+  final String? initialFilter;
+
+  const StudentsScreen({
+    super.key,
+    this.initialFilter,
+  });
 
   @override
   ConsumerState<StudentsScreen> createState() => _StudentsScreenState();
@@ -27,19 +35,47 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
   String? _selectedClassId;
   String? _selectedSectionId;
   String? _selectedStatus;
+  bool _isAttentionFilterActive = false;
 
   @override
   void initState() {
     super.initState();
+    final isAttention = (widget.initialFilter == 'needs_attention');
+    _isAttentionFilterActive = isAttention;
+
     Future.microtask(() {
       final schoolId = ref.read(selectedSchoolIdProvider);
       if (schoolId != null) {
         ref.read(academicYearsProvider(schoolId).notifier).fetchYears();
         ref.read(classesProvider(schoolId).notifier).fetchClasses();
         ref.read(sectionsProvider(schoolId).notifier).fetchSections();
-        ref.read(studentListProvider.notifier).fetchStudents();
+        if (isAttention) {
+          ref.read(studentListProvider.notifier).setAttentionFilter('needs_attention');
+        } else {
+          ref.read(studentListProvider.notifier).setAttentionFilter(null);
+        }
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant StudentsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialFilter != widget.initialFilter) {
+      final isAttention = (widget.initialFilter == 'needs_attention');
+      setState(() {
+        _isAttentionFilterActive = isAttention;
+        _selectedStudentIds.clear();
+      });
+      final schoolId = ref.read(selectedSchoolIdProvider);
+      if (schoolId != null) {
+        if (isAttention) {
+          ref.read(studentListProvider.notifier).setAttentionFilter('needs_attention');
+        } else {
+          ref.read(studentListProvider.notifier).setAttentionFilter(null);
+        }
+      }
+    }
   }
 
   @override
@@ -63,6 +99,17 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
     ref.read(studentListProvider.notifier).fetchStudents();
   }
 
+  void _clearAttentionFilter() {
+    setState(() {
+      _isAttentionFilterActive = false;
+      _selectedStudentIds.clear();
+    });
+    ref.read(studentListProvider.notifier).setAttentionFilter(null);
+    if (GoRouter.maybeOf(context) != null) {
+      context.go(AppRoutes.students);
+    }
+  }
+
   void _clearFilters() {
     setState(() {
       _searchController.clear();
@@ -70,15 +117,13 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
       _selectedClassId = null;
       _selectedSectionId = null;
       _selectedStatus = null;
+      _isAttentionFilterActive = false;
       _selectedStudentIds.clear();
     });
-    ref.read(studentListProvider.notifier).updateFilters(
-          academicYearId: null,
-          classId: null,
-          sectionId: null,
-          status: null,
-          search: '',
-        );
+    ref.read(studentListProvider.notifier).clearAllFilters();
+    if (GoRouter.maybeOf(context) != null && widget.initialFilter != null) {
+      context.go(AppRoutes.students);
+    }
   }
 
   @override
@@ -90,20 +135,27 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
     // Invalidate and reload when school context changes globally
     ref.listen<String?>(selectedSchoolIdProvider, (previous, next) {
       if (next != null) {
+        final isAttention = (widget.initialFilter == 'needs_attention');
         setState(() {
           _selectedAyId = null;
           _selectedClassId = null;
           _selectedSectionId = null;
           _selectedStatus = null;
+          _isAttentionFilterActive = isAttention;
           _searchController.clear();
           _selectedStudentIds.clear();
         });
         ref.read(academicYearsProvider(next).notifier).fetchYears();
         ref.read(classesProvider(next).notifier).fetchClasses();
         ref.read(sectionsProvider(next).notifier).fetchSections();
-        ref.read(studentListProvider.notifier).fetchStudents();
+        if (isAttention) {
+          ref.read(studentListProvider.notifier).setAttentionFilter('needs_attention');
+        } else {
+          ref.read(studentListProvider.notifier).setAttentionFilter(null);
+        }
       }
     });
+
 
     if (schoolId == null) {
       return Scaffold(
@@ -147,22 +199,34 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
           ),
         ],
       ),
-      floatingActionButton: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'admit_student_main_fab',
-            onPressed: () async {
-              await context.push('${AppRoutes.students}/new?school_id=$schoolId');
-              if (!mounted) return;
-              _refreshData();
-            },
-            icon: const Icon(Icons.person_add_alt_1_outlined),
-            label: const Text('Admit Student'),
-          ),
-          const SizedBox(width: 8),
-          MenuAnchor(
-            alignmentOffset: const Offset(-180, -240),
+      floatingActionButton: isMobile
+          ? FloatingActionButton(
+              key: const Key('admit_student_main_fab'),
+              heroTag: 'admit_student_main_fab',
+              onPressed: () async {
+                await context.push('${AppRoutes.students}/new?school_id=$schoolId');
+                if (!mounted) return;
+                _refreshData();
+              },
+              child: const Icon(Icons.person_add_alt_1_outlined),
+            )
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton.extended(
+                  key: const Key('admit_student_main_fab'),
+                  heroTag: 'admit_student_main_fab',
+                  onPressed: () async {
+                    await context.push('${AppRoutes.students}/new?school_id=$schoolId');
+                    if (!mounted) return;
+                    _refreshData();
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_outlined),
+                  label: const Text('Admit Student'),
+                ),
+                const SizedBox(width: 8),
+                MenuAnchor(
+                  alignmentOffset: const Offset(-180, -240),
             builder: (context, controller, child) {
               return FloatingActionButton(
                 key: const Key('admit_options_dropdown_btn'),
@@ -193,9 +257,9 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
                 key: const Key('bulk_import_option_btn'),
                 leadingIcon: const Icon(Icons.upload_file_outlined),
                 onPressed: () {
-                  context.push(AppRoutes.bulkImport);
+                  FlexibleImportWizardModal.show(context, importEntity: 'students');
                 },
-                child: const Text('Bulk Import Students'),
+                child: const Text('Bulk Import Students (Guided)'),
               ),
               MenuItemButton(
                 key: const Key('download_template_option_btn'),
@@ -253,14 +317,17 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
                             _selectedClassId != null ||
                             _selectedSectionId != null ||
                             _selectedStatus != null ||
+                            _isAttentionFilterActive ||
                             _searchController.text.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           TextButton.icon(
+                            key: const Key('clear_all_filters_btn'),
                             onPressed: _clearFilters,
                             icon: const Icon(Icons.clear_all),
                             label: const Text('Clear'),
                           ),
                         ]
+
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -382,6 +449,54 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
             ),
           ),
 
+          // Attention Filter Banner
+          if (_isAttentionFilterActive) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: theme.colorScheme.error.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: theme.colorScheme.error, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Filtered by: ',
+                      style: TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
+                    ),
+                    const SizedBox(width: 4),
+                    InputChip(
+                      key: const Key('needs_attention_filter_chip'),
+                      avatar: Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
+                      label: Text(
+                        'Needs Attention (${listState.total})',
+                        style: TextStyle(
+                          color: theme.colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      onDeleted: _clearAttentionFilter,
+                      deleteIcon: const Icon(Icons.close, size: 16),
+                      deleteButtonTooltipMessage: 'Clear Needs Attention filter',
+                      backgroundColor: theme.colorScheme.errorContainer.withValues(alpha: 0.7),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      key: const Key('clear_attention_filter_btn'),
+                      icon: const Icon(Icons.filter_alt_off_outlined, size: 16),
+                      label: const Text('Clear Filter'),
+                      onPressed: _clearAttentionFilter,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+
           // Main Listing Content
           Expanded(
             child: (listState.isLoading && listState.students.isEmpty)
@@ -404,12 +519,86 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
                         ),
                       )
                     : listState.students.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No students found matching selected filters.',
-                              style: TextStyle(fontSize: 16),
+                        ? Center(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(32.0),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: _isAttentionFilterActive
+                                          ? theme.colorScheme.errorContainer.withValues(alpha: 0.3)
+                                          : theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      _isAttentionFilterActive
+                                          ? Icons.check_circle_outline_rounded
+                                          : Icons.school_outlined,
+                                      size: 40,
+                                      color: _isAttentionFilterActive
+                                          ? theme.colorScheme.error
+                                          : theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    _isAttentionFilterActive
+                                        ? 'No students currently require attention.'
+                                        : 'No students found matching selected filters.',
+                                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 440),
+                                    child: Text(
+                                      _isAttentionFilterActive
+                                          ? 'All active students currently meet attendance thresholds (>75%) and maintain consistent academic performance.'
+                                          : (_searchController.text.isNotEmpty || _selectedAyId != null || _selectedClassId != null
+                                              ? 'Try clearing active filters or adjusting your search term.'
+                                              : 'Admit your first student manually or use the flexible wizard to import student rosters from Excel or CSV.'),
+                                      textAlign: TextAlign.center,
+                                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  if (_isAttentionFilterActive) ...[
+                                    OutlinedButton.icon(
+                                      key: const Key('empty_state_clear_filter_btn'),
+                                      onPressed: _clearAttentionFilter,
+                                      icon: const Icon(Icons.clear_all),
+                                      label: const Text('Clear Filter'),
+                                    ),
+                                  ] else ...[
+                                    Wrap(
+                                      spacing: 12,
+                                      runSpacing: 12,
+                                      alignment: WrapAlignment.center,
+                                      children: [
+                                        ElevatedButton.icon(
+                                          onPressed: () async {
+                                            await context.push('${AppRoutes.students}/new?school_id=$schoolId');
+                                            if (!mounted) return;
+                                            _refreshData();
+                                          },
+                                          icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                                          label: const Text('Admit Student'),
+                                        ),
+                                        OutlinedButton.icon(
+                                          onPressed: () => FlexibleImportWizardModal.show(context, importEntity: 'students'),
+                                          icon: const Icon(Icons.upload_file_outlined, size: 18),
+                                          label: const Text('Flexible Roster Import'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
                           )
+
                         : Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16.0),
                             child: Column(
@@ -446,43 +635,147 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
 
   Widget _buildMobileList(List<StudentDto> students, String schoolId) {
     return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: students.length,
       itemBuilder: (context, index) {
         final student = students[index];
+        final needsAttention = student.aiMetrics['needs_attention'] == true;
+        final attentionReason = student.aiMetrics['attention_reason'] as String?;
+        final attRate = student.aiMetrics['attendance_rate'];
+        final acadTrend = student.aiMetrics['academic_trend'] as String?;
+
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           shape: RoundedRectangleBorder(
-            side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+            side: BorderSide(
+              color: needsAttention
+                  ? Colors.red.withValues(alpha: 0.5)
+                  : Theme.of(context).colorScheme.outlineVariant,
+            ),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () async {
-              await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
-              if (!mounted) return;
-              _refreshData();
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${student.firstName} ${student.lastName}',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          StudentAvatar(
+                            studentId: student.id,
+                            schoolId: schoolId,
+                            photoUrl: student.photoUrl,
+                            firstName: student.firstName,
+                            lastName: student.lastName,
+                            version: '${student.version}_${student.updatedAt}',
+                            radius: 18,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '${student.firstName} ${student.lastName}',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                      _buildStatusChip(student.status),
-                    ],
-                  ),
+                    ),
+                    _buildStatusChip(student.status),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Admission No: ${student.admissionNumber} • Roll No: ${student.rollNumber}'),
+                Text('Class: ${student.className ?? "-"} • Section: ${student.sectionName ?? "-"}'),
+                if (student.mobile != null && student.mobile!.isNotEmpty) Text('Mobile: ${student.mobile}'),
+                if (needsAttention) ...[
                   const SizedBox(height: 8),
-                  Text('Admission No: ${student.admissionNumber}'),
-                  Text('Class/Section: ${student.className ?? "-"} / ${student.sectionName ?? "-"}'),
-                  if (student.mobile != null) Text('Mobile: ${student.mobile}'),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red),
+                            SizedBox(width: 6),
+                            Text(
+                              '⚠ Needs Attention',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red),
+                            ),
+                          ],
+                        ),
+                        if (attentionReason != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Reason: $attentionReason',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.red),
+                          ),
+                        ],
+                        if (attRate != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Attendance: $attRate%',
+                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                        if (acadTrend != null && acadTrend.isNotEmpty && acadTrend != 'STABLE') ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Academic trend: $acadTrend',
+                            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ],
-              ),
+                const Divider(height: 20),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      key: Key('view_student_${student.id}'),
+                      icon: const Icon(Icons.visibility_outlined, size: 16),
+                      label: const Text('View'),
+                      onPressed: () async {
+                        await Student360Modal.show(
+                          context,
+                          student: student,
+                          schoolId: schoolId,
+                          onEdit: () {
+                            if (!mounted) return;
+                            _refreshData();
+                          },
+                        );
+                        if (!mounted) return;
+                        _refreshData();
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      key: Key('edit_student_${student.id}'),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('Edit'),
+                      onPressed: () async {
+                        await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
+                        if (!mounted) return;
+                        _refreshData();
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         );
@@ -510,7 +803,7 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
                 controller: _horizontalScrollController,
                 scrollDirection: Axis.horizontal,
                 child: SizedBox(
-                  width: 1010,
+                  width: constraints.maxWidth > 1140 ? constraints.maxWidth : 1140,
                   height: tableHeight,
                   child: Column(
                     children: [
@@ -548,12 +841,19 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
 
   Widget _buildTableRow(StudentDto student, String schoolId, ThemeData theme) {
     final isSelected = _selectedStudentIds.contains(student.id);
+    final needsAttention = student.aiMetrics['needs_attention'] == true;
+    final attentionReason = student.aiMetrics['attention_reason'] as String?;
+    final attRate = student.aiMetrics['attendance_rate'];
+    final acadTrend = student.aiMetrics['academic_trend'] as String?;
+
     return Container(
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: theme.colorScheme.outlineVariant, width: 0.5),
         ),
-        color: isSelected ? theme.colorScheme.primaryContainer.withValues(alpha: 0.08) : null,
+        color: isSelected
+            ? theme.colorScheme.primaryContainer.withValues(alpha: 0.08)
+            : (needsAttention ? Colors.red.withValues(alpha: 0.04) : null),
       ),
       child: Row(
         children: [
@@ -567,41 +867,160 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
             ),
           ),
           _buildDataCell(
-            InkWell(
-              onTap: () async {
-                await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
-                if (!mounted) return;
-                _refreshData();
-              },
-              child: Text(
-                '${student.firstName} ${student.lastName}',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.primary,
-                  decoration: TextDecoration.underline,
-                ),
+            Center(
+              child: StudentAvatar(
+                studentId: student.id,
+                schoolId: schoolId,
+                photoUrl: student.photoUrl,
+                firstName: student.firstName,
+                lastName: student.lastName,
+                version: '${student.version}_${student.updatedAt}',
+                radius: 16,
               ),
             ),
-            180,
+            65,
           ),
-          _buildDataCell(Text(student.admissionNumber), 120),
-          _buildDataCell(Text(student.rollNumber), 100),
-          _buildDataCell(Text(student.className ?? '-'), 120),
-          _buildDataCell(Text(student.sectionName ?? '-'), 120),
+          _buildDataCell(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                InkWell(
+                  onTap: () async {
+                    await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
+                    if (!mounted) return;
+                    _refreshData();
+                  },
+                  child: Tooltip(
+                    message: '${student.firstName} ${student.lastName}',
+                    child: Text(
+                      '${student.firstName} ${student.lastName}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                if (needsAttention) ...[
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.warning_amber_rounded, size: 11, color: Colors.red),
+                        SizedBox(width: 3),
+                        Text(
+                          '⚠ Needs Attention',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (attentionReason != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2.0),
+                      child: Text(
+                        'Reason: $attentionReason',
+                        style: const TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (attRate != null)
+                    Text(
+                      'Attendance: $attRate%',
+                      style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  if (acadTrend != null && acadTrend.isNotEmpty && acadTrend != 'STABLE')
+                    Text(
+                      'Academic trend: $acadTrend',
+                      style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                ],
+              ],
+            ),
+            220,
+          ),
+          _buildDataCell(
+            Tooltip(
+              message: student.admissionNumber,
+              child: Text(student.admissionNumber, overflow: TextOverflow.ellipsis),
+            ),
+            120,
+          ),
+          _buildDataCell(
+            Tooltip(
+              message: student.rollNumber,
+              child: Text(student.rollNumber, overflow: TextOverflow.ellipsis),
+            ),
+            100,
+          ),
+          _buildDataCell(
+            Tooltip(
+              message: student.className ?? '-',
+              child: Text(student.className ?? '-', overflow: TextOverflow.ellipsis),
+            ),
+            120,
+          ),
+          _buildDataCell(
+            Tooltip(
+              message: student.sectionName ?? '-',
+              child: Text(student.sectionName ?? '-', overflow: TextOverflow.ellipsis),
+            ),
+            120,
+          ),
           _buildDataCell(Text(student.gender), 100),
           _buildDataCell(_buildStatusChip(student.status), 120),
           _buildDataCell(
-            IconButton(
-              key: Key('edit_student_${student.id}'),
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: 'Edit profile',
-              onPressed: () async {
-                await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
-                if (!mounted) return;
-                _refreshData();
-              },
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: Key('view_student_${student.id}'),
+                  icon: const Icon(Icons.visibility_outlined, size: 20),
+                  tooltip: 'View profile',
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () async {
+                    await Student360Modal.show(
+                      context,
+                      student: student,
+                      schoolId: schoolId,
+                      onEdit: () {
+                        if (!mounted) return;
+                        _refreshData();
+                      },
+                    );
+                    if (!mounted) return;
+                    _refreshData();
+                  },
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: Key('edit_student_${student.id}'),
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                  tooltip: 'Edit profile',
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () async {
+                    await context.push('${AppRoutes.students}/${student.id}?school_id=$schoolId');
+                    if (!mounted) return;
+                    _refreshData();
+                  },
+                ),
+              ],
             ),
-            100,
+            120,
           ),
         ],
       ),
@@ -623,14 +1042,16 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
               },
             ),
           ),
-          _buildHeaderCell('Student Name', 180, theme),
+          _buildHeaderCell('Profile Photo', 65, theme),
+          _buildHeaderCell('Student Name', 220, theme),
+
           _buildHeaderCell('Admission No', 120, theme),
           _buildHeaderCell('Roll No', 100, theme),
           _buildHeaderCell('Class', 120, theme),
           _buildHeaderCell('Section', 120, theme),
           _buildHeaderCell('Gender', 100, theme),
           _buildHeaderCell('Status', 120, theme),
-          _buildHeaderCell('Action', 100, theme),
+          _buildHeaderCell('Action', 120, theme),
         ],
       ),
     );
@@ -1424,9 +1845,9 @@ class _StudentsScreenState extends ConsumerState<StudentsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.5)),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: Text(
         status,

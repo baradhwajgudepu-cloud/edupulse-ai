@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.examination import (
     ExamTypeMaster, ExamTemplate, Examination, ExamSchedule,
-    ExaminationClass, ExamStatus, ExamType
+    ExaminationClass, ExamStatus, ExamType, ExamPaper, ExamPaperClass
 )
 from app.models.teacher_subject_assignment import TeacherSubjectAssignment
 from app.models.student import Student
 from app.models.guardian import Guardian, StudentGuardian
 from app.schemas.examination import (
-    ExamTypeMasterCreate, ExamTemplateCreate, ExaminationCreate, ExamScheduleCreate
+    ExamTypeMasterCreate, ExamTemplateCreate, ExaminationCreate, ExamScheduleCreate,
+    ExamPaperCreate, ExamPaperUpdate, ExamPaperClassConfigItem
 )
 
 class ExamTypeMasterRepository:
@@ -181,7 +182,10 @@ class ExaminationRepository:
             selectinload(Examination.schedules).joinedload(ExamSchedule.subject),
             selectinload(Examination.schedules).joinedload(ExamSchedule.class_obj),
             selectinload(Examination.schedules).joinedload(ExamSchedule.section),
-            selectinload(Examination.participating_classes)
+            selectinload(Examination.schedules).joinedload(ExamSchedule.paper),
+            selectinload(Examination.participating_classes).joinedload(ExaminationClass.class_obj),
+            selectinload(Examination.papers).joinedload(ExamPaper.subject),
+            selectinload(Examination.papers).selectinload(ExamPaper.class_configs).joinedload(ExamPaperClass.class_obj)
         )
         result = await self.db.execute(stmt)
         return result.unique().scalar_one_or_none()
@@ -245,6 +249,24 @@ class ExaminationRepository:
 
         return db_obj
 
+    async def update_participating_classes(
+        self, exam_id: uuid.UUID, class_ids: List[uuid.UUID], school_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> List[uuid.UUID]:
+        stmt_del = select(ExaminationClass).where(ExaminationClass.examination_id == exam_id)
+        res_del = await self.db.execute(stmt_del)
+        for existing_ec in res_del.scalars().all():
+            await self.db.delete(existing_ec)
+
+        for cid in class_ids:
+            ec = ExaminationClass(
+                examination_id=exam_id,
+                class_id=cid,
+                tenant_id=tenant_id,
+                school_id=school_id
+            )
+            self.db.add(ec)
+        return class_ids
+
     async def soft_delete(
         self, db_obj: Examination, deleted_by: Optional[uuid.UUID] = None
     ) -> Examination:
@@ -270,6 +292,8 @@ class ExaminationRepository:
         academic_year_id: Optional[uuid.UUID] = None,
         class_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
+        include_inactive: bool = False,
+        include_archived: bool = False,
         skip: int = 0,
         limit: int = 100
     ) -> List[Examination]:
@@ -278,6 +302,10 @@ class ExaminationRepository:
             Examination.tenant_id == tenant_id,
             Examination.deleted_at.is_(None)
         ]
+        if not include_inactive:
+            filters.append(Examination.is_active == True)
+        if not include_archived:
+            filters.append(Examination.status != ExamStatus.ARCHIVED)
         if academic_year_id:
             filters.append(Examination.academic_year_id == academic_year_id)
         if search:
@@ -292,7 +320,10 @@ class ExaminationRepository:
             selectinload(Examination.schedules).joinedload(ExamSchedule.subject),
             selectinload(Examination.schedules).joinedload(ExamSchedule.class_obj),
             selectinload(Examination.schedules).joinedload(ExamSchedule.section),
-            selectinload(Examination.participating_classes)
+            selectinload(Examination.schedules).joinedload(ExamSchedule.paper),
+            selectinload(Examination.participating_classes).joinedload(ExaminationClass.class_obj),
+            selectinload(Examination.papers).joinedload(ExamPaper.subject),
+            selectinload(Examination.papers).selectinload(ExamPaper.class_configs).joinedload(ExamPaperClass.class_obj)
         ).order_by(
             Examination.start_date.desc()
         ).offset(skip).limit(limit)
@@ -301,8 +332,25 @@ class ExaminationRepository:
         exams = list(result.unique().scalars().all())
 
         if class_id:
-            # Filter to exams that include class_id in participating_classes or have no class restrictions
-            exams = [e for e in exams if not e.participating_classes or any(pc.class_id == class_id for pc in e.participating_classes)]
+            exams = [
+                e for e in exams
+                if (e.participating_classes and any(pc.class_id == class_id for pc in e.participating_classes))
+                or (e.schedules and any(s.class_id == class_id for s in e.schedules))
+            ]
+
+        # Prioritize active/published exams with schedules
+        def exam_sort_key(e: Examination):
+            has_schedules = len(e.schedules) > 0 if hasattr(e, "schedules") and e.schedules else False
+            status_priority = 0
+            if e.status == ExamStatus.PUBLISHED:
+                status_priority = 3
+            elif e.status in [ExamStatus.APPROVED, ExamStatus.COMPLETED]:
+                status_priority = 2
+            elif e.status == ExamStatus.SCHEDULED:
+                status_priority = 1
+            return (status_priority, 1 if has_schedules else 0, e.start_date or date.min)
+
+        exams.sort(key=exam_sort_key, reverse=True)
 
         return exams
 
@@ -316,6 +364,7 @@ class ExaminationRepository:
         class_id: Optional[uuid.UUID] = None,
         participating_class_ids: Optional[List[uuid.UUID]] = None,
         exam_code: Optional[str] = None,
+        exclude_id: Optional[uuid.UUID] = None,
     ) -> Optional[Examination]:
         stmt = select(Examination).where(
             Examination.academic_year_id == academic_year_id,
@@ -339,31 +388,85 @@ class ExaminationRepository:
         clean_name = name.strip().lower() if name else ""
         clean_type = exam_type.strip().upper() if exam_type else None
 
-        # Priority 1: Match by exam_code (when available) scoped by class
+        has_target_classes = len(target_classes) > 0
+
+        # Priority 1: Match by exam_code (when available)
         if clean_code:
             for exam in candidates:
-                exam_classes = {pc.class_id for pc in exam.participating_classes}
-                # If both have class restrictions, they must overlap
-                if target_classes and exam_classes and not target_classes.intersection(exam_classes):
+                if str(exam.id) == str(exclude_id or ""):
                     continue
                 code_in_settings = (exam.settings or {}).get("exam_code") or (exam.settings or {}).get("code")
                 if code_in_settings and str(code_in_settings).strip().upper() == clean_code:
+                    setattr(exam, "conflict_reason", f"An examination with code '{exam_code}' already exists in this academic year ({exam.exam_name}).")
                     return exam
 
-        # Priority 2: Match by exam_name + exam_type (scoped by class)
+        # Priority 2: Match by exam_name + exam_type with class scope overlap rules
         for exam in candidates:
-            exam_classes = {pc.class_id for pc in exam.participating_classes}
-            # If both have class restrictions, they must overlap
-            if target_classes and exam_classes and not target_classes.intersection(exam_classes):
+            if str(exam.id) == str(exclude_id or ""):
                 continue
 
-            if exam.exam_name.strip().lower() == clean_name:
-                if clean_type:
-                    cand_type = getattr(exam.exam_type, "value", str(exam.exam_type)).upper()
-                    if cand_type == clean_type:
-                        return exam
-                else:
+            if exam.exam_name.strip().lower() != clean_name:
+                continue
+
+            if clean_type:
+                cand_type = getattr(exam.exam_type, "value", str(exam.exam_type)).upper()
+                if cand_type != clean_type:
+                    continue
+
+            exam_classes = {pc.class_id for pc in exam.participating_classes}
+            has_exam_classes = len(exam_classes) > 0
+
+            # Rule 4: Both examinations without class restrictions (all-school): reject as duplicate.
+            if not has_target_classes and not has_exam_classes:
+                setattr(
+                    exam,
+                    "conflict_reason",
+                    f"An all-school examination named '{exam.exam_name}' already exists in this academic year without class restrictions."
+                )
+                return exam
+
+            # One is all-school (no restriction) and the other is class-scoped:
+            if not has_target_classes and has_exam_classes:
+                setattr(
+                    exam,
+                    "conflict_reason",
+                    f"An examination named '{exam.exam_name}' already exists for specific classes in this academic year. "
+                    f"An all-school examination would conflict with the existing class-scoped examination."
+                )
+                return exam
+
+            if has_target_classes and not has_exam_classes:
+                setattr(
+                    exam,
+                    "conflict_reason",
+                    f"An all-school examination named '{exam.exam_name}' already exists in this academic year, "
+                    f"which already encompasses the requested class scope."
+                )
+                return exam
+
+            # Both have specific class restrictions:
+            overlap = target_classes.intersection(exam_classes)
+            if overlap:
+                # Rule 1: Same name with identical class scope: reject as duplicate.
+                if target_classes == exam_classes:
+                    setattr(
+                        exam,
+                        "conflict_reason",
+                        f"An examination named '{exam.exam_name}' already exists in this academic year with the identical class scope ({len(overlap)} class(es))."
+                    )
                     return exam
+                # Rule 2: Same name with overlapping class scope: reject or require distinct exam code/name.
+                else:
+                    setattr(
+                        exam,
+                        "conflict_reason",
+                        f"An examination named '{exam.exam_name}' already exists in this academic year with overlapping class scope ({len(overlap)} shared class(es)). "
+                        f"Please specify a distinct examination name or differentiate the class scopes."
+                    )
+                    return exam
+
+            # Rule 3: Same name with non-overlapping class scopes: allow.
+            continue
 
         return None
 
@@ -606,6 +709,7 @@ class ExamScheduleRepository:
             joinedload(ExamSchedule.class_obj),
             joinedload(ExamSchedule.section),
             joinedload(ExamSchedule.subject),
+            joinedload(ExamSchedule.paper),
             joinedload(ExamSchedule.examination)
         ).order_by(
             ExamSchedule.exam_date.asc(), ExamSchedule.start_time.asc()
@@ -613,3 +717,155 @@ class ExamScheduleRepository:
 
         res = await self.db.execute(stmt)
         return list(res.unique().scalars().all())
+
+
+class ExamPaperRepository:
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def get_by_id(
+        self, paper_id: uuid.UUID, school_id: uuid.UUID, tenant_id: uuid.UUID
+    ) -> Optional[ExamPaper]:
+        stmt = select(ExamPaper).where(
+            ExamPaper.id == paper_id,
+            ExamPaper.school_id == school_id,
+            ExamPaper.tenant_id == tenant_id,
+            ExamPaper.deleted_at.is_(None)
+        ).options(
+            joinedload(ExamPaper.subject),
+            selectinload(ExamPaper.class_configs).joinedload(ExamPaperClass.class_obj)
+        )
+        res = await self.db.execute(stmt)
+        return res.unique().scalar_one_or_none()
+
+    async def get_multi(
+        self,
+        examination_id: uuid.UUID,
+        school_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[ExamPaper]:
+        stmt = select(ExamPaper).where(
+            ExamPaper.examination_id == examination_id,
+            ExamPaper.school_id == school_id,
+            ExamPaper.tenant_id == tenant_id,
+            ExamPaper.deleted_at.is_(None)
+        ).options(
+            joinedload(ExamPaper.subject),
+            selectinload(ExamPaper.class_configs).joinedload(ExamPaperClass.class_obj)
+        ).order_by(ExamPaper.order_index.asc()).offset(skip).limit(limit)
+
+        res = await self.db.execute(stmt)
+        return list(res.unique().scalars().all())
+
+    async def create(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        examination_id: uuid.UUID,
+        obj_in: ExamPaperCreate,
+        created_by: Optional[uuid.UUID] = None
+    ) -> ExamPaper:
+        db_obj = ExamPaper(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            examination_id=examination_id,
+            subject_id=obj_in.subject_id,
+            paper_name=obj_in.paper_name,
+            paper_code=obj_in.paper_code,
+            default_max_marks=obj_in.default_max_marks,
+            default_pass_marks=obj_in.default_pass_marks,
+            default_duration_minutes=obj_in.default_duration_minutes,
+            order_index=obj_in.order_index,
+            is_active=True,
+            created_by=created_by,
+            updated_by=created_by
+        )
+        self.db.add(db_obj)
+        await self.db.flush()
+
+        if obj_in.class_configs:
+            for cfg in obj_in.class_configs:
+                epc = ExamPaperClass(
+                    tenant_id=tenant_id,
+                    school_id=school_id,
+                    examination_id=examination_id,
+                    paper_id=db_obj.id,
+                    class_id=cfg.class_id,
+                    maximum_marks=cfg.maximum_marks,
+                    pass_marks=cfg.pass_marks,
+                    duration_minutes=cfg.duration_minutes,
+                    is_active=True,
+                    created_by=created_by,
+                    updated_by=created_by
+                )
+                self.db.add(epc)
+
+        return db_obj
+
+    async def update(
+        self,
+        db_obj: ExamPaper,
+        update_data: dict,
+        updated_by: Optional[uuid.UUID] = None
+    ) -> ExamPaper:
+        for field, value in update_data.items():
+            if value is not None:
+                setattr(db_obj, field, value)
+        db_obj.updated_by = updated_by
+        self.db.add(db_obj)
+        return db_obj
+
+    async def delete(
+        self,
+        db_obj: ExamPaper,
+        deleted_by: Optional[uuid.UUID] = None
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        db_obj.deleted_at = now
+        db_obj.is_active = False
+        db_obj.updated_by = deleted_by
+        self.db.add(db_obj)
+
+    async def bulk_set_class_configs(
+        self,
+        paper_id: uuid.UUID,
+        examination_id: uuid.UUID,
+        school_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        configs: List[ExamPaperClassConfigItem],
+        updated_by: Optional[uuid.UUID] = None
+    ) -> List[ExamPaperClass]:
+        # Delete existing configs for this paper
+        stmt_del = select(ExamPaperClass).where(
+            ExamPaperClass.paper_id == paper_id,
+            ExamPaperClass.school_id == school_id,
+            ExamPaperClass.tenant_id == tenant_id
+        )
+        res_del = await self.db.execute(stmt_del)
+        for existing in res_del.scalars().all():
+            await self.db.delete(existing)
+
+        results = []
+        for cfg in configs:
+            epc = ExamPaperClass(
+                tenant_id=tenant_id,
+                school_id=school_id,
+                examination_id=examination_id,
+                paper_id=paper_id,
+                class_id=cfg.class_id,
+                maximum_marks=cfg.maximum_marks,
+                pass_marks=cfg.pass_marks,
+                duration_minutes=cfg.duration_minutes,
+                is_active=True,
+                created_by=updated_by,
+                updated_by=updated_by
+            )
+            self.db.add(epc)
+            results.append(epc)
+
+        return results
+

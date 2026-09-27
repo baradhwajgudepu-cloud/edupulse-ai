@@ -9,6 +9,7 @@ import '../../data/repositories/my_classes_repository_impl.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 import '../../../dashboard/domain/entities/dashboard_data.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 // --- MY CLASSES STATES ---
 sealed class MyClassesState {
@@ -131,7 +132,7 @@ class MyClassesNotifier extends Notifier<MyClassesState> {
       dashboardData = (dashboardState as DashboardRefreshing).data;
     }
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const MyClassesError('No school associated with this account.');
       return;
@@ -146,6 +147,12 @@ class MyClassesNotifier extends Notifier<MyClassesState> {
       academicYearId: academicYearId,
       teacherId: teacherId,
     );
+
+    // Guard against race condition: discard response if active school changed in-flight
+    final currentSchoolId = ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (data) {
@@ -210,7 +217,7 @@ class StudentRosterNotifier extends StateNotifier<StudentRosterState> {
       dashboardData = (dashboardState as DashboardRefreshing).data;
     }
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const StudentRosterError('No school associated with this account.');
       return;
@@ -224,6 +231,12 @@ class StudentRosterNotifier extends StateNotifier<StudentRosterState> {
       classId: _classId,
       sectionId: _sectionId,
     );
+
+    // Guard against race condition: discard response if active school changed in-flight
+    final currentSchoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (data) {

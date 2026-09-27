@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:edupulse_localization/edupulse_localization.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_assets/edupulse_assets.dart';
+import 'package:edupulse_network/edupulse_network.dart';
 import '../providers/auth_provider.dart';
 import '../../../../core/router/routes.dart';
 
@@ -79,17 +80,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.listen<AuthState>(authStateProvider, (previous, next) {
       if (next is AuthError) {
         if (next.message == 'SERVER_UNREACHABLE') {
+          final isProd = ref.read(buildConfigProvider).isProduction;
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (context) => AlertDialog(
               title: const Text('Connection Error'),
-              content: const Text(
-                'Unable to connect to the EduPulse server.\n\n'
-                'Please verify:\n'
-                '• Backend is running\n'
-                '• Phone and PC are on the same Wi-Fi\n'
-                '• Firewall allows port 8000',
+              content: Text(
+                isProd
+                    ? 'Unable to connect to the EduPulse server.\n\n'
+                      'Please check your internet connection and try again.'
+                    : 'Unable to connect to the EduPulse server.\n\n'
+                      'Please verify:\n'
+                      '• Backend is running\n'
+                      '• Phone and PC are on the same Wi-Fi\n'
+                      '• Firewall allows port 8000',
               ),
               actions: [
                 TextButton(

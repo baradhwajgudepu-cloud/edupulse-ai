@@ -1,0 +1,256 @@
+<USER_REQUEST>
+EDUPULSE AI
+PARENT APP + TEACHER APP
+FINAL PRODUCTION COMPATIBILITY & RELEASE AUDIT
+
+OBJECTIVE
+
+Admin Portal and Principal App are already released/production-ready.
+
+Now prepare:
+
+1. Parent App for production release.
+2. Teacher App for production release.
+
+The Parent App must be fully compatible with the CURRENT production Admin Portal / Principal workflows, especially:
+
+- Parent account creation
+- Student/child mapping
+- School mapping
+- Tenant mapping
+- Academic year
+- Class/section
+- Attendance
+- Marks/results
+- Homework
+- Timetable
+- Notifications
+- Events/announcements
+- Leave/communication features where applicable
+- Any other functionality currently exposed by the Admin Portal or Principal App
+
+The Teacher App must also be verified against the same production backend and current Admin/Principal configuration.
+
+IMPORTANT:
+
+Do not assume that existing UAT compatibility automatically means production compatibility.
+
+Treat the Admin Portal as the authoritative source for how production data is created/configured.
+
+Think like:
+
+ADMIN
+  ↓
+PRINCIPAL
+  ↓
+TEACHER
+  ↓
+STUDENT
+  ↓
+PARENT
+
+Every relevant data lifecycle must work end-to-end.
+
+============================================================
+STRICT RULES
+============================================================
+
+1. READ THE CODEBASE FIRST.
+
+2. Discover actual implemented functionality.
+Do not rely only on previous reports.
+
+3. Do NOT modify production secrets.
+
+4. Do NOT expose credentials or API keys.
+
+5. Do NOT bypass authentication.
+
+6. Do NOT bypass authorization.
+
+7. Do NOT weaken tenant_id or school_id isolation.
+
+8. Do NOT modify working Admin Portal or Principal App functionality unless a genuine backend compatibility defect is discovered.
+
+9. Do NOT redesign the applications.
+
+10. Do NOT perform broad refactoring.
+
+11. Preserve existing Clean Architecture, Riverpod, Dio and GoRouter patterns.
+
+12. Do not run:
+   flutter build web
+
+13. Do not
+<truncated 14569 bytes>
+
+PASS/FAIL
+
+MARKS ENTRY:
+PASS/FAIL
+
+MARKS PUBLISH:
+PASS/FAIL
+
+HOMEWORK:
+PASS/FAIL
+
+TIMETABLE:
+PASS/FAIL
+
+AI:
+PASS/FAIL
+
+LEAVE:
+PASS/FAIL
+
+NOTIFICATIONS:
+PASS/FAIL
+
+EVENTS:
+PASS/FAIL
+
+PROFILE:
+PASS/FAIL
+
+LOGOUT:
+PASS/FAIL
+
+
+CROSS-PORTAL LIFECYCLES
+
+ADMIN → PARENT LOGIN:
+PASS/FAIL
+
+ADMIN → PARENT STUDENT MAPPING:
+PASS/FAIL
+
+ADMIN → TEACHER LOGIN:
+PASS/FAIL
+
+ADMIN → TEACHER ASSIGNMENT:
+PASS/FAIL
+
+ADMIN → EXAM → TEACHER:
+PASS/FAIL
+
+TEACHER → MARKS → PARENT:
+PASS/FAIL
+
+TEACHER → HOMEWORK → PARENT:
+PASS/FAIL
+
+ADMIN/TEACHER → ATTENDANCE → PARENT:
+PASS/FAIL
+
+ADMIN → TIMETABLE → TEACHER:
+PASS/FAIL
+
+ADMIN → TIMETABLE → PARENT:
+PASS/FAIL
+
+ADMIN → EVENT → TEACHER/PARENT:
+PASS/FAIL
+
+ADMIN/PRINCIPAL → NOTIFICATION → TEACHER/PARENT:
+PASS/FAIL
+
+
+SECURITY
+
+TENANT ISOLATION:
+PASS/FAIL
+
+SCHOOL ISOLATION:
+PASS/FAIL
+
+PARENT-STUDENT ISOLATION:
+PASS/FAIL
+
+TEACHER ASSIGNMENT ISOLATION:
+PASS/FAIL
+
+ROLE PERMISSIONS:
+PASS/FAIL
+
+SCHOOL CONTEXT ISOLATION:
+PASS/FAIL
+
+CACHE ISOLATION:
+PASS/FAIL
+
+
+PRODUCTION CONFIGURATION
+
+PARENT API URL:
+PASS/FAIL
+
+TEACHER API URL:
+PASS/FAIL
+
+LOCAL/UAT URL LEAK:
+NONE / FOUND
+
+CORS:
+PASS/FAIL
+
+AUTHENTICATION:
+PASS/FAIL
+
+
+TEST RESULTS
+
+PARENT FLUTTER ANALYZE:
+PASS/FAIL
+
+PARENT FLUTTER TEST:
+PASS/FAIL
+
+TEACHER FLUTTER ANALYZE:
+PASS/FAIL
+
+TEACHER FLUTTER TEST:
+PASS/FAIL
+
+BACKEND TESTS:
+PASS/FAIL
+
+
+PRODUCTION BLOCKERS
+
+CRITICAL:
+LIST
+
+HIGH:
+LIST
+
+MEDIUM:
+LIST
+
+LOW:
+LIST
+
+
+REQUIRED FIXES BEFORE RELEASE
+
+Only list genuine production requirements.
+
+
+FINAL DECISION
+
+PARENT APP:
+GO / GO AFTER FIXES / NO-GO
+
+TEACHER APP:
+GO / GO AFTER FIXES / NO-GO
+
+OVERALL EDU-PULSE MOBILE RELEASE:
+GO / GO AFTER FIXES / NO-GO
+
+Explain the decision using evidence from the audit.
+
+Do not declare GO merely because tests pass.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-09T15:42:31+05:30.
+</ADDITIONAL_METADATA>

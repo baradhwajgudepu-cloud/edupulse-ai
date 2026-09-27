@@ -75,6 +75,8 @@ class HomeworkGenerationResponse(BaseModel):
     difficulty: str = Field(..., description="Difficulty level.")
     estimated_minutes: int = Field(..., description="Estimated time in minutes to complete.")
     questions: List[GeneratedQuestion] = Field(..., description="List of generated questions.")
+    total_marks: Optional[int] = Field(None, description="Total marks calculated from all questions.")
 
 class QuestionsGenerationResponse(BaseModel):
     questions: List[GeneratedQuestion] = Field(..., description="List of generated questions.")
+    total_marks: Optional[int] = Field(None, description="Total marks calculated from all questions.")

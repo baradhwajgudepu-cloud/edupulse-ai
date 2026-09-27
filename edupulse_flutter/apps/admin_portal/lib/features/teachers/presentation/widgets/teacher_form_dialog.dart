@@ -38,6 +38,10 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
   late final TextEditingController _designationController;
   late final TextEditingController _departmentController;
   late final TextEditingController _salaryController;
+  late final TextEditingController _addressLineController;
+  late final TextEditingController _cityController;
+  late final TextEditingController _stateController;
+  late final TextEditingController _pincodeController;
 
   String? _selectedGender;
   String? _selectedEmploymentType;
@@ -78,6 +82,11 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
     _designationController = TextEditingController(text: t?.designation);
     _departmentController = TextEditingController(text: t?.department);
     _salaryController = TextEditingController(text: t?.salary?.toString());
+    final addr = t?.address ?? const <String, dynamic>{};
+    _addressLineController = TextEditingController(text: (addr['address_line1'] ?? addr['line1'] ?? addr['street'] ?? '').toString());
+    _cityController = TextEditingController(text: (addr['city'] ?? '').toString());
+    _stateController = TextEditingController(text: (addr['state'] ?? '').toString());
+    _pincodeController = TextEditingController(text: (addr['pincode'] ?? addr['postal_code'] ?? addr['pin_code'] ?? '').toString());
 
     _selectedGender = t?.gender ?? 'MALE';
     _selectedEmploymentType = t?.employmentType ?? 'FULL_TIME';
@@ -128,6 +137,10 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
     _designationController.dispose();
     _departmentController.dispose();
     _salaryController.dispose();
+    _addressLineController.dispose();
+    _cityController.dispose();
+    _stateController.dispose();
+    _pincodeController.dispose();
     super.dispose();
   }
 
@@ -236,9 +249,13 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
       'emergency_contact_name': _emergencyContactNameController.text.trim().isEmpty ? null : _emergencyContactNameController.text.trim(),
       'emergency_contact_mobile': _emergencyContactMobileController.text.trim().isEmpty ? null : _emergencyContactMobileController.text.trim(),
       'emergency_contact_relation': _emergencyContactRelationController.text.trim().isEmpty ? null : _emergencyContactRelationController.text.trim(),
-      'photo_url': _photoUrlController.text.trim().isEmpty ? null : _photoUrlController.text.trim(),
-      'address': const <String, dynamic>{}, // Optional address dictionary
-      'qualification': _qualificationController.text.trim().isEmpty ? null : _qualificationController.text.trim(),
+      'address': <String, dynamic>{
+        if (widget.teacher?.address != null) ...widget.teacher!.address,
+        if (_addressLineController.text.trim().isNotEmpty) 'address_line1': _addressLineController.text.trim(),
+        if (_cityController.text.trim().isNotEmpty) 'city': _cityController.text.trim(),
+        if (_stateController.text.trim().isNotEmpty) 'state': _stateController.text.trim(),
+        if (_pincodeController.text.trim().isNotEmpty) 'pincode': _pincodeController.text.trim(),
+      },
       'specialization': _specializationController.text.trim().isEmpty ? null : _specializationController.text.trim(),
       'experience_years': _experienceYearsController.text.trim().isEmpty ? null : int.tryParse(_experienceYearsController.text.trim()),
       'joining_date': _formatDate(_joiningDate),
@@ -275,33 +292,43 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
   Widget build(BuildContext context) {
     final actionState = ref.watch(teacherActionProvider);
     final theme = Theme.of(context);
+    final screenH = MediaQuery.of(context).size.height;
+    final screenW = MediaQuery.of(context).size.width;
+    final maxH = (screenH * 0.92).clamp(400.0, 780.0);
 
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: screenW < 768 ? 12 : 24,
+        vertical: screenH < 768 ? 12 : 24,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 800),
-        padding: const EdgeInsets.all(24.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    _isEdit ? 'Edit Teacher Profile' : 'Register New Teacher',
-                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-              const Divider(height: 24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 800, maxHeight: maxH),
+        child: Padding(
+          padding: EdgeInsets.all(screenW < 768 ? 16 : 24.0),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _isEdit ? 'Edit Teacher Profile' : 'Register New Teacher',
+                        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const Divider(height: 24),
 
               // Content Area
               Expanded(
@@ -428,6 +455,52 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
                           return null;
                         },
                       ),
+                      _buildTextField(
+                        controller: _bloodGroupController,
+                        label: 'Blood Group (e.g. O+, A+)',
+                        width: 220,
+                      ),
+
+                      // Section: Emergency Contact Information
+                      _buildSectionTitle(theme, 'Emergency Contact Information'),
+                      _buildTextField(
+                        controller: _emergencyContactNameController,
+                        label: 'Contact Person Name',
+                        width: 220,
+                      ),
+                      _buildTextField(
+                        controller: _emergencyContactMobileController,
+                        label: 'Emergency Mobile Number',
+                        width: 220,
+                      ),
+                      _buildTextField(
+                        controller: _emergencyContactRelationController,
+                        label: 'Relationship (Spouse, Parent, etc.)',
+                        width: 220,
+                      ),
+
+                      // Section: Residential Address
+                      _buildSectionTitle(theme, 'Residential Address'),
+                      _buildTextField(
+                        controller: _addressLineController,
+                        label: 'Street / House Address',
+                        width: 456,
+                      ),
+                      _buildTextField(
+                        controller: _cityController,
+                        label: 'City',
+                        width: 220,
+                      ),
+                      _buildTextField(
+                        controller: _stateController,
+                        label: 'State / Province',
+                        width: 220,
+                      ),
+                      _buildTextField(
+                        controller: _pincodeController,
+                        label: 'Postal / PIN Code',
+                        width: 220,
+                      ),
 
                       // Section: Qualifications & Employment Detail
                       _buildSectionTitle(theme, 'Qualifications & Employment Details'),
@@ -521,14 +594,15 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
                 ),
 
               // Actions Panel
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 12,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: actionState.isLoading ? null : () => Navigator.pop(context),
                     child: const Text('Cancel'),
                   ),
-                  const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: actionState.isLoading ? null : _submit,
                     child: actionState.isLoading
@@ -541,8 +615,9 @@ class _TeacherFormDialogState extends ConsumerState<TeacherFormDialog> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildSectionTitle(ThemeData theme, String title) {
     return Container(

@@ -17,11 +17,12 @@ from app.schemas.fee import (
     ScholarshipCreate, ScholarshipUpdate, ScholarshipResponse,
     FeeStructureCreate, FeeStructureUpdate, FeeStructureResponse,
     StudentFeeAssignmentCreate, StudentFeeAssignmentResponse,
-    FeePaymentCreate, FeePaymentResponse, PaymentCancelRequest,
+    FeePaymentCreate, FeePaymentUpdate, FeePaymentResponse, PaymentCancelRequest,
     FeeReceiptResponse, StudentLedgerResponse, DashboardMetricsResponse,
     PaymentImportRequest, PaymentImportResponse,
     OutstandingFeeReportItem, DefaultRiskResponse, CollectionAnalyticsResponse
 )
+from app.models.fee import PaymentMethod, PaymentStatus
 from app.schemas.response import APIResponse
 from app.models.user import User
 
@@ -376,6 +377,24 @@ async def delete_fee_structure(
         data=FeeStructureResponse.model_validate(deleted)
     )
 
+@router.post(
+    "/structures/{id}/propagate",
+    response_model=APIResponse[dict],
+    summary="Propagate Fee Structure to All Eligible Students in Class"
+)
+async def propagate_fee_structure(
+    id: uuid.UUID,
+    current_user: User = Depends(require_permission("fee.create")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[dict]:
+    count = await service.propagate_class_fee_structure(tenant_id, id, current_user.id)
+    return APIResponse(
+        success=True,
+        message=f"Fee structure propagated to {count} eligible students.",
+        data={"assigned_count": count}
+    )
+
 
 # --- FEE ASSIGNMENT ENDPOINT ---
 @router.post(
@@ -399,6 +418,39 @@ async def assign_fee(
 
 
 # --- COLLECT PAYMENT & CANCEL PAYMENTS ---
+@router.get(
+    "/payments",
+    response_model=APIResponse[List[FeePaymentResponse]],
+    summary="List Fee Payments with Filtering"
+)
+async def list_payments(
+    school_id: Optional[uuid.UUID] = Query(None, description="Filter by School UUID"),
+    student_id: Optional[uuid.UUID] = Query(None, description="Filter by Student UUID"),
+    academic_year_id: Optional[uuid.UUID] = Query(None, description="Filter by Academic Year UUID"),
+    payment_method: Optional[PaymentMethod] = Query(None, description="Filter by Payment Method"),
+    payment_status: Optional[PaymentStatus] = Query(None, description="Filter by Payment Status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(require_permission("fee.read")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[List[FeePaymentResponse]]:
+    payments, total = await service.list_payments(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        student_id=student_id,
+        academic_year_id=academic_year_id,
+        payment_method=payment_method,
+        payment_status=payment_status,
+        skip=skip,
+        limit=limit
+    )
+    return APIResponse(
+        success=True,
+        message="Fee payments retrieved successfully.",
+        data=[FeePaymentResponse.model_validate(p) for p in payments]
+    )
+
 @router.post(
     "/payments",
     response_model=APIResponse[FeePaymentResponse],
@@ -409,12 +461,42 @@ async def collect_payment(
     obj_in: FeePaymentCreate,
     current_user: User = Depends(require_permission("fee.pay")),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
-    service: FeeService = Depends(get_fee_service)
+    service: FeeService = Depends(get_fee_service),
+    db: AsyncSession = Depends(get_db)
 ) -> APIResponse[FeePaymentResponse]:
+    role_codes = {r.code for r in current_user.roles}
+    if not current_user.is_superuser and "PARENT" in role_codes:
+        from app.models.student import Student
+        stmt_st = select(Student).where(Student.id == obj_in.student_id, Student.tenant_id == tenant_id, Student.deleted_at.is_(None))
+        res_st = await db.execute(stmt_st)
+        student = res_st.scalar_one_or_none()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found.")
+        await verify_student_access(current_user, obj_in.student_id, student.section_id, db)
+
     db_obj = await service.collect_payment(tenant_id, obj_in, current_user.id)
     return APIResponse(
         success=True,
         message="Fee payment collected successfully.",
+        data=FeePaymentResponse.model_validate(db_obj)
+    )
+
+@router.put(
+    "/payments/{payment_id}",
+    response_model=APIResponse[FeePaymentResponse],
+    summary="Update Fee Payment Record"
+)
+async def update_payment(
+    payment_id: uuid.UUID,
+    obj_in: FeePaymentUpdate,
+    current_user: User = Depends(require_permission("fee.pay")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[FeePaymentResponse]:
+    db_obj = await service.update_payment(payment_id, tenant_id, obj_in, current_user.id)
+    return APIResponse(
+        success=True,
+        message="Fee payment updated successfully.",
         data=FeePaymentResponse.model_validate(db_obj)
     )
 
@@ -448,14 +530,43 @@ async def get_receipt(
     receipt_number: str,
     current_user: User = Depends(require_permission("fee.read")),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
-    service: FeeService = Depends(get_fee_service)
+    service: FeeService = Depends(get_fee_service),
+    db: AsyncSession = Depends(get_db)
 ) -> APIResponse[FeeReceiptResponse]:
     receipt = await service.fee_repo.get_receipt_by_number(receipt_number, tenant_id)
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found.")
+
+    from app.models.fee import FeePayment
+    from sqlalchemy.orm import selectinload
+    stmt_payment = select(FeePayment).where(FeePayment.id == receipt.payment_id).options(selectinload(FeePayment.student))
+    res_payment = await db.execute(stmt_payment)
+    payment = res_payment.scalar_one_or_none()
+    if payment and payment.student:
+        await verify_student_access(current_user, payment.student_id, payment.student.section_id, db)
+
     return APIResponse(
         success=True,
         message="Receipt retrieved successfully.",
+        data=FeeReceiptResponse.model_validate(receipt)
+    )
+
+@router.post(
+    "/receipts/{receipt_number}/regenerate",
+    response_model=APIResponse[FeeReceiptResponse],
+    summary="Regenerate Receipt PDF"
+)
+async def regenerate_receipt(
+    receipt_number: str,
+    current_user: User = Depends(require_permission("fee.read")),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    service: FeeService = Depends(get_fee_service)
+) -> APIResponse[FeeReceiptResponse]:
+    await service.regenerate_receipt_pdf(receipt_number, tenant_id)
+    receipt = await service.fee_repo.get_receipt_by_number(receipt_number, tenant_id)
+    return APIResponse(
+        success=True,
+        message="Receipt regenerated successfully.",
         data=FeeReceiptResponse.model_validate(receipt)
     )
 
@@ -472,7 +583,7 @@ async def download_receipt(
     db: AsyncSession = Depends(get_db)
 ) -> StreamingResponse:
     receipt = await service.fee_repo.get_receipt_by_number(receipt_number, tenant_id)
-    if not receipt or not receipt.pdf_path:
+    if not receipt:
         raise HTTPException(status_code=404, detail="PDF Receipt file record not found.")
     
     from app.models.fee import FeePayment
@@ -485,14 +596,24 @@ async def download_receipt(
 
     await verify_student_access(current_user, payment.student_id, payment.student.section_id, db)
     
-    try:
-        pdf_bytes = await storage_service.download(receipt.pdf_path)
-    except FileNotFoundError:
-        if os.path.exists(receipt.pdf_path):
-            with open(receipt.pdf_path, "rb") as f:
-                pdf_bytes = f.read()
-        else:
-            raise HTTPException(status_code=404, detail="PDF Receipt file not found in storage.")
+    pdf_bytes = None
+    if receipt.pdf_path:
+        try:
+            pdf_bytes = await storage_service.download(receipt.pdf_path)
+        except Exception:
+            if os.path.exists(receipt.pdf_path):
+                try:
+                    with open(receipt.pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                except Exception:
+                    pass
+
+    if not pdf_bytes:
+        try:
+            pdf_bytes = await service.regenerate_receipt_pdf(receipt_number, tenant_id)
+        except Exception as re_err:
+            logger.error(f"Failed on-the-fly receipt regeneration for {receipt_number}: {re_err}")
+            raise HTTPException(status_code=404, detail="PDF Receipt file not found and could not be regenerated.")
         
     return StreamingResponse(
         io.BytesIO(pdf_bytes),

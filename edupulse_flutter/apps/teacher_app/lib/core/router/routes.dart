@@ -2,12 +2,15 @@ class AppRoutes {
   static const String splash = '/';
   static const String login = '/login';
   static const String forgotPassword = '/forgot-password';
+  static const String resetPassword = '/reset-password';
+  static const String forceChangePassword = '/force-change-password';
   static const String home = '/home';
   static const String unauthorized = '/unauthorized';
   static const String myClasses = '/my-classes';
   static const String classDetail = '/my-classes/detail';
   static const String studentRoster = '/my-classes/roster';
   static const String studentDetail = '/my-classes/student';
+  static const String teacherSyllabus = '/my-classes/syllabus';
   static const String attendance = '/attendance';
   static const String homework = '/homework';
   static const String homeworkCreate = '/homework/create';
@@ -32,4 +35,5 @@ class AppRoutes {
   static const String eventDetail = '/events/:id';
   static const String profile = '/profile';
   static const String studentDirectory = '/student-directory';
+  static const String more = '/more';
 }

@@ -9,6 +9,7 @@ import '../../domain/repositories/results_repository.dart';
 import '../../data/datasources/results_remote_datasource.dart';
 import '../../data/repositories/results_repository_impl.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 final resultsRepositoryProvider = Provider<ResultsRepository>((ref) {
   final apiClient = ref.watch(apiClientProvider);
@@ -18,7 +19,7 @@ final resultsRepositoryProvider = Provider<ResultsRepository>((ref) {
 final resultsSummaryProvider = FutureProvider.family<ResultSummaryEntity, String>((ref, examScheduleId) async {
   final repo = ref.watch(resultsRepositoryProvider);
   final authState = ref.watch(authStateProvider);
-  final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '';
+  final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '');
   final result = await repo.getResultSummary(examScheduleId: examScheduleId, schoolId: schoolId);
   return result.when(
     onSuccess: (data) => data,
@@ -29,7 +30,7 @@ final resultsSummaryProvider = FutureProvider.family<ResultSummaryEntity, String
 final reportCardsProvider = FutureProvider.family<List<ReportCardEntity>, ({String classId, String sectionId})>((ref, arg) async {
   final repo = ref.watch(resultsRepositoryProvider);
   final authState = ref.watch(authStateProvider);
-  final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '';
+  final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull ?? '' : '');
   final result = await repo.getReportCards(
     schoolId: schoolId,
     classId: arg.classId,

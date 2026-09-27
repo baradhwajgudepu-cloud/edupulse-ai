@@ -26,7 +26,9 @@ import '../../features/communication/presentation/pages/queries_inbox_screen.dar
 import '../../features/communication/presentation/pages/conversation_screen.dart';
 import '../../features/planner/presentation/pages/school_planner_screen.dart';
 import '../../features/academics/presentation/pages/manage_exams_screen.dart';
+import '../../features/academics/presentation/pages/academics_screen.dart';
 import '../../features/fees/presentation/pages/outstanding_dues_detail_screen.dart';
+import '../../features/more/presentation/pages/principal_more_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -62,6 +64,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.profile,
             builder: (context, state) => const ProfileScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.more,
+            builder: (context, state) => const PrincipalMoreScreen(),
           ),
           GoRoute(
             path: AppRoutes.students,
@@ -154,6 +160,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoutes.manageExams,
             builder: (context, state) => const ManageExamsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.syllabusProgress,
+            builder: (context, state) => const AcademicsScreen(initialTabIndex: 1, showAppBar: true),
           ),
           GoRoute(
             path: AppRoutes.outstandingDetails,

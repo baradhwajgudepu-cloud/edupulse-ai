@@ -4,9 +4,10 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.student import StudentGender
-from app.models.teacher import TeacherStatus, EmploymentType
+from app.models.teacher import TeacherStatus, EmploymentType, StaffType
 
 class TeacherBase(BaseModel):
+    staff_type: StaffType = Field(default=StaffType.TEACHING, description="TEACHING or NON_TEACHING")
     employee_code: str = Field(..., min_length=1, max_length=50)
     staff_code: str = Field(..., min_length=1, max_length=50)
     first_name: str = Field(..., min_length=1, max_length=100)

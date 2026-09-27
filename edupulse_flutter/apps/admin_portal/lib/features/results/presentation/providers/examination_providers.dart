@@ -305,6 +305,97 @@ class ExaminationsNotifier extends StateNotifier<ExaminationsState> {
     );
   }
 
+  Future<ExaminationModel?> getExaminationDetail(String examId) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/detail',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ExaminationModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (exam) => exam,
+      onFailure: (failure) {
+        state = state.copyWith(errorMessage: failure.message);
+        return null;
+      },
+    );
+  }
+
+  Future<bool> createExaminationCycle({
+    required String examName,
+    required String examType,
+    required String startDate,
+    required String endDate,
+    String? description,
+    required List<String> participatingClassIds,
+    Map<String, dynamic> settings = const {},
+  }) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final payload = {
+      'school_id': schoolId,
+      'exam_name': examName,
+      'exam_type': examType,
+      'start_date': startDate,
+      'end_date': endDate,
+      'description': description,
+      'participating_class_ids': participatingClassIds,
+      'settings': settings,
+    };
+
+    final result = await apiClient.post(
+      '/examinations',
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> updateExaminationClasses({
+    required String examId,
+    required List<String> classIds,
+  }) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.post(
+      '/examinations/$examId/classes',
+      queryParameters: {'school_id': schoolId},
+      data: {'class_ids': classIds},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
   Future<bool> createExaminationWizard({
     required String examName,
     required String examType,
@@ -445,6 +536,78 @@ class ExaminationsNotifier extends StateNotifier<ExaminationsState> {
       },
     );
   }
+
+  Future<ExamDeletionImpactModel?> getDeletionImpact(String examId) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/delete-impact',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return ExamDeletionImpactModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (impact) => impact,
+      onFailure: (failure) {
+        state = state.copyWith(errorMessage: failure.message);
+        return null;
+      },
+    );
+  }
+
+  Future<bool> archiveExamination(String examId) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.post(
+      '/examinations/$examId/archive',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> deleteExaminationPermanent(String examId, String confirmationName) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.delete(
+      '/examinations/$examId',
+      queryParameters: {
+        'school_id': schoolId,
+        'mode': 'permanent',
+        'confirmation_name': confirmationName,
+      },
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
 }
 
 final examinationsProvider = StateNotifierProvider<ExaminationsNotifier, ExaminationsState>((ref) {
@@ -521,11 +684,15 @@ class ExamSchedulesNotifier extends StateNotifier<ExamSchedulesState> {
     loadSchedules();
   }
 
-  Future<void> loadSchedules() async {
+  Future<void> loadSchedules({String? examId}) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null || schoolId.isEmpty) {
       state = state.copyWith(schedules: [], isLoading: false);
       return;
+    }
+
+    if (examId != null) {
+      state = state.copyWith(selectedExamId: examId);
     }
 
     state = state.copyWith(isLoading: true, clearError: true);
@@ -534,8 +701,9 @@ class ExamSchedulesNotifier extends StateNotifier<ExamSchedulesState> {
     final queryParams = <String, dynamic>{
       'school_id': schoolId,
     };
-    if (state.selectedExamId != null && state.selectedExamId!.isNotEmpty) {
-      queryParams['exam_id'] = state.selectedExamId;
+    final effectiveExamId = examId ?? state.selectedExamId;
+    if (effectiveExamId != null && effectiveExamId.isNotEmpty) {
+      queryParams['exam_id'] = effectiveExamId;
     }
     if (state.selectedClassId != null && state.selectedClassId!.isNotEmpty) {
       queryParams['class_id'] = state.selectedClassId;
@@ -737,10 +905,14 @@ class BulkTimetableGeneratorNotifier extends StateNotifier<BulkTimetableGenerato
     required List<String> classIds,
     List<String>? sectionIds,
     List<String>? subjectIds,
+    List<String>? paperIds,
     required String startDate,
+    String? endDate,
     int gapDays = 1,
     String startTime = '09:00:00',
     int durationMinutes = 180,
+    List<Map<String, dynamic>>? sessions,
+    String schedulingStrategy = 'ONE_PAPER_PER_DAY',
     bool excludeWeekends = true,
     int maxMarks = 100,
     int passMarks = 35,
@@ -755,10 +927,14 @@ class BulkTimetableGeneratorNotifier extends StateNotifier<BulkTimetableGenerato
       'class_ids': classIds,
       'section_ids': sectionIds,
       'subject_ids': subjectIds,
+      'paper_ids': paperIds,
       'start_date': startDate,
+      'end_date': endDate,
       'gap_days': gapDays,
       'start_time': startTime,
       'duration_minutes': durationMinutes,
+      'sessions': sessions,
+      'scheduling_strategy': schedulingStrategy,
       'exclude_weekends': excludeWeekends,
       'max_marks': maxMarks,
       'pass_marks': passMarks,
@@ -768,8 +944,9 @@ class BulkTimetableGeneratorNotifier extends StateNotifier<BulkTimetableGenerato
       '/examinations/schedules/bulk-preview',
       data: payload,
       mapper: (json) {
-        final payload = json as Map<String, dynamic>;
-        return BulkTimetablePreviewResponseModel.fromJson(payload['data'] as Map<String, dynamic>);
+        final payload = Map<String, dynamic>.from(json as Map);
+        final data = payload['data'] != null ? Map<String, dynamic>.from(payload['data'] as Map) : <String, dynamic>{};
+        return BulkTimetablePreviewResponseModel.fromJson(data);
       },
     );
 
@@ -822,4 +999,559 @@ class BulkTimetableGeneratorNotifier extends StateNotifier<BulkTimetableGenerato
 
 final bulkTimetableGeneratorProvider = StateNotifierProvider<BulkTimetableGeneratorNotifier, BulkTimetableGeneratorState>((ref) {
   return BulkTimetableGeneratorNotifier(ref);
+});
+
+
+// ==================================================
+// Exam Papers Management Provider
+// ==================================================
+class ExamPapersState {
+  final bool isLoading;
+  final String? errorMessage;
+  final List<ExamPaperModel> papers;
+  final String? selectedPaperId;
+
+  const ExamPapersState({
+    this.isLoading = false,
+    this.errorMessage,
+    this.papers = const [],
+    this.selectedPaperId,
+  });
+
+  ExamPapersState copyWith({
+    bool? isLoading,
+    String? errorMessage,
+    bool clearError = false,
+    List<ExamPaperModel>? papers,
+    String? selectedPaperId,
+    bool clearSelected = false,
+  }) {
+    return ExamPapersState(
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      papers: papers ?? this.papers,
+      selectedPaperId: clearSelected ? null : (selectedPaperId ?? this.selectedPaperId),
+    );
+  }
+
+  ExamPaperModel? get selectedPaper {
+    if (selectedPaperId == null) return null;
+    try {
+      return papers.firstWhere((p) => p.id == selectedPaperId);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class ExamPapersNotifier extends StateNotifier<ExamPapersState> {
+  final Ref _ref;
+
+  ExamPapersNotifier(this._ref) : super(const ExamPapersState());
+
+  void selectPaper(String? paperId) {
+    state = state.copyWith(selectedPaperId: paperId, clearSelected: paperId == null);
+  }
+
+  Future<void> loadPapers(String examId) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null || schoolId.isEmpty) return;
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/papers',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>? ?? [];
+        return list.map((item) => ExamPaperModel.fromJson(item as Map<String, dynamic>)).toList();
+      },
+    );
+
+    result.when(
+      onSuccess: (papers) {
+        final currentSelected = state.selectedPaperId;
+        final stillExists = papers.any((p) => p.id == currentSelected);
+        state = state.copyWith(
+          isLoading: false,
+          papers: papers,
+          selectedPaperId: stillExists ? currentSelected : (papers.isNotEmpty ? papers.first.id : null),
+        );
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<bool> createPaper(String examId, Map<String, dynamic> payload) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.post(
+      '/examinations/$examId/papers',
+      queryParameters: {'school_id': schoolId},
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadPapers(examId);
+        _ref.read(examinationsProvider.notifier).loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> updatePaper(String examId, String paperId, Map<String, dynamic> payload) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.put(
+      '/examinations/papers/$paperId',
+      queryParameters: {'school_id': schoolId},
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadPapers(examId);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> deletePaper(String examId, String paperId) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.delete(
+      '/examinations/papers/$paperId',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadPapers(examId);
+        _ref.read(examinationsProvider.notifier).loadExaminations();
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> configurePaperClasses(String examId, String paperId, List<Map<String, dynamic>> configs) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.post(
+      '/examinations/papers/$paperId/classes',
+      queryParameters: {'school_id': schoolId},
+      data: {'configs': configs},
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        loadPapers(examId);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final examPapersProvider = StateNotifierProvider<ExamPapersNotifier, ExamPapersState>((ref) {
+  return ExamPapersNotifier(ref);
+});
+
+
+// ==================================================
+// Question Paper Intelligence Provider
+// ==================================================
+class QuestionPaperIntelligenceState {
+  final bool isLoading;
+  final bool isExtracting;
+  final String? errorMessage;
+  final QuestionPaperModel? questionPaper;
+  final QuestionPaperExtractionResponseModel? lastExtraction;
+  final List<SyllabusTopicOptionModel> syllabusTopics;
+
+  const QuestionPaperIntelligenceState({
+    this.isLoading = false,
+    this.isExtracting = false,
+    this.errorMessage,
+    this.questionPaper,
+    this.lastExtraction,
+    this.syllabusTopics = const [],
+  });
+
+  QuestionPaperIntelligenceState copyWith({
+    bool? isLoading,
+    bool? isExtracting,
+    String? errorMessage,
+    bool clearError = false,
+    QuestionPaperModel? questionPaper,
+    bool clearQuestionPaper = false,
+    QuestionPaperExtractionResponseModel? lastExtraction,
+    bool clearExtraction = false,
+    List<SyllabusTopicOptionModel>? syllabusTopics,
+  }) {
+    return QuestionPaperIntelligenceState(
+      isLoading: isLoading ?? this.isLoading,
+      isExtracting: isExtracting ?? this.isExtracting,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      questionPaper: clearQuestionPaper ? null : (questionPaper ?? this.questionPaper),
+      lastExtraction: clearExtraction ? null : (lastExtraction ?? this.lastExtraction),
+      syllabusTopics: syllabusTopics ?? this.syllabusTopics,
+    );
+  }
+}
+
+class QuestionPaperIntelligenceNotifier extends StateNotifier<QuestionPaperIntelligenceState> {
+  final Ref _ref;
+
+  QuestionPaperIntelligenceNotifier(this._ref) : super(const QuestionPaperIntelligenceState());
+
+  void clear() {
+    state = const QuestionPaperIntelligenceState();
+  }
+
+  Future<void> loadQuestionPaper({required String examId, required String paperId}) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/papers/$paperId/question-paper',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return QuestionPaperModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    result.when(
+      onSuccess: (qp) {
+        state = state.copyWith(isLoading: false, questionPaper: qp);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, clearQuestionPaper: true);
+      },
+    );
+  }
+
+  Future<void> loadSyllabusTopics({required String examId, required String paperId}) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+
+    final apiClient = _ref.read(apiClientProvider);
+    final result = await apiClient.get(
+      '/examinations/$examId/papers/$paperId/syllabus-topics',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List<dynamic>? ?? [];
+        return list.map((item) => SyllabusTopicOptionModel.fromJson(item as Map<String, dynamic>)).toList();
+      },
+    );
+
+    result.when(
+      onSuccess: (topics) {
+        state = state.copyWith(syllabusTopics: topics);
+      },
+      onFailure: (failure) {
+        // Keep existing topics if error
+      },
+    );
+  }
+
+  Future<QuestionPaperExtractionResponseModel?> uploadAndExtract({
+    required String examId,
+    required String paperId,
+    List<int>? fileBytes,
+    String? fileName,
+    String? rawText,
+  }) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return null;
+
+    state = state.copyWith(isExtracting: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    dynamic bodyData;
+    if (fileBytes != null && fileName != null) {
+      bodyData = FormData.fromMap({
+        'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
+        if (rawText != null && rawText.isNotEmpty) 'raw_text': rawText,
+      });
+    } else {
+      bodyData = FormData.fromMap({
+        'raw_text': rawText ?? '',
+      });
+    }
+
+    final result = await apiClient.post(
+      '/examinations/$examId/papers/$paperId/question-paper/upload',
+      queryParameters: {'school_id': schoolId},
+      data: bodyData,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return QuestionPaperExtractionResponseModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (extraction) {
+        state = state.copyWith(isExtracting: false, lastExtraction: extraction);
+        loadQuestionPaper(examId: examId, paperId: paperId);
+        return extraction;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isExtracting: false, errorMessage: failure.message);
+        return null;
+      },
+    );
+  }
+
+  Future<bool> verifyQuestionPaper({
+    required String examId,
+    required String paperId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return false;
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.put(
+      '/examinations/$examId/papers/$paperId/question-paper/verify',
+      queryParameters: {'school_id': schoolId},
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        state = state.copyWith(isLoading: false);
+        loadQuestionPaper(examId: examId, paperId: paperId);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final questionPaperIntelligenceProvider = StateNotifierProvider<QuestionPaperIntelligenceNotifier, QuestionPaperIntelligenceState>((ref) {
+  return QuestionPaperIntelligenceNotifier(ref);
+});
+
+
+// ==================================================
+// Question-Wise Marks Spreadsheet Provider
+// ==================================================
+class QuestionWiseMarksState {
+  final bool isLoading;
+  final bool isSaving;
+  final String? errorMessage;
+  final QuestionWiseMarksMatrixModel? matrix;
+
+  const QuestionWiseMarksState({
+    this.isLoading = false,
+    this.isSaving = false,
+    this.errorMessage,
+    this.matrix,
+  });
+
+  QuestionWiseMarksState copyWith({
+    bool? isLoading,
+    bool? isSaving,
+    String? errorMessage,
+    bool clearError = false,
+    QuestionWiseMarksMatrixModel? matrix,
+    bool clearMatrix = false,
+  }) {
+    return QuestionWiseMarksState(
+      isLoading: isLoading ?? this.isLoading,
+      isSaving: isSaving ?? this.isSaving,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      matrix: clearMatrix ? null : (matrix ?? this.matrix),
+    );
+  }
+}
+
+class QuestionWiseMarksNotifier extends StateNotifier<QuestionWiseMarksState> {
+  final Ref _ref;
+
+  QuestionWiseMarksNotifier(this._ref) : super(const QuestionWiseMarksState());
+
+  void clear() {
+    state = const QuestionWiseMarksState();
+  }
+
+  Future<void> loadMarksMatrix({required String examId, required String paperId}) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/papers/$paperId/marks/question-wise',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return QuestionWiseMarksMatrixModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    result.when(
+      onSuccess: (matrix) {
+        state = state.copyWith(isLoading: false, matrix: matrix);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<bool> saveMarks({
+    required String examId,
+    required String paperId,
+    required List<Map<String, dynamic>> rows,
+    bool isDraft = false,
+  }) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return false;
+
+    state = state.copyWith(isSaving: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final payload = {
+      'is_draft': isDraft,
+      'rows': rows,
+    };
+
+    final result = await apiClient.post(
+      '/examinations/$examId/papers/$paperId/marks/question-wise',
+      queryParameters: {'school_id': schoolId},
+      data: payload,
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        state = state.copyWith(isSaving: false);
+        loadMarksMatrix(examId: examId, paperId: paperId);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isSaving: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+}
+
+final questionWiseMarksProvider = StateNotifierProvider<QuestionWiseMarksNotifier, QuestionWiseMarksState>((ref) {
+  return QuestionWiseMarksNotifier(ref);
+});
+
+
+// ==================================================
+// Question-Wise Assessment Analytics Provider
+// ==================================================
+class QuestionWiseAnalyticsState {
+  final bool isLoading;
+  final String? errorMessage;
+  final QuestionWiseAnalyticsModel? analytics;
+
+  const QuestionWiseAnalyticsState({
+    this.isLoading = false,
+    this.errorMessage,
+    this.analytics,
+  });
+
+  QuestionWiseAnalyticsState copyWith({
+    bool? isLoading,
+    String? errorMessage,
+    bool clearError = false,
+    QuestionWiseAnalyticsModel? analytics,
+    bool clearAnalytics = false,
+  }) {
+    return QuestionWiseAnalyticsState(
+      isLoading: isLoading ?? this.isLoading,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      analytics: clearAnalytics ? null : (analytics ?? this.analytics),
+    );
+  }
+}
+
+class QuestionWiseAnalyticsNotifier extends StateNotifier<QuestionWiseAnalyticsState> {
+  final Ref _ref;
+
+  QuestionWiseAnalyticsNotifier(this._ref) : super(const QuestionWiseAnalyticsState());
+
+  void clear() {
+    state = const QuestionWiseAnalyticsState();
+  }
+
+  Future<void> loadAnalytics({required String examId, required String paperId}) async {
+    final schoolId = _ref.read(selectedSchoolIdProvider);
+    if (schoolId == null) return;
+
+    state = state.copyWith(isLoading: true, clearError: true);
+    final apiClient = _ref.read(apiClientProvider);
+
+    final result = await apiClient.get(
+      '/examinations/$examId/papers/$paperId/analytics',
+      queryParameters: {'school_id': schoolId},
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return QuestionWiseAnalyticsModel.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+
+    result.when(
+      onSuccess: (analytics) {
+        state = state.copyWith(isLoading: false, analytics: analytics);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+}
+
+final questionWiseAnalyticsProvider = StateNotifierProvider<QuestionWiseAnalyticsNotifier, QuestionWiseAnalyticsState>((ref) {
+  return QuestionWiseAnalyticsNotifier(ref);
 });

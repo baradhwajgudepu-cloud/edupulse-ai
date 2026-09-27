@@ -22,11 +22,22 @@ class EmploymentType(str, enum.Enum):
     CONTRACT = "CONTRACT"
     VISITING = "VISITING"
 
+class StaffType(str, enum.Enum):
+    TEACHING = "TEACHING"
+    NON_TEACHING = "NON_TEACHING"
+
 class Teacher(Base, BaseModelMixin):
     """
-    SQLAlchemy model representing a Teacher.
+    SQLAlchemy model representing a Teacher or Non-teaching Staff member.
     """
     __tablename__ = "teachers"
+
+    staff_type: Mapped[StaffType] = mapped_column(
+        SQLEnum(StaffType, name="stafftype", create_type=False),
+        nullable=False,
+        default=StaffType.TEACHING,
+        server_default="TEACHING"
+    )
 
     employee_code: Mapped[str] = mapped_column(String(50), nullable=False)
     staff_code: Mapped[str] = mapped_column(String(50), nullable=False)

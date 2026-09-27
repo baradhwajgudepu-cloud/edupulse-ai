@@ -191,6 +191,12 @@ class FeePaymentCreate(BaseModel):
     remarks: Optional[str] = Field(None, max_length=500)
     allocations: List[FeePaymentAllocationCreate]
 
+class FeePaymentUpdate(BaseModel):
+    payment_method: Optional[PaymentMethod] = None
+    transaction_reference: Optional[str] = Field(None, max_length=150)
+    remarks: Optional[str] = Field(None, max_length=500)
+    amount_paid: Optional[Decimal] = Field(None, gt=0)
+
 class FeePaymentResponse(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
@@ -300,6 +306,8 @@ class PaymentImportResponse(BaseModel):
 
 # --- OUTSTANDING FEE REPORT SCHEMAS ---
 class OutstandingFeeReportItem(BaseModel):
+    assignment_id: Optional[uuid.UUID] = None
+    academic_year_id: Optional[uuid.UUID] = None
     student_id: uuid.UUID
     student_name: str
     admission_number: str

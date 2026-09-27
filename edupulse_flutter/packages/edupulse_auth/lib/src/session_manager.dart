@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'domain/entities/session_token.dart';
 import 'token_storage.dart';
 import 'package:edupulse_core/edupulse_core.dart';
@@ -58,17 +59,29 @@ class SessionManager {
       accessToken: token.accessToken,
       refreshToken: token.refreshToken,
     );
+    final tenantId = token.tenantId;
+    if (tenantId != null && tenantId.isNotEmpty) {
+      await _tokenStorage.saveTenantId(tenantId);
+    }
     EduLogger.i('Active authentication session tokens successfully cached.');
   }
 
-  Future<void> clearSession() async {
-    await _tokenStorage.clearTokens();
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {
+    AuthIncidentLogger.log('CLEAR_SESSION_CALLED', {
+      'source': source,
+    });
+    debugPrintStack(
+      label: '[AUTH INCIDENT] CALL STACK FOR CLEAR_SESSION_CALLED',
+    );
+    await _tokenStorage.clearTokens(source);
     EduLogger.i('Authentication session cache cleared.');
   }
 
   Future<bool> hasSession() async {
     final access = await getAccessToken();
     final refresh = await getRefreshToken();
-    return access != null && refresh != null;
+    final hasValidAccess = access != null && access.trim().isNotEmpty && access != 'null' && access != 'undefined';
+    final hasValidRefresh = refresh != null && refresh.trim().isNotEmpty && refresh != 'null' && refresh != 'undefined';
+    return hasValidAccess && hasValidRefresh;
   }
 }

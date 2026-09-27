@@ -70,6 +70,23 @@ class FakeAuthRepository implements AuthRepository {
   Future<ApiResult<void>> requestPasswordReset({required String email}) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeSessionManager implements SessionManager {
@@ -98,7 +115,7 @@ class FakeSessionManager implements SessionManager {
   Future<void> saveSession(SessionToken token) async {}
 
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
 
   @override
   Future<bool> hasSession() async => hasSessionValue;
@@ -110,6 +127,18 @@ class FakeSessionManager implements SessionManager {
   Future<void> saveSchoolId(String schoolId) async {
     cachedSchoolId = schoolId;
   }
+
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+
+  @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 // --- DASHBOARD REPO FAKE ---
@@ -417,6 +446,88 @@ class FakeAttendanceRepository implements AttendanceRepository {
     }
 
     return ApiResult.success(entity);
+  }
+
+  AttendanceSessionEntity? dailySessionMock;
+  int markDailyCount = 0;
+
+  @override
+  Future<ApiResult<AttendanceSessionEntity?>> getDailySession({
+    required String schoolId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+  }) async {
+    if (shouldFail) {
+      return ApiResult.failure(
+        ApiFailure(
+          message: failureMessage ?? 'Failed to get daily session',
+          type: ApiFailureType.unknown,
+          statusCode: 500,
+        ),
+      );
+    }
+    return ApiResult.success(dailySessionMock);
+  }
+
+  @override
+  Future<ApiResult<AttendanceSessionEntity>> markDailyAttendance({
+    required String schoolId,
+    required String academicYearId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+    String attendanceSource = 'MANUAL',
+    required List<AttendanceRecordPayload> records,
+  }) async {
+    markDailyCount++;
+    if (shouldFail) {
+      return ApiResult.failure(
+        ApiFailure(
+          message: failureMessage ?? 'Failed to mark daily attendance',
+          type: ApiFailureType.unknown,
+          statusCode: 500,
+        ),
+      );
+    }
+
+    final logs = records.map((r) => AttendanceResponseEntity(
+      id: 'log_${r.studentId}',
+      tenantId: 'd09b9362-3dc8-422d-a441-160735fcea96',
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+      attendanceSessionId: 'daily_session_1',
+      studentId: r.studentId,
+      timetableId: null,
+      sessionType: sessionType,
+      classId: classId,
+      sectionId: sectionId,
+      attendanceDate: attendanceDate,
+      attendanceStatus: r.attendanceStatus,
+      attendanceSource: r.attendanceSource,
+      attendanceReason: r.attendanceReason,
+      remarks: r.remarks,
+    )).toList();
+
+    currentSession = AttendanceSessionEntity(
+      id: 'daily_session_1',
+      tenantId: 'd09b9362-3dc8-422d-a441-160735fcea96',
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+      timetableId: null,
+      sessionType: sessionType,
+      classId: classId,
+      sectionId: sectionId,
+      teacherId: 'teacher_123',
+      subjectId: null,
+      attendanceDate: attendanceDate,
+      status: AttendanceSessionStatus.SUBMITTED,
+      attendances: logs,
+    );
+    dailySessionMock = currentSession;
+    return ApiResult.success(currentSession!);
   }
 }
 
@@ -789,6 +900,141 @@ void main() {
 
       // Dialog should not show
       expect(find.text('Correct Attendance'), findsNothing);
+    });
+
+    testWidgets('9. Mode B: Daily Attendance flow renders daily header and marks daily attendance', (tester) async {
+      final fakeAttendanceRepo = FakeAttendanceRepository();
+
+      await tester.pumpWidget(createTestWidget(tester: tester, attendanceRepo: fakeAttendanceRepo));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      final context = tester.element(find.byType(HomeScreen));
+      context.push('/attendance?mode=daily&classId=class_9&sectionId=sec_a&className=Grade%209&sectionName=A&date=2026-08-13');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      // Verify Mode B daily header
+      expect(find.text('Grade 9 - A'), findsOneWidget);
+      expect(find.text('Daily Attendance (Homeroom)'), findsOneWidget);
+
+      // Verify students loaded
+      expect(find.text('John Doe'), findsOneWidget);
+      expect(find.text('Jane Smith'), findsOneWidget);
+
+      // Toggle John Doe status
+      await tester.tap(find.text('John Doe'));
+      await tester.pumpAndSettle();
+
+      // Submit
+      await tester.tap(find.text('APPROVE & SUBMIT'));
+      await tester.pumpAndSettle();
+
+      // Confirm dialog
+      expect(find.text('Approve Attendance?'), findsOneWidget);
+      expect(find.text('Approve & Submit'), findsOneWidget);
+      await tester.tap(find.text('Approve & Submit'));
+      await tester.pumpAndSettle();
+
+      // Verify markDailyAttendance was called on repository
+      expect(fakeAttendanceRepo.markDailyCount, equals(1));
+    });
+
+    testWidgets('10. Scenario A: Admin recorded full-day attendance displays warning banner and disables submit', (tester) async {
+      final fakeAttendanceRepo = FakeAttendanceRepository();
+      fakeAttendanceRepo.dailySessionMock = AttendanceSessionEntity(
+        id: 'daily_session_admin',
+        tenantId: 'd09b9362-3dc8-422d-a441-160735fcea96',
+        schoolId: '16730f87-bf8d-44e0-acf9-4b055a778b58',
+        academicYearId: 'ay_123',
+        timetableId: null,
+        classId: 'class_9',
+        sectionId: 'sec_a',
+        teacherId: 'admin_user_999',
+        markedBy: 'admin_user_999',
+        sessionType: 'FULL_DAY',
+        attendanceDate: '2026-08-13',
+        status: AttendanceSessionStatus.SUBMITTED,
+        attendances: const [
+          AttendanceResponseEntity(
+            id: 'log_admin_1',
+            tenantId: 'd09b9362-3dc8-422d-a441-160735fcea96',
+            schoolId: '16730f87-bf8d-44e0-acf9-4b055a778b58',
+            academicYearId: 'ay_123',
+            attendanceSessionId: 'daily_session_admin',
+            studentId: 'student_1',
+            timetableId: null,
+            classId: 'class_9',
+            sectionId: 'sec_a',
+            attendanceDate: '2026-08-13',
+            attendanceStatus: AttendanceStatus.PRESENT,
+            attendanceSource: AttendanceSource.IMPORT,
+            attendanceReason: AttendanceReason.UNKNOWN,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(createTestWidget(tester: tester, attendanceRepo: fakeAttendanceRepo));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      final context = tester.element(find.byType(HomeScreen));
+      context.push('/attendance?mode=daily&classId=class_9&sectionId=sec_a&className=Grade%209&sectionName=A&date=2026-08-13');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      // Verify Scenario A amber warning banner
+      expect(
+        find.text('Full-day attendance has already been recorded by school administration for this date. Further submissions are disabled.'),
+        findsOneWidget,
+      );
+
+      // Verify locked submission button
+      expect(find.text('SUBMISSION LOCKED BY ADMIN'), findsOneWidget);
+    });
+
+    testWidgets('11. Scenario B: Admin recorded full-day attendance displays info banner for period attendance', (tester) async {
+      final fakeAttendanceRepo = FakeAttendanceRepository();
+      fakeAttendanceRepo.dailySessionMock = AttendanceSessionEntity(
+        id: 'daily_session_admin',
+        tenantId: 'd09b9362-3dc8-422d-a441-160735fcea96',
+        schoolId: '16730f87-bf8d-44e0-acf9-4b055a778b58',
+        academicYearId: 'ay_123',
+        timetableId: null,
+        classId: 'class_9',
+        sectionId: 'sec_a',
+        teacherId: 'admin_user_999',
+        markedBy: 'admin_user_999',
+        sessionType: 'FULL_DAY',
+        attendanceDate: '2026-08-13',
+        status: AttendanceSessionStatus.SUBMITTED,
+        attendances: const [],
+      );
+
+      await tester.pumpWidget(createTestWidget(tester: tester, attendanceRepo: fakeAttendanceRepo));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      // Open Period attendance
+      final context = tester.element(find.byType(HomeScreen));
+      context.push('/attendance?timetableId=timetable_1&date=2026-08-13');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      // Verify Scenario B informational banner
+      expect(
+        find.text('Daily attendance recorded by administration. You may still record period-specific attendance for this timetable slot.'),
+        findsOneWidget,
+      );
+
+      // Submit is allowed
+      expect(find.text('APPROVE & SUBMIT'), findsOneWidget);
     });
   });
 }

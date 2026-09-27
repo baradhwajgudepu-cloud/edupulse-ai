@@ -1,5 +1,6 @@
 import 'package:edupulse_network/edupulse_network.dart';
 import '../entities/staff_attendance_entity.dart';
+import '../entities/school_geofence_entity.dart';
 
 abstract class StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity?>> getTodayStatus();
@@ -7,6 +8,7 @@ abstract class StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkIn({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   });
@@ -14,7 +16,10 @@ abstract class StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkOut({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   });
+
+  Future<ApiResult<SchoolGeofenceEntity>> getSchoolGeofence(String schoolId);
 }

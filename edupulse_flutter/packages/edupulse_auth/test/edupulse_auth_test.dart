@@ -117,5 +117,22 @@ void main() {
       expect(await sessionManager.getAccessToken(), isNull);
       expect(await sessionManager.getRefreshToken(), isNull);
     });
+
+    test('should extract tenantId from JWT and cache it on saveSession', () async {
+      const testJwt =
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTEiLCJ0ZW5hbnRfaWQiOiJmMDA0YTIxNC1hYjNlLTQ0M2QtYTY4My01ODhjNjY0YTA5ODcifQ.signature';
+      const token = SessionToken(
+        accessToken: testJwt,
+        refreshToken: 'refresh_123',
+        tokenType: 'bearer',
+      );
+
+      expect(token.tenantId, 'f004a214-ab3e-443d-a683-588c664a0987');
+
+      await sessionManager.saveSession(token);
+
+      expect(await sessionManager.getTenantId(), 'f004a214-ab3e-443d-a683-588c664a0987');
+    });
   });
 }
+

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../data/models/school_setup_models.dart';
@@ -57,55 +58,51 @@ class SchoolsListNotifier extends StateNotifier<SchoolsListState> {
     await result.when(
       onSuccess: (schools) async {
         state = SchoolsListState(schools: schools, isLoading: false);
-        if (schools.isNotEmpty) {
-          try {
-            final sessionManager = _ref.read(sessionManagerProvider);
-            final persistedId = await sessionManager.getSchoolId();
-            
-            String? targetSchoolId;
-            if (persistedId != null && schools.any((s) => s.id == persistedId)) {
-              targetSchoolId = persistedId;
-            } else {
-              targetSchoolId = schools.first.id;
-            }
-            
-            if (_ref.read(selectedSchoolIdProvider) != targetSchoolId) {
-              _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
-            }
-            final match = schools.where((s) => s.id == targetSchoolId);
-            if (match.isNotEmpty) {
-              final schoolTenantId = match.first.tenantId;
-              if (schoolTenantId.isNotEmpty && _ref.read(selectedTenantIdProvider) == null) {
-                _ref.read(selectedTenantIdProvider.notifier).state = schoolTenantId;
-              }
-            }
-            await sessionManager.saveSchoolId(targetSchoolId);
-          } catch (e) {
-            // Fallback for environments where platform channels are not mocked (e.g. unit tests)
-            final targetSchoolId = schools.first.id;
-            if (_ref.read(selectedSchoolIdProvider) != targetSchoolId) {
-              _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
-            }
-            final match = schools.where((s) => s.id == targetSchoolId);
-            if (match.isNotEmpty) {
-              final schoolTenantId = match.first.tenantId;
-              if (schoolTenantId.isNotEmpty && _ref.read(selectedTenantIdProvider) == null) {
-                _ref.read(selectedTenantIdProvider.notifier).state = schoolTenantId;
-              }
-            }
-          }
-        } else {
-          if (_ref.read(selectedSchoolIdProvider) != null) {
-            _ref.read(selectedSchoolIdProvider.notifier).state = null;
-          }
+        try {
           final sessionManager = _ref.read(sessionManagerProvider);
-          try {
+          final persistedId = await sessionManager.getSchoolId();
+          
+          String? targetSchoolId;
+          if (persistedId != null && persistedId.isNotEmpty && schools.any((s) => s.id == persistedId)) {
+            targetSchoolId = persistedId;
+          } else if (persistedId != null && persistedId.isNotEmpty) {
+            // Persisted ID no longer exists in schools list (deleted school). Invalidate!
+            targetSchoolId = null;
             await sessionManager.saveSchoolId('');
-          } catch (_) {}
+            await sessionManager.saveSchoolName('');
+          } else {
+            targetSchoolId = null;
+          }
+          
+          if (_ref.read(selectedSchoolIdProvider) != targetSchoolId) {
+            _ref.read(selectedSchoolIdProvider.notifier).state = targetSchoolId;
+          }
+          if (targetSchoolId != null) {
+            final match = schools.where((s) => s.id == targetSchoolId);
+            if (match.isNotEmpty) {
+              final schoolTenantId = match.first.tenantId;
+              if (schoolTenantId.isNotEmpty && _ref.read(selectedTenantIdProvider) == null) {
+                _ref.read(selectedTenantIdProvider.notifier).state = schoolTenantId;
+              }
+              await sessionManager.saveSchoolName(match.first.name);
+              await sessionManager.saveSchoolId(targetSchoolId);
+            }
+          }
+        } catch (e) {
+          EduLogger.w('Error in SchoolsListNotifier context resolution: $e');
         }
       },
       onFailure: (failure) async {
         state = state.copyWith(isLoading: false, error: failure.message);
+        try {
+          final sessionManager = _ref.read(sessionManagerProvider);
+          final persistedId = await sessionManager.getSchoolId();
+          if (persistedId != null && persistedId.isNotEmpty) {
+            if (_ref.read(selectedSchoolIdProvider) != persistedId) {
+              _ref.read(selectedSchoolIdProvider.notifier).state = persistedId;
+            }
+          }
+        } catch (_) {}
       },
     );
   }
@@ -540,4 +537,59 @@ final setupActionProvider =
     StateNotifierProvider<SetupActionNotifier, SetupActionState>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   return SetupActionNotifier(apiClient);
+});
+
+// 9. Progressive Setup Progress Provider
+final schoolSetupProgressProvider =
+    FutureProvider.family<SchoolSetupProgressDto, String>((ref, schoolId) async {
+  final apiClient = ref.watch(apiClientProvider);
+  final result = await apiClient.get(
+    '/schools/$schoolId/setup-progress',
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      return SchoolSetupProgressDto.fromJson(payload['data'] as Map<String, dynamic>);
+    },
+  );
+  return result.when(
+    onSuccess: (data) => data,
+    onFailure: (failure) => throw Exception(failure.message),
+  );
+});
+
+// 10. Quick School Onboarding Provider
+class QuickOnboardingNotifier extends StateNotifier<AsyncValue<QuickSchoolOnboardingResult?>> {
+  final BaseApiClient _apiClient;
+  final Ref _ref;
+
+  QuickOnboardingNotifier(this._apiClient, this._ref) : super(const AsyncValue.data(null));
+
+  Future<QuickSchoolOnboardingResult?> onboard(QuickSchoolOnboardingPayload payload) async {
+    state = const AsyncValue.loading();
+    final result = await _apiClient.post(
+      '/schools/onboard-quick',
+      data: payload.toJson(),
+      mapper: (json) {
+        final res = json as Map<String, dynamic>;
+        return QuickSchoolOnboardingResult.fromJson(res['data'] as Map<String, dynamic>);
+      },
+    );
+
+    return result.when(
+      onSuccess: (data) async {
+        state = AsyncValue.data(data);
+        _ref.read(schoolsListProvider.notifier).fetchSchools();
+        return data;
+      },
+      onFailure: (failure) {
+        state = AsyncValue.error(failure.message, StackTrace.current);
+        return null;
+      },
+    );
+  }
+}
+
+final quickOnboardingProvider =
+    StateNotifierProvider<QuickOnboardingNotifier, AsyncValue<QuickSchoolOnboardingResult?>>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return QuickOnboardingNotifier(apiClient, ref);
 });

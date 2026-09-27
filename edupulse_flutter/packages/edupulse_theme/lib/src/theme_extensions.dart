@@ -127,12 +127,12 @@ class AppGradients extends ThemeExtension<AppGradients> {
 
   const AppGradients.standard()
       : primary = const LinearGradient(
-          colors: [Color(0xFF0A66C2), Color(0xFF1E3A8A)],
+          colors: [Color(0xFF0D9488), Color(0xFF0F766E)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         accent = const LinearGradient(
-          colors: [Color(0xFFE0F2FE), Color(0xFFBAE6FD)],
+          colors: [Color(0xFFCCFBF1), Color(0xFF99F6E4)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         );

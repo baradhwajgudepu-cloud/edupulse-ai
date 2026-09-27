@@ -81,14 +81,22 @@ class _SectionsScreenState extends ConsumerState<SectionsScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await context.push('${AppRoutes.sections}/new?school_id=$schoolId');
-          _refreshData();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('New Section'),
-      ),
+      floatingActionButton: isMobile
+          ? FloatingActionButton(
+              onPressed: () async {
+                await context.push('${AppRoutes.sections}/new?school_id=$schoolId');
+                _refreshData();
+              },
+              child: const Icon(Icons.add),
+            )
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                await context.push('${AppRoutes.sections}/new?school_id=$schoolId');
+                _refreshData();
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('New Section'),
+            ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -229,7 +229,9 @@ async def get_parent_homework(
     current_user: User = Depends(require_permission("homework.read")),
     service: HomeworkService = Depends(get_homework_service)
 ) -> APIResponse[List[HomeworkResponse]]:
-    entries = await service.homework_repo.get_parent_homeworks(current_user.email, school_id, tenant_id)
+    entries = await service.homework_repo.get_parent_homeworks(
+        current_user.email, school_id, tenant_id, parent_user_id=current_user.id
+    )
     return APIResponse[List[HomeworkResponse]](
         success=True,
         message="Parent student homework logs fetched successfully.",

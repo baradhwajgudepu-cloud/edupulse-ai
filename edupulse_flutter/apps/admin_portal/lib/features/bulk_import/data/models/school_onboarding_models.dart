@@ -14,6 +14,7 @@ enum OnboardingStep {
   timetable,
   syllabus,
   exams,
+  attendance,
   validation,
   import,
   report,
@@ -48,6 +49,8 @@ extension OnboardingStepExtension on OnboardingStep {
         return 'Syllabus Metadata';
       case OnboardingStep.exams:
         return 'Exams & Documents';
+      case OnboardingStep.attendance:
+        return 'Historical Attendance';
       case OnboardingStep.validation:
         return 'Pre-Import Validation';
       case OnboardingStep.import:
@@ -85,6 +88,8 @@ extension OnboardingStepExtension on OnboardingStep {
         return 'syllabus';
       case OnboardingStep.exams:
         return 'exams';
+      case OnboardingStep.attendance:
+        return 'attendance';
       default:
         return '';
     }
@@ -304,6 +309,13 @@ class OnboardingState {
   final Map<String, String> resolvedAssignments;    // teacher_code + subject_code + class_code + section_code -> assignment_id
   final Map<String, String> resolvedExaminations;   // exam_code -> exam_id
 
+  // Principal Account Details
+  final String? principalName;
+  final String? principalEmail;
+  final String? principalPhone;
+  final String? principalPassword;
+  final Map<String, dynamic>? resolvedPrincipalUser;
+
   const OnboardingState({
     required this.currentStep,
     this.selectedSchoolId,
@@ -339,6 +351,11 @@ class OnboardingState {
     required this.resolvedStudents,
     required this.resolvedAssignments,
     required this.resolvedExaminations,
+    this.principalName,
+    this.principalEmail,
+    this.principalPhone,
+    this.principalPassword,
+    this.resolvedPrincipalUser,
   });
 
   factory OnboardingState.initial() {
@@ -350,9 +367,9 @@ class OnboardingState {
       isCancelled: false,
       approvalStatus: OnboardingApprovalStatus.awaitingValidation,
       createNewTenant: true,
-      newTenantName: 'Telangana Educational Society',
-      newTenantCode: 'TS_EDU',
-      newTenantEmail: 'admin@telanganaedu.org',
+      newTenantName: null,
+      newTenantCode: null,
+      newTenantEmail: null,
       selectedTenantId: null,
       resolvedTenantId: null,
       resolvedTenantName: null,
@@ -374,6 +391,11 @@ class OnboardingState {
       resolvedStudents: {},
       resolvedAssignments: {},
       resolvedExaminations: {},
+      principalName: null,
+      principalEmail: null,
+      principalPhone: null,
+      principalPassword: null,
+      resolvedPrincipalUser: null,
     );
   }
 
@@ -412,6 +434,11 @@ class OnboardingState {
     Map<String, String>? resolvedStudents,
     Map<String, String>? resolvedAssignments,
     Map<String, String>? resolvedExaminations,
+    String? principalName,
+    String? principalEmail,
+    String? principalPhone,
+    String? principalPassword,
+    Map<String, dynamic>? resolvedPrincipalUser,
   }) {
     return OnboardingState(
       currentStep: currentStep ?? this.currentStep,
@@ -448,6 +475,12 @@ class OnboardingState {
       resolvedStudents: resolvedStudents ?? this.resolvedStudents,
       resolvedAssignments: resolvedAssignments ?? this.resolvedAssignments,
       resolvedExaminations: resolvedExaminations ?? this.resolvedExaminations,
+      principalName: principalName ?? this.principalName,
+      principalEmail: principalEmail ?? this.principalEmail,
+      principalPhone: principalPhone ?? this.principalPhone,
+      principalPassword: principalPassword ?? this.principalPassword,
+      resolvedPrincipalUser: resolvedPrincipalUser ?? this.resolvedPrincipalUser,
     );
   }
 }
+

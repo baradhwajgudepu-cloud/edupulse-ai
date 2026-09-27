@@ -1,0 +1,1021 @@
+<USER_REQUEST>
+EDUPULSE AI
+PARENT APP + TEACHER APP
+FINAL PRODUCTION COMPATIBILITY & RELEASE AUDIT
+
+OBJECTIVE
+
+Admin Portal and Principal App are already released/production-ready.
+
+Now prepare:
+
+1. Parent App for production release.
+2. Teacher App for production release.
+
+The Parent App must be fully compatible with the CURRENT production Admin Portal / Principal workflows, especially:
+
+- Parent account creation
+- Student/child mapping
+- School mapping
+- Tenant mapping
+- Academic year
+- Class/section
+- Attendance
+- Marks/results
+- Homework
+- Timetable
+- Notifications
+- Events/announcements
+- Leave/communication features where applicable
+- Any other functionality currently exposed by the Admin Portal or Principal App
+
+The Teacher App must also be verified against the same production backend and current Admin/Principal configuration.
+
+IMPORTANT:
+
+Do not assume that existing UAT compatibility automatically means production compatibility.
+
+Treat the Admin Portal as the authoritative source for how production data is created/configured.
+
+Think like:
+
+ADMIN
+  ↓
+PRINCIPAL
+  ↓
+TEACHER
+  ↓
+STUDENT
+  ↓
+PARENT
+
+Every relevant data lifecycle must work end-to-end.
+
+============================================================
+STRICT RULES
+============================================================
+
+1. READ THE CODEBASE FIRST.
+
+2. Discover actual implemented functionality.
+Do not rely only on previous reports.
+
+3. Do NOT modify production secrets.
+
+4. Do NOT expose credentials or API keys.
+
+5. Do NOT bypass authentication.
+
+6. Do NOT bypass authorization.
+
+7. Do NOT weaken tenant_id or school_id isolation.
+
+8. Do NOT modify working Admin Portal or Principal App functionality unless a genuine backend compatibility defect is discovered.
+
+9. Do NOT redesign the applications.
+
+10. Do NOT perform broad refactoring.
+
+11. Preserve existing Clean Architecture, Riverpod, Dio and GoRouter patterns.
+
+12. Do not run:
+   flutter build web
+
+13. Do not perform production deployment automatically.
+
+14. First audit.
+15. Identify gaps.
+16. Fix only confirmed blockers.
+17. Then perform regression verification.
+
+============================================================
+PART 1 — DISCOVER CURRENT PRODUCTION ARCHITECTURE
+============================================================
+
+Inspect the entire monorepo.
+
+Identify:
+
+apps/admin_portal
+apps/principal_app
+apps/teacher_app
+apps/parent_app
+backend
+
+Determine:
+
+- Production API configuration
+- Authentication architecture
+- JWT claims
+- tenant context
+- school context
+- academic year context
+- user roles
+- permission model
+- student/parent relationships
+- teacher/student relationships
+
+Document the actual architecture.
+
+Do not invent missing behavior.
+
+============================================================
+PART 2 — ADMIN → PARENT ACCOUNT LIFECYCLE
+============================================================
+
+This is the highest priority.
+
+Trace exactly how a Parent account is created/configured from the Admin Portal.
+
+Find:
+
+- Parent creation screen
+- Parent API
+- Parent database model
+- Parent credentials
+- Parent activation
+- Parent/student relationship
+- School relationship
+- Tenant relationship
+- Password setup/reset
+- Parent role assignment
+
+Trace:
+
+ADMIN PORTAL
+
+Create Parent
+↓
+Create/associate Student
+↓
+Assign School
+↓
+Assign Class
+↓
+Assign Section
+↓
+Create Parent login
+↓
+Parent App login
+
+Verify that the Parent App consumes exactly the same identity/data model.
+
+============================================================
+PART 3 — PARENT LOGIN
+============================================================
+
+Verify the Parent App login against the CURRENT backend authentication system.
+
+Test logically/code-level where possible:
+
+1. Valid parent credentials.
+2. Invalid password.
+3. Invalid email/username.
+4. Inactive parent.
+5. Parent with no linked student.
+6. Parent with one child.
+7. Parent with multiple children.
+8. Parent belonging to correct tenant.
+9. Parent belonging to correct school.
+10. Session persistence.
+11. App restart.
+12. Token expiration.
+13. Logout.
+14. Re-login.
+
+CRITICAL:
+
+Do not create a separate Parent authentication mechanism if the backend already provides the correct role-based authentication.
+
+Verify the Parent role is correctly recognized by backend and frontend.
+
+============================================================
+PART 4 — PARENT → CHILD MAPPING
+============================================================
+
+Trace:
+
+Parent
+↓
+Guardian/Parent relationship
+↓
+Student
+↓
+School
+↓
+Class
+↓
+Section
+
+Verify the Parent App displays ONLY children actually linked to that parent.
+
+Test:
+
+- One child.
+- Multiple children.
+- Child transferred class.
+- Child transferred section.
+- Child transferred school if supported.
+- Student deactivated.
+- Parent with no linked student.
+
+Prevent:
+
+Cross-parent student access.
+Cross-school student access.
+Cross-tenant student access.
+
+A parent must never be able to manipulate a student ID in the route/API and see another student's data.
+
+============================================================
+PART 5 — PARENT APP FEATURE DISCOVERY
+============================================================
+
+Inspect all Parent App routes, screens, providers, repositories, datasources and API calls.
+
+Create a complete inventory.
+
+At minimum inspect:
+
+AUTHENTICATION
+DASHBOARD
+CHILD SELECTION
+STUDENT PROFILE
+ATTENDANCE
+MARKS
+RESULTS
+HOMEWORK
+ASSIGNMENTS
+TIMETABLE
+LEAVE
+NOTIFICATIONS
+ANNOUNCEMENTS
+EVENTS
+FEES if implemented
+PROFILE
+SETTINGS
+LOGOUT
+
+Also discover any additional features.
+
+For each:
+
+| Feature | Route | API | Admin Source | Principal Source | Parent Status |
+
+============================================================
+PART 6 — ADMIN → PARENT COMPATIBILITY MATRIX
+============================================================
+
+For every Admin feature determine whether it should affect Parent App.
+
+Create:
+
+| Admin Feature | Data Created | Parent Should See? | Backend Ready? | Parent UI Ready? | Status |
+
+Specifically inspect:
+
+STUDENT MANAGEMENT
+- admission
+- class allocation
+- section allocation
+- student status
+
+PARENT MANAGEMENT
+- parent creation
+- guardian mapping
+- activation/deactivation
+
+ACADEMIC CONFIGURATION
+- academic year
+- class
+- section
+- subject
+
+ATTENDANCE
+- student attendance
+- attendance imports
+- corrections
+
+EXAMINATION
+- exam master
+- schedules
+- marks
+- publishing
+- results
+
+HOMEWORK
+- teacher-created homework
+- assignment
+- due date
+- student submission where implemented
+
+TIMETABLE
+- class timetable
+
+COMMUNICATION
+- announcements
+- notifications
+- events
+
+FEES
+Only if Parent App actually supports fee functionality.
+
+============================================================
+PART 7 — REAL PARENT DAILY WORKFLOW
+============================================================
+
+Think like a real parent.
+
+Morning:
+
+1. Parent opens app.
+2. Login/session restored.
+3. Dashboard loads.
+4. Select child.
+5. View today's timetable.
+6. Check attendance.
+7. View homework.
+8. View announcements.
+9. View school events.
+
+During examination period:
+
+10. Parent receives notification.
+11. Student completes examination.
+12. Teacher enters marks.
+13. Teacher publishes marks.
+14. Parent receives notification.
+15. Parent opens notification.
+16. Parent views result/marks.
+
+For homework:
+
+17. Teacher creates homework.
+18. Parent sees homework.
+19. Parent opens details.
+20. Parent sees due date/subject/class.
+
+For attendance:
+
+21. Teacher/admin records attendance.
+22. Parent sees updated attendance.
+23. Parent sees correct date/status.
+
+For communication:
+
+24. Admin/Principal publishes announcement.
+25. Parent receives notification.
+26. Parent opens notification.
+27. Correct detail page opens.
+
+Verify every lifecycle.
+
+============================================================
+PART 8 — PARENT NOTIFICATIONS
+============================================================
+
+Audit notification compatibility.
+
+Trace:
+
+Admin/Principal/Teacher action
+↓
+Backend notification
+↓
+Parent notification
+↓
+Parent App
+↓
+Go To Action
+↓
+Correct screen
+
+Verify notification metadata:
+
+related_module
+related_record_id
+notification_type
+
+Ensure Parent App does not depend exclusively on generic notification type if backend uses metadata to determine the destination.
+
+Test notifications for:
+
+- Marks published
+- Homework
+- Attendance
+- Leave if parent-visible
+- Announcements
+- Events
+- Results
+
+Deleted/missing records must not crash the app.
+
+============================================================
+PART 9 — PARENT MARKS / RESULTS
+============================================================
+
+This is production-critical.
+
+Trace:
+
+Admin creates exam
+↓
+Principal/authorized staff configures exam
+↓
+Teacher gets schedule
+↓
+Teacher enters marks
+↓
+Teacher publishes marks
+↓
+Backend stores published result
+↓
+Parent receives notification
+↓
+Parent sees marks/result
+
+Verify:
+
+- Correct child.
+- Correct exam.
+- Correct subject.
+- Correct maximum marks.
+- Correct obtained marks.
+- Correct status.
+- Correct academic year.
+
+Parent must never see:
+
+- Draft marks unless explicitly intended.
+- Another student's marks.
+- Another school's marks.
+- Another tenant's marks.
+
+============================================================
+PART 10 — PARENT ATTENDANCE
+============================================================
+
+Trace:
+
+Admin/Teacher attendance
+↓
+Database
+↓
+Parent API
+↓
+Parent App
+
+Verify:
+
+- Present.
+- Absent.
+- Late if supported.
+- Date.
+- Academic year.
+- Correct child.
+- Attendance summaries.
+
+Verify imported/admin-created attendance is correctly visible.
+
+============================================================
+PART 11 — PARENT HOMEWORK
+============================================================
+
+Trace:
+
+Teacher creates homework
+↓
+Backend
+↓
+Student/class relationship
+↓
+Parent App
+
+Verify:
+
+- Correct child receives homework.
+- Correct subject.
+- Correct teacher if displayed.
+- Correct due date.
+- Correct description.
+- Published/active state.
+
+If student submissions are implemented, verify their lifecycle too.
+
+============================================================
+PART 12 — PARENT TIMETABLE
+============================================================
+
+Trace:
+
+Admin/Principal configures timetable
+↓
+Teacher timetable
+↓
+Student/class timetable
+↓
+Parent App
+
+Verify:
+
+- Correct class.
+- Correct section.
+- Correct day.
+- Correct periods.
+- Correct subjects.
+- Correct teacher if displayed.
+
+No timetable must produce a clean empty state.
+
+============================================================
+PART 13 — ACADEMIC YEAR ISOLATION
+============================================================
+
+This is critical.
+
+Verify Parent App never mixes:
+
+CURRENT ACADEMIC YEAR
+with
+OLD ACADEMIC YEAR.
+
+Inspect all relevant queries/providers/API calls.
+
+Test conceptual lifecycle:
+
+Old year:
+Student Class 4-A
+
+New year:
+Student Class 5-A
+
+Parent must see the correct active academic context.
+
+Verify:
+
+- Attendance
+- Marks
+- Results
+- Homework
+- Timetable
+- Events
+
+============================================================
+PART 14 — TENANT / SCHOOL ISOLATION
+============================================================
+
+Verify Parent App API requests and backend authorization enforce:
+
+tenant_id
+school_id
+student relationship
+
+Attempt logically/code-level:
+
+Parent A → Student B
+Parent A → School B
+Parent A → Tenant B
+
+Expected:
+
+403/404 or empty authorized result.
+
+Never expose data merely because a valid student UUID is supplied.
+
+============================================================
+PART 15 — TEACHER APP FINAL PRODUCTION VERIFICATION
+============================================================
+
+Now audit the Teacher App against the CURRENT production Admin/Principal architecture.
+
+Verify:
+
+LOGIN
+DASHBOARD
+ACTIVE SCHOOL
+MY CLASSES
+STUDENTS
+STAFF ATTENDANCE
+GEOFENCE
+STUDENT ATTENDANCE
+TIMETABLE
+HOMEWORK
+MARKS
+MARKS PUBLISH
+AI FEATURES
+LEAVE
+NOTIFICATIONS
+EVENTS
+PROFILE
+LOGOUT
+
+Especially verify Admin-created/configured data reaches Teacher App.
+
+Test:
+
+Admin creates teacher
+→ Teacher login
+
+Admin assigns class
+→ Teacher sees class
+
+Admin assigns subject
+→ Teacher sees subject
+
+Admin configures exam
+→ Teacher sees schedule
+
+Teacher enters marks
+→ Publish
+
+Teacher publishes marks
+→ Parent receives result
+
+Admin changes geofence
+→ Teacher uses new configuration
+
+Admin changes timetable
+→ Teacher sees updated timetable
+
+============================================================
+PART 16 — SCHOOL CONTEXT / CACHE ISOLATION
+============================================================
+
+Perform the final school-context audit already required for Teacher App.
+
+Search for:
+
+schools.first
+schoolId
+school_id
+activeSchoolIdProvider
+
+Verify no stale provider state survives school switching.
+
+Inspect:
+
+Dashboard
+Attendance
+Timetable
+Students
+Homework
+Marks
+Results
+Events
+AI
+
+Ensure active school is consistently propagated.
+
+============================================================
+PART 17 — API CONTRACT AUDIT
+============================================================
+
+Compare:
+
+Admin Portal API models
+Principal App API models
+Teacher App API models
+Parent App API models
+Backend Pydantic schemas
+
+Check:
+
+- Required fields
+- Nullable fields
+- Enum values
+- IDs
+- Date/time formats
+- Pagination
+- Error responses
+- Authentication headers
+
+Look specifically for API response fields added recently by Admin Portal development that Parent/Teacher Apps may not understand.
+
+============================================================
+PART 18 — ERROR HANDLING
+============================================================
+
+Verify:
+
+400
+401
+403
+404
+409
+422
+500
+timeout
+network unavailable
+
+Parent and Teacher Apps must:
+
+- avoid crashes
+- avoid infinite loading
+- display understandable errors
+- handle expired sessions
+- support retry where appropriate
+
+============================================================
+PART 19 — PRODUCTION CONFIGURATION
+============================================================
+
+Inspect all Flutter environment configuration.
+
+Identify every API base URL.
+
+Verify production configuration uses:
+
+https://api.edupulse.ai/api/v1/
+
+Do not hardcode UAT/local URLs into release configuration.
+
+Search for:
+
+127.0.0.1
+localhost
+UAT URLs
+development URLs
+test URLs
+
+Classify every occurrence.
+
+Local URLs inside development-only configuration are acceptable.
+
+Production configuration must not use them.
+
+============================================================
+PART 20 — TESTING
+============================================================
+
+Run:
+
+flutter analyze
+
+Run:
+
+flutter test
+
+for Parent App.
+
+Run relevant Teacher App tests.
+
+Run relevant backend tests.
+
+Do not run:
+
+flutter build web
+
+Do not run production APK builds during this audit.
+
+Do not deploy.
+
+============================================================
+FINAL REPORT
+============================================================
+
+Return:
+
+==================================================
+EDUPULSE AI
+FINAL PARENT + TEACHER PRODUCTION AUDIT
+==================================================
+
+PARENT APP
+
+LOGIN:
+PASS/FAIL
+
+PARENT ACCOUNT CREATION COMPATIBILITY:
+PASS/FAIL
+
+PARENT → STUDENT MAPPING:
+PASS/FAIL
+
+DASHBOARD:
+PASS/FAIL
+
+ATTENDANCE:
+PASS/FAIL
+
+MARKS:
+PASS/FAIL
+
+RESULTS:
+PASS/FAIL
+
+HOMEWORK:
+PASS/FAIL
+
+TIMETABLE:
+PASS/FAIL
+
+NOTIFICATIONS:
+PASS/FAIL
+
+EVENTS:
+PASS/FAIL
+
+ANNOUNCEMENTS:
+PASS/FAIL
+
+ACADEMIC YEAR:
+PASS/FAIL
+
+TENANT ISOLATION:
+PASS/FAIL
+
+SCHOOL ISOLATION:
+PASS/FAIL
+
+PROFILE:
+PASS/FAIL
+
+LOGOUT:
+PASS/FAIL
+
+
+TEACHER APP
+
+LOGIN:
+PASS/FAIL
+
+DASHBOARD:
+PASS/FAIL
+
+SCHOOL CONTEXT:
+PASS/FAIL
+
+STAFF GEOFENCE:
+PASS/FAIL
+
+STUDENT ATTENDANCE:
+PASS/FAIL
+
+MARKS ENTRY:
+PASS/FAIL
+
+MARKS PUBLISH:
+PASS/FAIL
+
+HOMEWORK:
+PASS/FAIL
+
+TIMETABLE:
+PASS/FAIL
+
+AI:
+PASS/FAIL
+
+LEAVE:
+PASS/FAIL
+
+NOTIFICATIONS:
+PASS/FAIL
+
+EVENTS:
+PASS/FAIL
+
+PROFILE:
+PASS/FAIL
+
+LOGOUT:
+PASS/FAIL
+
+
+CROSS-PORTAL LIFECYCLES
+
+ADMIN → PARENT LOGIN:
+PASS/FAIL
+
+ADMIN → PARENT STUDENT MAPPING:
+PASS/FAIL
+
+ADMIN → TEACHER LOGIN:
+PASS/FAIL
+
+ADMIN → TEACHER ASSIGNMENT:
+PASS/FAIL
+
+ADMIN → EXAM → TEACHER:
+PASS/FAIL
+
+TEACHER → MARKS → PARENT:
+PASS/FAIL
+
+TEACHER → HOMEWORK → PARENT:
+PASS/FAIL
+
+ADMIN/TEACHER → ATTENDANCE → PARENT:
+PASS/FAIL
+
+ADMIN → TIMETABLE → TEACHER:
+PASS/FAIL
+
+ADMIN → TIMETABLE → PARENT:
+PASS/FAIL
+
+ADMIN → EVENT → TEACHER/PARENT:
+PASS/FAIL
+
+ADMIN/PRINCIPAL → NOTIFICATION → TEACHER/PARENT:
+PASS/FAIL
+
+
+SECURITY
+
+TENANT ISOLATION:
+PASS/FAIL
+
+SCHOOL ISOLATION:
+PASS/FAIL
+
+PARENT-STUDENT ISOLATION:
+PASS/FAIL
+
+TEACHER ASSIGNMENT ISOLATION:
+PASS/FAIL
+
+ROLE PERMISSIONS:
+PASS/FAIL
+
+SCHOOL CONTEXT ISOLATION:
+PASS/FAIL
+
+CACHE ISOLATION:
+PASS/FAIL
+
+
+PRODUCTION CONFIGURATION
+
+PARENT API URL:
+PASS/FAIL
+
+TEACHER API URL:
+PASS/FAIL
+
+LOCAL/UAT URL LEAK:
+NONE / FOUND
+
+CORS:
+PASS/FAIL
+
+AUTHENTICATION:
+PASS/FAIL
+
+
+TEST RESULTS
+
+PARENT FLUTTER ANALYZE:
+PASS/FAIL
+
+PARENT FLUTTER TEST:
+PASS/FAIL
+
+TEACHER FLUTTER ANALYZE:
+PASS/FAIL
+
+TEACHER FLUTTER TEST:
+PASS/FAIL
+
+BACKEND TESTS:
+PASS/FAIL
+
+
+PRODUCTION BLOCKERS
+
+CRITICAL:
+LIST
+
+HIGH:
+LIST
+
+MEDIUM:
+LIST
+
+LOW:
+LIST
+
+
+REQUIRED FIXES BEFORE RELEASE
+
+Only list genuine production requirements.
+
+
+FINAL DECISION
+
+PARENT APP:
+GO / GO AFTER FIXES / NO-GO
+
+TEACHER APP:
+GO / GO AFTER FIXES / NO-GO
+
+OVERALL EDU-PULSE MOBILE RELEASE:
+GO / GO AFTER FIXES / NO-GO
+
+Explain the decision using evidence from the audit.
+
+Do not declare GO merely because tests pass.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-09T15:42:31+05:30.
+</ADDITIONAL_METADATA>

@@ -7,16 +7,18 @@ from sqlalchemy.orm import joinedload
 
 from app.models.examination import (
     ExamTypeMaster, ExamTemplate, Examination, ExamSchedule,
-    ExaminationClass, ExamStatus, ExamType, ExamTypeCategory
+    ExaminationClass, ExamStatus, ExamType, ExamTypeCategory,
+    ExamPaper, ExamPaperClass
 )
 from app.models.teacher_subject_assignment import TeacherSubjectAssignment
 from app.models.class_entity import Class
 from app.models.section import Section
 from app.models.subject import Subject
 from app.models.user import User
+from app.models.academic_calendar import AcademicCalendarEvent, CalendarEventType
 from app.repositories.examination import (
     ExamTypeMasterRepository, ExamTemplateRepository,
-    ExaminationRepository, ExamScheduleRepository
+    ExaminationRepository, ExamScheduleRepository, ExamPaperRepository
 )
 from app.repositories.school import SchoolRepository
 from app.repositories.academic_year import AcademicYearRepository
@@ -29,7 +31,8 @@ from app.schemas.examination import (
     ExaminationWizardCreate, ExaminationCopyRequest,
     ExamScheduleCreate, ExamScheduleUpdate,
     BulkTimetablePreviewRequest, BulkTimetablePreviewItem, BulkTimetablePreviewResponse,
-    BulkTimetableConfirmRequest
+    BulkTimetableConfirmRequest,
+    ExamPaperCreate, ExamPaperUpdate, ExamPaperClassConfigItem, TimetableSessionSlot
 )
 
 ALLOWED_TRANSITIONS = {
@@ -53,7 +56,8 @@ class ExaminationService:
         schedule_repo: ExamScheduleRepository,
         school_repo: SchoolRepository,
         academic_year_repo: AcademicYearRepository,
-        tsa_repo: TeacherSubjectAssignmentRepository
+        tsa_repo: TeacherSubjectAssignmentRepository,
+        paper_repo: Optional[ExamPaperRepository] = None
     ) -> None:
         self.type_repo = type_repo
         self.template_repo = template_repo
@@ -62,6 +66,7 @@ class ExaminationService:
         self.school_repo = school_repo
         self.academic_year_repo = academic_year_repo
         self.tsa_repo = tsa_repo
+        self.paper_repo = paper_repo or ExamPaperRepository(exam_repo.db)
 
     # ==================================================
     # Exam Types Workflows
@@ -249,9 +254,10 @@ class ExaminationService:
             exam_code=obj_in.exam_code or (obj_in.settings or {}).get("exam_code"),
         )
         if dup:
+            conflict_msg = getattr(dup, "conflict_reason", None) or "An examination with this name or code already exists in the academic year."
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An examination with this name or code already exists in the academic year."
+                detail=conflict_msg
             )
 
         db_obj = await self.exam_repo.create(tenant_id, obj_in, created_by=current_user.id)
@@ -382,9 +388,96 @@ class ExaminationService:
         req = ExamStatusTransitionRequest(new_status=ExamStatus.PUBLISHED, is_administrative_override=True, reason="Direct publish trigger")
         return await self.transition_exam_status(tenant_id, school_id, exam_id, req, current_user)
 
-    async def delete_examination(
+    async def get_deletion_impact(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID
+    ) -> Dict[str, Any]:
+        from app.models.marks import Marks
+        from app.models.question_paper import QuestionPaper
+        from sqlalchemy import func
+
+        exam = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=404, detail="Examination not found.")
+
+        # Count schedules/papers
+        sched_cnt_stmt = select(func.count(ExamSchedule.id)).where(
+            ExamSchedule.exam_id == exam_id,
+            ExamSchedule.deleted_at.is_(None)
+        )
+        papers_count = (await self.exam_repo.db.execute(sched_cnt_stmt)).scalar_one_or_none() or 0
+
+        # Count marks/results
+        marks_cnt_stmt = select(func.count(Marks.id)).where(
+            Marks.examination_id == exam_id,
+            Marks.deleted_at.is_(None)
+        )
+        results_count = (await self.exam_repo.db.execute(marks_cnt_stmt)).scalar_one_or_none() or 0
+
+        # Count question papers
+        qp_cnt_stmt = select(func.count(QuestionPaper.id)).where(
+            QuestionPaper.examination_id == exam_id,
+            QuestionPaper.deleted_at.is_(None)
+        )
+        qp_count = (await self.exam_repo.db.execute(qp_cnt_stmt)).scalar_one_or_none() or 0
+
+        is_draft = (exam.status == ExamStatus.DRAFT)
+        can_delete_direct = is_draft and results_count == 0
+
+        if can_delete_direct:
+            warning = "This examination is in DRAFT with no recorded results and can be safely deleted."
+            affected_summary = f"{papers_count} paper schedule(s) will be removed."
+        elif exam.status == ExamStatus.PUBLISHED or results_count > 0:
+            warning = (
+                f"This examination is {exam.status.value} and contains {results_count} student result record(s) "
+                f"across {papers_count} paper(s). Permanent deletion is destructive. Archiving is recommended."
+            )
+            affected_summary = f"{papers_count} papers, {results_count} result records, {qp_count} question papers."
+        else:
+            warning = f"This examination is in {exam.status.value} status."
+            affected_summary = f"{papers_count} paper schedule(s) configured."
+
+        return {
+            "exam_id": exam.id,
+            "exam_name": exam.exam_name,
+            "status": exam.status.value,
+            "papers_count": papers_count,
+            "results_count": results_count,
+            "question_papers_count": qp_count,
+            "can_delete_direct": can_delete_direct,
+            "can_archive": True,
+            "can_permanent_delete": True,
+            "warning_message": warning,
+            "affected_summary": affected_summary
+        }
+
+    async def archive_examination(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, exam_id: uuid.UUID, current_user: User
     ) -> Examination:
+        exam = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=404, detail="Examination not found.")
+
+        req = ExamStatusTransitionRequest(
+            new_status=ExamStatus.ARCHIVED,
+            is_administrative_override=True,
+            reason="Archived by administrator to preserve academic history."
+        )
+        return await self.transition_exam_status(tenant_id, school_id, exam_id, req, current_user)
+
+    async def delete_examination(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        current_user: User,
+        mode: str = "standard",
+        confirmation_name: Optional[str] = None
+    ) -> Examination:
+        from app.models.marks import Marks
+        from app.models.question_paper import QuestionPaper, StudentQuestionMarks
+        from app.models.exam_question import ExamQuestion
+        from sqlalchemy import func, delete
+
         db_obj = await self.exam_repo.get_by_id(exam_id, school_id, tenant_id)
         if not db_obj:
             raise HTTPException(
@@ -392,15 +485,65 @@ class ExaminationService:
                 detail="Examination not found."
             )
 
-        if db_obj.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Cannot delete examination when status is locked, completed, or archived."
-            )
+        # Count marks/results
+        marks_cnt_stmt = select(func.count(Marks.id)).where(
+            Marks.examination_id == exam_id,
+            Marks.deleted_at.is_(None)
+        )
+        results_count = (await self.exam_repo.db.execute(marks_cnt_stmt)).scalar_one_or_none() or 0
 
-        await self.exam_repo.soft_delete(db_obj, deleted_by=current_user.id)
-        await self.exam_repo.db.commit()
-        return db_obj
+        if mode == "archive":
+            return await self.archive_examination(tenant_id, school_id, exam_id, current_user)
+
+        if mode == "permanent":
+            # Explicit confirmation check
+            if not confirmation_name or confirmation_name.strip() != db_obj.exam_name.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Confirmation name mismatch. Please type '{db_obj.exam_name}' exactly to confirm permanent deletion."
+                )
+
+            # Strictly cascade-delete ONLY exam-related records
+            await self.exam_repo.db.execute(
+                delete(StudentQuestionMarks).where(StudentQuestionMarks.examination_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(ExamQuestion).where(ExamQuestion.examination_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(QuestionPaper).where(QuestionPaper.examination_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(Marks).where(Marks.examination_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(ExamSchedule).where(ExamSchedule.exam_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(ExaminationClass).where(ExaminationClass.examination_id == exam_id)
+            )
+            await self.exam_repo.db.execute(
+                delete(Examination).where(Examination.id == exam_id)
+            )
+            await self.exam_repo.db.commit()
+            return db_obj
+
+        # Standard deletion rule:
+        # DRAFT + no marks: allow delete
+        if db_obj.status == ExamStatus.DRAFT and results_count == 0:
+            await self.exam_repo.soft_delete(db_obj, deleted_by=current_user.id)
+            await self.exam_repo.db.commit()
+            return db_obj
+
+        # PUBLISHED or contains marks/results: Disallow standard delete
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Cannot delete examination '{db_obj.exam_name}' because it is {db_obj.status.value} "
+                f"or contains {results_count} student result record(s). "
+                "Use 'archive' to safely preserve academic history or perform verified permanent deletion."
+            )
+        )
 
     # ==================================================
     # Wizard Workflows
@@ -487,6 +630,15 @@ class ExaminationService:
             settings["section_ids"] = [str(sid) for sid in (obj_in.section_ids or [])]
 
         # 1. Create standard master examination
+        if obj_in.target_scope == "ALL_CLASSES":
+            participating_class_ids = resolved_class_ids
+        elif obj_in.target_scope == "SPECIFIC_CLASSES":
+            participating_class_ids = obj_in.class_ids or []
+        elif obj_in.target_scope == "SPECIFIC_SECTIONS":
+            participating_class_ids = obj_in.class_ids or []
+        else:
+            participating_class_ids = None
+
         master_create = ExaminationCreate(
             school_id=school_id,
             academic_year_id=obj_in.academic_year_id,
@@ -495,6 +647,7 @@ class ExaminationService:
             start_date=obj_in.start_date,
             end_date=obj_in.end_date,
             description=obj_in.description,
+            participating_class_ids=participating_class_ids,
             settings=settings
         )
         
@@ -561,7 +714,7 @@ class ExaminationService:
             db_sched = ExamSchedule(
                 tenant_id=tenant_id,
                 school_id=school_id,
-                academic_year_id=obj_in.academic_year_id,
+                academic_year_id=exam_master.academic_year_id,
                 exam_id=exam_master.id,
                 class_id=sched.class_id,
                 section_id=sched.section_id,
@@ -619,9 +772,10 @@ class ExaminationService:
             participating_class_ids=source_class_ids,
         )
         if dup:
+            conflict_msg = getattr(dup, "conflict_reason", None) or "An examination with this name already exists in the academic year."
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="An examination with this name already exists in the academic year."
+                detail=conflict_msg
             )
 
         # Compute date offset (days delta)
@@ -875,6 +1029,155 @@ class ExaminationService:
         await self.schedule_repo.db.commit()
 
     # ==================================================
+    # Exam Paper & Cycle Workflows
+    # ==================================================
+    async def list_papers(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        examination_id: uuid.UUID,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[ExamPaper]:
+        return await self.paper_repo.get_multi(
+            examination_id=examination_id,
+            school_id=school_id,
+            tenant_id=tenant_id,
+            skip=skip,
+            limit=limit
+        )
+
+    async def get_paper(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        paper_id: uuid.UUID
+    ) -> ExamPaper:
+        paper = await self.paper_repo.get_by_id(paper_id, school_id, tenant_id)
+        if not paper:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam paper not found.")
+        return paper
+
+    async def create_paper(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        examination_id: uuid.UUID,
+        obj_in: ExamPaperCreate,
+        current_user: User
+    ) -> ExamPaper:
+        exam = await self.exam_repo.get_by_id(examination_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        if exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot add paper to a locked, completed, or archived examination cycle."
+            )
+
+        db_obj = await self.paper_repo.create(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            academic_year_id=exam.academic_year_id,
+            examination_id=examination_id,
+            obj_in=obj_in,
+            created_by=current_user.id
+        )
+        await self.paper_repo.db.commit()
+        return await self.paper_repo.get_by_id(db_obj.id, school_id, tenant_id)
+
+    async def update_paper(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        paper_id: uuid.UUID,
+        obj_in: ExamPaperUpdate,
+        current_user: User
+    ) -> ExamPaper:
+        paper = await self.paper_repo.get_by_id(paper_id, school_id, tenant_id)
+        if not paper:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam paper not found.")
+
+        exam = await self.exam_repo.get_by_id(paper.examination_id, school_id, tenant_id)
+        if exam and exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot update paper of a locked, completed, or archived examination cycle."
+            )
+
+        update_data = obj_in.model_dump(exclude_unset=True)
+        await self.paper_repo.update(paper, update_data, updated_by=current_user.id)
+        await self.paper_repo.db.commit()
+        return await self.paper_repo.get_by_id(paper_id, school_id, tenant_id)
+
+    async def delete_paper(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        paper_id: uuid.UUID,
+        current_user: User
+    ) -> None:
+        paper = await self.paper_repo.get_by_id(paper_id, school_id, tenant_id)
+        if not paper:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam paper not found.")
+
+        exam = await self.exam_repo.get_by_id(paper.examination_id, school_id, tenant_id)
+        if exam and exam.status in [ExamStatus.LOCKED, ExamStatus.COMPLETED, ExamStatus.ARCHIVED]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot delete paper of a locked, completed, or archived examination cycle."
+            )
+
+        await self.paper_repo.delete(paper, deleted_by=current_user.id)
+        await self.paper_repo.db.commit()
+
+    async def configure_paper_classes(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        paper_id: uuid.UUID,
+        configs: List[ExamPaperClassConfigItem],
+        current_user: User
+    ) -> List[ExamPaperClass]:
+        paper = await self.paper_repo.get_by_id(paper_id, school_id, tenant_id)
+        if not paper:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam paper not found.")
+
+        result = await self.paper_repo.bulk_set_class_configs(
+            paper_id=paper_id,
+            examination_id=paper.examination_id,
+            school_id=school_id,
+            tenant_id=tenant_id,
+            configs=configs,
+            updated_by=current_user.id
+        )
+        await self.paper_repo.db.commit()
+        return result
+
+    async def update_examination_classes(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        examination_id: uuid.UUID,
+        class_ids: List[uuid.UUID],
+        current_user: User
+    ) -> List[uuid.UUID]:
+        exam = await self.exam_repo.get_by_id(examination_id, school_id, tenant_id)
+        if not exam:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        updated_ids = await self.exam_repo.update_participating_classes(
+            exam_id=examination_id,
+            class_ids=class_ids,
+            school_id=school_id,
+            tenant_id=tenant_id
+        )
+        exam.updated_by = current_user.id
+        await self.exam_repo.db.commit()
+        return updated_ids
+
+    # ==================================================
     # Bulk Timetable Auto-Generation Workflows
     # ==================================================
     async def preview_bulk_timetable(
@@ -886,6 +1189,10 @@ class ExaminationService:
         exam = await self.exam_repo.get_by_id(req.examination_id, school_id, tenant_id)
         if not exam:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        exam_papers = await self.paper_repo.get_multi(req.examination_id, school_id, tenant_id)
+        paper_by_subject: Dict[uuid.UUID, ExamPaper] = {p.subject_id: p for p in exam_papers}
+        paper_by_id: Dict[uuid.UUID, ExamPaper] = {p.id: p for p in exam_papers}
 
         stmt = select(TeacherSubjectAssignment).where(
             TeacherSubjectAssignment.class_id.in_(req.class_ids),
@@ -902,37 +1209,160 @@ class ExaminationService:
             stmt = stmt.where(TeacherSubjectAssignment.section_id.in_(req.section_ids))
         if req.subject_ids:
             stmt = stmt.where(TeacherSubjectAssignment.subject_id.in_(req.subject_ids))
+        if req.paper_ids:
+            allowed_sub_ids = [paper_by_id[pid].subject_id for pid in req.paper_ids if pid in paper_by_id]
+            if allowed_sub_ids:
+                stmt = stmt.where(TeacherSubjectAssignment.subject_id.in_(allowed_sub_ids))
 
         res = await self.schedule_repo.db.execute(stmt)
         tsas = list(res.scalars().all())
 
-        start_time = req.start_time
-        end_time = (datetime.combine(date.today(), start_time) + timedelta(minutes=req.duration_minutes)).time()
-
-        grouped_by_class: Dict[uuid.UUID, List[TeacherSubjectAssignment]] = {}
+        # Collect unique subjects across classes
+        subject_order = []
+        seen_subjects = set()
         for tsa in tsas:
-            grouped_by_class.setdefault(tsa.class_id, []).append(tsa)
+            if tsa.subject_id not in seen_subjects:
+                seen_subjects.add(tsa.subject_id)
+                subject_order.append(tsa.subject_id)
+
+        # Configure sessions
+        sessions = req.sessions or [
+            TimetableSessionSlot(
+                session_name="Morning",
+                start_time=req.start_time,
+                end_time=(datetime.combine(date.today(), req.start_time) + timedelta(minutes=req.duration_minutes)).time()
+            )
+        ]
+
+        # Query approved public/school holidays for school
+        stmt_holidays = select(AcademicCalendarEvent).where(
+            AcademicCalendarEvent.school_id == school_id,
+            AcademicCalendarEvent.tenant_id == tenant_id,
+            AcademicCalendarEvent.event_type.in_([
+                CalendarEventType.PUBLIC_HOLIDAY,
+                CalendarEventType.SCHOOL_HOLIDAY,
+                CalendarEventType.PRINCIPAL_DECLARED_HOLIDAY
+            ]),
+            AcademicCalendarEvent.deleted_at.is_(None)
+        )
+        res_holidays = await self.schedule_repo.db.execute(stmt_holidays)
+        holidays_map: Dict[date, str] = {h.event_date: h.title for h in res_holidays.scalars().all()}
+
+        end_boundary = req.end_date or exam.end_date
+
+        # Check edge case: Entire window falls on weekends when exclude_weekends is enabled
+        if req.exclude_weekends and end_boundary:
+            cur_test = req.start_date
+            has_any_weekday = False
+            while cur_test <= end_boundary:
+                if cur_test.weekday() < 5:
+                    has_any_weekday = True
+                    break
+                cur_test += timedelta(days=1)
+            if not has_any_weekday and req.start_date <= end_boundary:
+                return BulkTimetablePreviewResponse(
+                    total_slots=0,
+                    schedules=[],
+                    warnings=[
+                        f"No valid examination dates available: the selected window ({req.start_date} to {end_boundary}) "
+                        "falls entirely on weekends while 'Exclude Weekends' is enabled."
+                    ],
+                    has_conflicts=True,
+                    conflict_count=1
+                )
 
         preview_items: List[BulkTimetablePreviewItem] = []
+        warnings: List[str] = []
+        has_conflicts = False
 
-        for class_id, class_tsas in grouped_by_class.items():
-            subject_map: Dict[uuid.UUID, List[TeacherSubjectAssignment]] = {}
-            for tsa in class_tsas:
-                subject_map.setdefault(tsa.subject_id, []).append(tsa)
+        # Group TSAs by subject_id -> class_id -> list of TSAs
+        sub_class_tsas: Dict[uuid.UUID, Dict[uuid.UUID, List[TeacherSubjectAssignment]]] = {}
+        for tsa in tsas:
+            sub_class_tsas.setdefault(tsa.subject_id, {}).setdefault(tsa.class_id, []).append(tsa)
 
-            current_date = req.start_date
-            for subject_id, sub_tsas in subject_map.items():
-                if req.exclude_weekends:
-                    while current_date.weekday() >= 5:
-                        current_date += timedelta(days=1)
+        current_date = req.start_date
+        strategy = req.scheduling_strategy or "ONE_PAPER_PER_DAY"
+
+        # If exclude_weekends is enabled and start_date is a Saturday or Sunday, advance to next Monday
+        if req.exclude_weekends:
+            while current_date.weekday() >= 5:
+                current_date += timedelta(days=1)
+
+        def advance_exam_date(curr: date, gap_days: int) -> date:
+            target = curr + timedelta(days=1)
+            counted_gaps = 0
+            while counted_gaps < gap_days:
+                if req.exclude_weekends and target.weekday() >= 5:
+                    target += timedelta(days=1)
+                    continue
+                counted_gaps += 1
+                target += timedelta(days=1)
+
+            while True:
+                if req.exclude_weekends and target.weekday() >= 5:
+                    target += timedelta(days=1)
+                    continue
+                break
+            return target
+
+        # Build timetable based on strategy
+        for sub_id in subject_order:
+            classes_for_sub = sub_class_tsas[sub_id]
+            matching_paper = paper_by_subject.get(sub_id)
+            class_list = sorted(list(classes_for_sub.keys()))
+
+            # Check holiday conflict on current examination date
+            slot_conflict_status = "OK"
+            if current_date in holidays_map:
+                h_title = holidays_map[current_date]
+                slot_conflict_status = f"Holiday conflict detected ({h_title})"
+                has_conflicts = True
+                alt = current_date + timedelta(days=1)
+                while (req.exclude_weekends and alt.weekday() >= 5) or (alt in holidays_map):
+                    alt += timedelta(days=1)
+                h_warn = f"Holiday conflict detected on {current_date} ({h_title}). Suggested alternative date: {alt} ({alt.strftime('%A')})."
+                if h_warn not in warnings:
+                    warnings.append(h_warn)
+
+            for idx, c_id in enumerate(class_list):
+                if strategy == "MULTIPLE_SESSIONS" and len(sessions) > 1:
+                    sess = sessions[idx % len(sessions)]
+                elif strategy == "CLASS_STAGGERED" and len(sessions) > 1:
+                    half = (len(class_list) + 1) // 2
+                    sess = sessions[0] if idx < half else sessions[min(1, len(sessions) - 1)]
+                else:
+                    sess = sessions[0]
+
+                max_marks = req.max_marks
+                pass_marks = req.pass_marks
+                sess_start = sess.start_time
+                sess_end = sess.end_time
+
+                if matching_paper:
+                    max_marks = matching_paper.default_max_marks
+                    pass_marks = matching_paper.default_pass_marks
+                    for epc in matching_paper.class_configs:
+                        if epc.class_id == c_id:
+                            if epc.maximum_marks is not None:
+                                max_marks = epc.maximum_marks
+                            if epc.pass_marks is not None:
+                                pass_marks = epc.pass_marks
+                            if epc.duration_minutes is not None:
+                                sess_end = (datetime.combine(date.today(), sess_start) + timedelta(minutes=epc.duration_minutes)).time()
+                            break
+
+                dur_mins = int((datetime.combine(date.today(), sess_end) - datetime.combine(date.today(), sess_start)).total_seconds() // 60)
 
                 seen_sections = set()
-                for tsa in sub_tsas:
+                for tsa in classes_for_sub[c_id]:
                     if tsa.section_id in seen_sections:
                         continue
                     seen_sections.add(tsa.section_id)
 
                     preview_items.append(BulkTimetablePreviewItem(
+                        paper_id=matching_paper.id if matching_paper else None,
+                        paper_name=matching_paper.paper_name if matching_paper else (tsa.subject.subject_name if tsa.subject else "Subject"),
+                        session_name=sess.session_name,
                         class_id=tsa.class_id,
                         class_name=tsa.class_obj.name if tsa.class_obj else "Class",
                         section_id=tsa.section_id,
@@ -942,21 +1372,36 @@ class ExaminationService:
                         subject_code=tsa.subject.subject_code if tsa.subject else None,
                         teacher_subject_assignment_id=tsa.id,
                         exam_date=current_date,
-                        start_time=start_time,
-                        end_time=end_time,
-                        max_marks=req.max_marks,
-                        pass_marks=req.pass_marks,
-                        room_number=None
+                        day_name=current_date.strftime("%A"),
+                        start_time=sess_start,
+                        end_time=sess_end,
+                        duration_minutes=dur_mins,
+                        max_marks=max_marks,
+                        pass_marks=pass_marks,
+                        room_number=None,
+                        conflict_status=slot_conflict_status
                     ))
 
-                current_date += timedelta(days=req.gap_days + 1)
-                if req.exclude_weekends:
-                    while current_date.weekday() >= 5:
-                        current_date += timedelta(days=1)
+            current_date = advance_exam_date(current_date, req.gap_days)
+
+        if end_boundary:
+            exceeded = [item for item in preview_items if item.exam_date > end_boundary]
+            if exceeded:
+                max_d = max(item.exam_date for item in exceeded)
+                has_conflicts = True
+                warnings.append(
+                    f"Examination schedule extends to {max_d} ({max_d.strftime('%A')}), which exceeds the examination window end date ({end_boundary}). "
+                    "Consider reducing gap days, utilizing multiple sessions, or extending the examination window."
+                )
+
+        conflict_count = sum(1 for item in preview_items if item.conflict_status and item.conflict_status != "OK")
 
         return BulkTimetablePreviewResponse(
             total_slots=len(preview_items),
-            schedules=preview_items
+            schedules=preview_items,
+            warnings=warnings,
+            has_conflicts=has_conflicts or conflict_count > 0,
+            conflict_count=conflict_count
         )
 
     async def confirm_bulk_timetable(
@@ -969,6 +1414,15 @@ class ExaminationService:
         exam = await self.exam_repo.get_by_id(req.examination_id, school_id, tenant_id)
         if not exam:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Examination not found.")
+
+        # Auto-expand exam.end_date if confirmed schedules extend beyond current exam.end_date
+        max_sched_date = max((s.exam_date for s in req.schedules), default=exam.end_date)
+        if max_sched_date > exam.end_date:
+            exam.end_date = max_sched_date
+            self.exam_repo.db.add(exam)
+
+        exam_papers = await self.paper_repo.get_multi(req.examination_id, school_id, tenant_id)
+        paper_by_subject: Dict[uuid.UUID, ExamPaper] = {p.subject_id: p for p in exam_papers}
 
         created_objs = []
         for sched_in in req.schedules:
@@ -994,6 +1448,11 @@ class ExaminationService:
             if dup:
                 continue
 
+            if not sched_in.paper_id:
+                matching_paper = paper_by_subject.get(sched_in.subject_id)
+                if matching_paper:
+                    sched_in.paper_id = matching_paper.id
+
             db_sched = await self.schedule_repo.create(
                 tenant_id=tenant_id,
                 school_id=school_id,
@@ -1006,3 +1465,4 @@ class ExaminationService:
 
         await self.schedule_repo.db.commit()
         return await self.schedule_repo.get_multi(school_id=school_id, tenant_id=tenant_id, exam_id=exam.id)
+

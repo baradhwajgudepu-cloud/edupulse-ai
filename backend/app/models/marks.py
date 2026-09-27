@@ -102,6 +102,14 @@ class Marks(Base, BaseModelMixin):
     class_obj = relationship("Class")
     section = relationship("Section")
 
+    @property
+    def subject_name(self) -> Optional[str]:
+        return self.subject.subject_name if self.subject else None
+
+    @property
+    def subject_code(self) -> Optional[str]:
+        return self.subject.subject_code if self.subject else None
+
     __mapper_args__ = {
         "version_id_col": version
     }

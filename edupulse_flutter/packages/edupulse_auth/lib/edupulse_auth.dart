@@ -10,6 +10,7 @@ export 'src/domain/usecases/refresh_token_usecase.dart';
 export 'src/domain/usecases/validate_session_usecase.dart';
 export 'src/domain/usecases/forgot_password_usecase.dart';
 export 'src/domain/usecases/reset_password_usecase.dart';
+export 'src/domain/usecases/change_password_usecase.dart';
 export 'src/session_manager.dart';
 export 'src/token_provider_impl.dart';
 export 'src/token_storage.dart';

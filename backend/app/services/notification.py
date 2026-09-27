@@ -53,6 +53,7 @@ class NotificationService:
         tenant_id: uuid.UUID,
         user_id: uuid.UUID,
         user_roles: List[str],
+        school_id: Optional[uuid.UUID] = None,
         notification_type: Optional[NotificationType] = None,
         priority: Optional[NotificationPriority] = None,
         status: Optional[NotificationStatus] = None,
@@ -64,6 +65,7 @@ class NotificationService:
             tenant_id=tenant_id,
             user_id=user_id,
             user_roles=user_roles,
+            school_id=school_id,
             notification_type=notification_type,
             priority=priority,
             status=status,
@@ -188,7 +190,7 @@ class NotificationService:
         Resolves registered User accounts corresponding to the student's primary notifications-enabled guardians.
         """
         stmt = select(User).join(
-            Guardian, Guardian.email == User.email
+            Guardian, or_(Guardian.user_id == User.id, Guardian.email == User.email)
         ).join(
             StudentGuardian, StudentGuardian.guardian_id == Guardian.id
         ).where(
@@ -1082,44 +1084,123 @@ class NotificationService:
         )
 
 
+NOTIFICATION_SCHEDULER_LOCK_ID = 5000282361280386373
+
+
 async def run_scheduled_notification_worker(session_factory):
     import asyncio
     from datetime import datetime, timezone
-    from sqlalchemy import select, and_
+    from sqlalchemy import select, and_, text
     from app.models.notification import Notification
     from app.repositories.notification import NotificationRepository
     from app.services.notification import NotificationService
 
     logger.info("Starting background scheduled notification worker...")
-    while True:
-        try:
-            await asyncio.sleep(5)  # Poll every 5 seconds for responsive tests
-            async with session_factory() as db:
-                now_utc = datetime.now(timezone.utc)
-                stmt = select(Notification).where(
-                    and_(
-                        Notification.scheduled_at <= now_utc,
-                        Notification.published_at.is_(None),
-                        Notification.deleted_at.is_(None)
+    poll_interval_seconds = 10
+    retry_leader_seconds = 15
+    is_leader = False
+    leader_session = None
+
+    try:
+        while True:
+            # 1. Attempt to acquire leader lock if not currently leader
+            if not is_leader:
+                try:
+                    leader_session = session_factory()
+                    conn = await leader_session.connection()
+                    is_postgres = conn.dialect.name == "postgresql"
+
+                    if is_postgres:
+                        res = await leader_session.execute(
+                            text("SELECT pg_try_advisory_lock(:lock_id)"),
+                            {"lock_id": NOTIFICATION_SCHEDULER_LOCK_ID}
+                        )
+                        has_lock = bool(res.scalar())
+                    else:
+                        has_lock = True
+
+                    if has_lock:
+                        is_leader = True
+                        logger.info("Notification scheduler leader acquired")
+                    else:
+                        logger.info("Notification scheduler leader unavailable; skipping worker")
+                        await leader_session.close()
+                        leader_session = None
+                        await asyncio.sleep(retry_leader_seconds)
+                        continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"Failed to acquire notification scheduler leader lock: {e}")
+                    if leader_session:
+                        try:
+                            await leader_session.close()
+                        except Exception:
+                            pass
+                        leader_session = None
+                    await asyncio.sleep(retry_leader_seconds)
+                    continue
+
+            # 2. Leader is active: perform polling tick
+            try:
+                await asyncio.sleep(poll_interval_seconds)
+                async with session_factory() as db:
+                    now_utc = datetime.now(timezone.utc)
+                    stmt = select(Notification).where(
+                        and_(
+                            Notification.scheduled_at <= now_utc,
+                            Notification.published_at.is_(None),
+                            Notification.deleted_at.is_(None)
+                        )
                     )
-                )
-                res = await db.execute(stmt)
-                notifs = list(res.scalars().all())
+                    res = await db.execute(stmt)
+                    notifs = list(res.scalars().all())
 
-                for notif in notifs:
-                    logger.info(f"[SCHEDULER] Publishing scheduled notification: {notif.id}")
-                    notif.published_at = now_utc
-                    await db.commit()
+                    for notif in notifs:
+                        logger.info(f"[SCHEDULER] Publishing scheduled notification: {notif.id}")
+                        notif.published_at = now_utc
+                        await db.commit()
 
-                    from app.models.tenant import Tenant
-                    stmt_t = select(Tenant).where(Tenant.id == notif.tenant_id)
-                    res_t = await db.execute(stmt_t)
-                    tenant_obj = res_t.scalar_one_or_none()
-                    tenant_settings = tenant_obj.settings if tenant_obj else {}
+                        from app.models.tenant import Tenant
+                        stmt_t = select(Tenant).where(Tenant.id == notif.tenant_id)
+                        res_t = await db.execute(stmt_t)
+                        tenant_obj = res_t.scalar_one_or_none()
+                        tenant_settings = tenant_obj.settings if tenant_obj else {}
 
-                    repo = NotificationRepository(db)
-                    service = NotificationService(repo)
-                    await service._dispatch_deliveries_for_notification(db, notif, tenant_settings)
-                    await db.commit()
-        except Exception as e:
-            logger.error(f"Error in scheduled notification worker: {e}", exc_info=True)
+                        repo = NotificationRepository(db)
+                        service = NotificationService(repo)
+                        await service._dispatch_deliveries_for_notification(db, notif, tenant_settings)
+                        await db.commit()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in scheduled notification processing: {e}", exc_info=True)
+                if leader_session:
+                    try:
+                        conn = await leader_session.connection()
+                        if conn.closed:
+                            is_leader = False
+                            await leader_session.close()
+                            leader_session = None
+                    except Exception:
+                        is_leader = False
+                        leader_session = None
+    except asyncio.CancelledError:
+        logger.info("Notification scheduler worker task cancelled")
+    finally:
+        if leader_session:
+            try:
+                conn = await leader_session.connection()
+                if conn.dialect.name == "postgresql" and not conn.closed:
+                    await leader_session.execute(
+                        text("SELECT pg_advisory_unlock(:lock_id)"),
+                        {"lock_id": NOTIFICATION_SCHEDULER_LOCK_ID}
+                    )
+                    logger.info("Notification scheduler leadership released")
+            except Exception as e:
+                logger.warning(f"Error releasing notification scheduler lock: {e}")
+            finally:
+                try:
+                    await leader_session.close()
+                except Exception:
+                    pass

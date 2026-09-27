@@ -7,6 +7,7 @@ import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:edupulse_files/edupulse_files.dart';
 import 'package:intl/intl.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 import 'package:parent_app/features/homework/presentation/providers/homework_provider.dart';
 
 String formatDate(String? dateStr) {
@@ -21,11 +22,13 @@ String formatDate(String? dateStr) {
 
 final reportCardProvider = FutureProvider.family<Map<String, dynamic>, ({String studentId, String academicYearId})>((ref, arg) async {
   final apiClient = ref.read(apiClientProvider);
+  final queryParams = <String, dynamic>{};
+  if (arg.academicYearId.isNotEmpty) {
+    queryParams['academic_year_id'] = arg.academicYearId;
+  }
   final result = await apiClient.get(
     '/report-cards/student/${arg.studentId}',
-    queryParameters: {
-      'academic_year_id': arg.academicYearId,
-    },
+    queryParameters: queryParams.isNotEmpty ? queryParams : null,
     mapper: (json) => json as Map<String, dynamic>,
   );
   return result.when(
@@ -43,19 +46,48 @@ class ReportCardsScreen extends ConsumerWidget {
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
 
-    // Fetch active student from dashboard state
-    String studentId = 'a8bc2968-3d0d-431d-ab06-b90f518a0801';
-    String academicYearId = '113282c1-9831-4e54-a00e-1746d3c2829d';
-    String studentName = 'Rahul Sharma';
     final dbState = ref.watch(dashboardStateProvider);
-    if (dbState is DashboardSuccess) {
-      final selected = dbState.data.selectedStudent;
-      if (selected != null) {
-        studentId = selected.id;
-        academicYearId = selected.academicYearId;
-        studentName = selected.fullName;
+    if (dbState is! DashboardSuccess || dbState.data.selectedStudent == null) {
+      if (dbState is DashboardLoading || dbState is DashboardInitial) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Report Cards'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          body: const Center(child: CircularProgressIndicator()),
+        );
       }
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Report Cards'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.person_off_outlined, size: 64, color: theme.colorScheme.outline),
+              SizedBox(height: spacing.md),
+              Text(
+                'No student selected',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      );
     }
+
+    final selected = dbState.data.selectedStudent!;
+    final studentId = selected.id;
+    final academicYearId = selected.academicYearId;
+    final studentName = selected.fullName;
 
     final reportAsync = ref.watch(reportCardProvider((studentId: studentId, academicYearId: academicYearId)));
 
@@ -88,6 +120,14 @@ class ReportCardsScreen extends ConsumerWidget {
                   'There are no report cards published for the active student in this academic year.',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                SizedBox(height: spacing.md),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    ref.invalidate(reportCardProvider((studentId: studentId, academicYearId: academicYearId)));
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Refresh'),
                 ),
               ],
             ),
@@ -221,7 +261,10 @@ class ReportCardsScreen extends ConsumerWidget {
                 // Download Card
                 ReportCardDownloadWidget(
                   studentId: studentId,
-                  schoolId: card['school_id'] as String? ?? '16730f87-bf8d-44e0-acf9-4b055a778b58',
+                  schoolId: (card['school_id'] as String?) ??
+                      (ref.read(authStateProvider) is Authenticated
+                          ? (ref.read(authStateProvider) as Authenticated).user.schools.firstOrNull ?? ''
+                          : ''),
                   studentName: studentName,
                 ),
               ],
@@ -304,9 +347,10 @@ class _ReportCardDownloadWidgetState extends ConsumerState<ReportCardDownloadWid
         ? config.apiBaseUrl.substring(0, config.apiBaseUrl.length - 1)
         : config.apiBaseUrl;
     final url = '$cleanBaseUrl/report-cards/download/${widget.studentId}?school_id=${widget.schoolId}';
+    final tenantId = ref.read(activeTenantIdProvider) ?? config.tenantId;
     final headers = {
       'Authorization': 'Bearer $token',
-      'X-Tenant-ID': config.tenantId,
+      'X-Tenant-ID': tenantId,
       'X-School-ID': widget.schoolId,
     };
 

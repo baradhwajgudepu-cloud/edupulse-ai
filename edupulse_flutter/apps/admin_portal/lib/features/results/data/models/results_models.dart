@@ -57,6 +57,7 @@ class ReportCardDto {
   final String academicYearId;
   final String studentId;
   final Map<String, dynamic> aiMetrics;
+  final Map<String, dynamic> settings;
 
   const ReportCardDto({
     required this.id,
@@ -72,7 +73,22 @@ class ReportCardDto {
     required this.academicYearId,
     required this.studentId,
     required this.aiMetrics,
+    this.settings = const {},
   });
+
+  String get classRank => (settings['class_rank'] as String?) ?? '';
+  String get sectionRank => (settings['section_rank'] as String?) ?? '';
+  double get overallPercentage {
+    final v = settings['overall_percentage'];
+    if (v is num) return v.toDouble();
+    return 0.0;
+  }
+  String get overallGrade => (settings['overall_grade'] as String?) ?? '';
+  String get promotionStatus => (settings['promotion_status'] as String?) ?? '';
+  num get totalObtained => (settings['total_obtained'] as num?) ?? 0;
+  num get totalMax => (settings['total_max'] as num?) ?? 0;
+  String get calculationMethod => (settings['calculation_method'] as String?) ?? '';
+  String get reportCardType => (settings['report_card_type'] as String?) ?? '';
 
   factory ReportCardDto.fromJson(Map<String, dynamic> json) {
     return ReportCardDto(
@@ -89,6 +105,7 @@ class ReportCardDto {
       academicYearId: json['academic_year_id'] as String,
       studentId: json['student_id'] as String,
       aiMetrics: json['ai_metrics'] as Map<String, dynamic>? ?? const {},
+      settings: json['settings'] as Map<String, dynamic>? ?? const {},
     );
   }
 }
@@ -101,6 +118,8 @@ class ReportCardSubjectMarkRowDto {
   final String resultStatus;
   final String grade;
   final String? remarks;
+  final String? subjectCode;
+  final String? subjectId;
 
   const ReportCardSubjectMarkRowDto({
     required this.subjectName,
@@ -109,6 +128,8 @@ class ReportCardSubjectMarkRowDto {
     required this.resultStatus,
     required this.grade,
     this.remarks,
+    this.subjectCode,
+    this.subjectId,
   });
 
   factory ReportCardSubjectMarkRowDto.fromJson(Map<String, dynamic> json) {
@@ -119,6 +140,8 @@ class ReportCardSubjectMarkRowDto {
       resultStatus: json['result_status'] as String,
       grade: json['grade'] as String,
       remarks: json['remarks'] as String?,
+      subjectCode: json['subject_code'] as String?,
+      subjectId: json['subject_id'] as String?,
     );
   }
 }
@@ -137,6 +160,8 @@ class ReportCardPreviewDto {
   final double overallPercentage;
   final String overallGrade;
   final String promotionStatus;
+  final String? classRank;
+  final String? sectionRank;
   final List<ReportCardSubjectMarkRowDto> subjectMarks;
   final String? teacherRemarks;
   final String? principalRemarks;
@@ -157,6 +182,8 @@ class ReportCardPreviewDto {
     required this.overallPercentage,
     required this.overallGrade,
     required this.promotionStatus,
+    this.classRank,
+    this.sectionRank,
     required this.subjectMarks,
     this.teacherRemarks,
     this.principalRemarks,
@@ -182,6 +209,8 @@ class ReportCardPreviewDto {
       overallPercentage: (json['overall_percentage'] as num? ?? 0.0).toDouble(),
       overallGrade: json['overall_grade'] as String? ?? 'F',
       promotionStatus: json['promotion_status'] as String? ?? 'DETAINED',
+      classRank: json['class_rank'] as String?,
+      sectionRank: json['section_rank'] as String?,
       subjectMarks: marks,
       teacherRemarks: json['teacher_remarks'] as String?,
       principalRemarks: json['principal_remarks'] as String?,
@@ -315,6 +344,8 @@ class ExamSubjectMarkDto {
   final String grade;
   final String status;
   final String? remarks;
+  final String? subjectCode;
+  final String? subjectId;
 
   const ExamSubjectMarkDto({
     required this.subjectName,
@@ -323,6 +354,8 @@ class ExamSubjectMarkDto {
     required this.grade,
     required this.status,
     this.remarks,
+    this.subjectCode,
+    this.subjectId,
   });
 
   factory ExamSubjectMarkDto.fromJson(Map<String, dynamic> json) {
@@ -333,6 +366,8 @@ class ExamSubjectMarkDto {
       grade: json['grade'] as String? ?? 'F',
       status: json['status'] as String? ?? 'ABSENT',
       remarks: json['remarks'] as String?,
+      subjectCode: json['subject_code'] as String?,
+      subjectId: json['subject_id'] as String?,
     );
   }
 }
@@ -399,6 +434,135 @@ class StudentAcademicHistoryDto {
       className: json['class_name'] as String? ?? '',
       sectionName: json['section_name'] as String? ?? '',
       examinations: exams,
+    );
+  }
+}
+
+@immutable
+class StudentResultReadinessItemDto {
+  final String studentId;
+  final String studentName;
+  final String rollNumber;
+  final String admissionNumber;
+  final String status;
+  final int totalRequiredPapers;
+  final int enteredPapers;
+  final bool isComplete;
+  final List<String> missingSubjects;
+
+  const StudentResultReadinessItemDto({
+    required this.studentId,
+    required this.studentName,
+    required this.rollNumber,
+    required this.admissionNumber,
+    required this.status,
+    required this.totalRequiredPapers,
+    required this.enteredPapers,
+    required this.isComplete,
+    this.missingSubjects = const [],
+  });
+
+  factory StudentResultReadinessItemDto.fromJson(Map<String, dynamic> json) {
+    return StudentResultReadinessItemDto(
+      studentId: json['student_id']?.toString() ?? '',
+      studentName: json['student_name'] as String? ?? '',
+      rollNumber: json['roll_number'] as String? ?? '',
+      admissionNumber: json['admission_number'] as String? ?? '',
+      status: json['status'] as String? ?? 'DRAFT',
+      totalRequiredPapers: (json['total_required_papers'] as num?)?.toInt() ?? 0,
+      enteredPapers: (json['entered_papers'] as num?)?.toInt() ?? 0,
+      isComplete: json['is_complete'] as bool? ?? false,
+      missingSubjects: (json['missing_subjects'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+@immutable
+class ExaminationResultReadinessDto {
+  final String examinationId;
+  final String examinationName;
+  final String? academicYearId;
+  final String? classId;
+  final String? className;
+  final String? sectionId;
+  final String? sectionName;
+  final int totalStudents;
+  final int studentsWithCompleteResults;
+  final int studentsWithIncompleteResults;
+  final int draftResultsCount;
+  final int readyToPublishCount;
+  final int publishedCount;
+  final bool isReadyToPublish;
+  final bool isFullyPublished;
+  final String publicationStatus;
+  final String? lastPublishedDate;
+  final String? publishedByName;
+  final String statusMessage;
+  final List<Map<String, dynamic>> missingBreakdown;
+  final List<StudentResultReadinessItemDto> studentStatuses;
+  final bool canUnpublish;
+
+  const ExaminationResultReadinessDto({
+    required this.examinationId,
+    required this.examinationName,
+    this.academicYearId,
+    this.classId,
+    this.className,
+    this.sectionId,
+    this.sectionName,
+    required this.totalStudents,
+    required this.studentsWithCompleteResults,
+    required this.studentsWithIncompleteResults,
+    required this.draftResultsCount,
+    required this.readyToPublishCount,
+    required this.publishedCount,
+    required this.isReadyToPublish,
+    required this.isFullyPublished,
+    required this.publicationStatus,
+    this.lastPublishedDate,
+    this.publishedByName,
+    required this.statusMessage,
+    this.missingBreakdown = const [],
+    this.studentStatuses = const [],
+    this.canUnpublish = true,
+  });
+
+  factory ExaminationResultReadinessDto.fromJson(Map<String, dynamic> json) {
+    final list = json['student_statuses'] as List<dynamic>? ?? const [];
+    final students = list
+        .map((e) => StudentResultReadinessItemDto.fromJson(e as Map<String, dynamic>))
+        .toList();
+    final mb = json['missing_breakdown'] as List<dynamic>? ?? const [];
+    final missingBreakdown = mb.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+    return ExaminationResultReadinessDto(
+      examinationId: json['examination_id']?.toString() ?? '',
+      examinationName: json['examination_name'] as String? ?? '',
+      academicYearId: json['academic_year_id']?.toString(),
+      classId: json['class_id']?.toString(),
+      className: json['class_name'] as String?,
+      sectionId: json['section_id']?.toString(),
+      sectionName: json['section_name'] as String?,
+      totalStudents: (json['total_students'] as num?)?.toInt() ?? 0,
+      studentsWithCompleteResults:
+          (json['students_with_complete_results'] as num?)?.toInt() ?? 0,
+      studentsWithIncompleteResults:
+          (json['students_with_incomplete_results'] as num?)?.toInt() ?? 0,
+      draftResultsCount: (json['draft_results_count'] as num?)?.toInt() ?? 0,
+      readyToPublishCount: (json['ready_to_publish_count'] as num?)?.toInt() ?? 0,
+      publishedCount: (json['published_count'] as num?)?.toInt() ?? 0,
+      isReadyToPublish: json['is_ready_to_publish'] as bool? ?? false,
+      isFullyPublished: json['is_fully_published'] as bool? ?? false,
+      publicationStatus: json['publication_status'] as String? ?? 'DRAFT',
+      lastPublishedDate: json['last_published_date'] as String?,
+      publishedByName: json['published_by_name'] as String?,
+      statusMessage: json['status_message'] as String? ?? '',
+      missingBreakdown: missingBreakdown,
+      studentStatuses: students,
+      canUnpublish: json['can_unpublish'] as bool? ?? true,
     );
   }
 }

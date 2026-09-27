@@ -7,12 +7,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db.base import Base
-from app.db.mixins import BaseModelMixin
+from app.db.mixins import BaseModelMixin, TenantMixin
 
 class AttendanceSessionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     SUBMITTED = "SUBMITTED"
     LOCKED = "LOCKED"
+
+class AttendanceSessionType(str, enum.Enum):
+    FULL_DAY = "FULL_DAY"
+    MORNING = "MORNING"
+    AFTERNOON = "AFTERNOON"
+    PERIOD = "PERIOD"
 
 class AttendanceStatus(str, enum.Enum):
     PRESENT = "PRESENT"
@@ -30,6 +36,16 @@ class AttendanceSource(str, enum.Enum):
     RFID = "RFID"
     FACE_RECOGNITION = "FACE_RECOGNITION"
     IMPORT = "IMPORT"
+    EXCEL_IMPORT = "EXCEL_IMPORT"
+    MIGRATION = "MIGRATION"
+    API = "API"
+
+class AttendanceAction(str, enum.Enum):
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    IMPORT = "IMPORT"
+    MIGRATION = "MIGRATION"
 
 class AttendanceReason(str, enum.Enum):
     SICK = "SICK"
@@ -45,6 +61,11 @@ class AttendanceSession(Base, BaseModelMixin):
     __tablename__ = "attendance_sessions"
 
     attendance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    session_type: Mapped[AttendanceSessionType] = mapped_column(
+        SQLEnum(AttendanceSessionType, name="attendancesessiontype", create_type=False),
+        nullable=False,
+        default=AttendanceSessionType.FULL_DAY
+    )
     status: Mapped[AttendanceSessionStatus] = mapped_column(
         SQLEnum(AttendanceSessionStatus, name="attendancesessionstatus", create_type=False),
         nullable=False,
@@ -73,8 +94,8 @@ class AttendanceSession(Base, BaseModelMixin):
     academic_year_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    timetable_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("timetables.id", ondelete="CASCADE"), nullable=False, index=True
+    timetable_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("timetables.id", ondelete="CASCADE"), nullable=True, index=True
     )
     class_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True
@@ -114,6 +135,11 @@ class AttendanceSession(Base, BaseModelMixin):
             "timetable_id", "attendance_date",
             name="uq_attendance_sessions_slot"
         ),
+        Index(
+            "ix_attendance_sessions_daily_unique",
+            "school_id", "class_id", "section_id", "attendance_date", "session_type",
+            unique=True
+        ),
         Index("ix_attendance_sessions_date", "attendance_date"),
     )
 
@@ -125,6 +151,11 @@ class Attendance(Base, BaseModelMixin):
     __tablename__ = "attendances"
 
     attendance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    session_type: Mapped[AttendanceSessionType] = mapped_column(
+        SQLEnum(AttendanceSessionType, name="attendancesessiontype", create_type=False),
+        nullable=False,
+        default=AttendanceSessionType.FULL_DAY
+    )
     attendance_status: Mapped[AttendanceStatus] = mapped_column(
         SQLEnum(AttendanceStatus, name="attendancestatus", create_type=False),
         nullable=False
@@ -177,8 +208,8 @@ class Attendance(Base, BaseModelMixin):
     student_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    timetable_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("timetables.id", ondelete="CASCADE"), nullable=False, index=True
+    timetable_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("timetables.id", ondelete="CASCADE"), nullable=True, index=True
     )
     class_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True
@@ -205,6 +236,39 @@ class Attendance(Base, BaseModelMixin):
     teacher = relationship("Teacher", back_populates="attendances")
     subject = relationship("Subject", back_populates="attendances")
 
+    # Presentation properties
+    @property
+    def student_name(self) -> Optional[str]:
+        if self.student:
+            parts = [self.student.first_name, self.student.middle_name, self.student.last_name]
+            name = " ".join(p for p in parts if p).strip()
+            return name or None
+        return None
+
+    @property
+    def admission_number(self) -> Optional[str]:
+        if self.student:
+            return getattr(self.student, "admission_number", None)
+        return None
+
+    @property
+    def roll_number(self) -> Optional[str]:
+        if self.student:
+            return getattr(self.student, "roll_number", None)
+        return None
+
+    @property
+    def class_name(self) -> Optional[str]:
+        if self.class_obj:
+            return getattr(self.class_obj, "name", None) or getattr(self.class_obj, "class_name", None)
+        return None
+
+    @property
+    def section_name(self) -> Optional[str]:
+        if self.section:
+            return getattr(self.section, "name", None) or getattr(self.section, "section_name", None)
+        return None
+
     __mapper_args__ = {
         "version_id_col": version
     }
@@ -220,4 +284,53 @@ class Attendance(Base, BaseModelMixin):
         ),
         Index("ix_attendances_date", "attendance_date"),
         Index("ix_attendances_status", "attendance_status"),
+        Index("ix_attendances_student_date_session", "student_id", "attendance_date", "session_type"),
+    )
+
+
+class AttendanceAuditLog(Base, BaseModelMixin):
+    """
+    SQLAlchemy model representing transactional audit records for attendance modifications.
+    """
+    __tablename__ = "attendance_audit_logs"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    attendance_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("attendances.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    attendance_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    session_type: Mapped[str] = mapped_column(String(50), nullable=False, default="FULL_DAY")
+    old_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    new_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)  # CREATE, UPDATE, DELETE, IMPORT, MIGRATION
+    changed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    changed_by_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="MANUAL")
+    reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    audit_metadata: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), default=dict, server_default="{}", nullable=False
+    )
+
+    # Relationships
+    tenant = relationship("Tenant")
+    school = relationship("School")
+    student = relationship("Student")
+    changed_by_user = relationship("User", foreign_keys=[changed_by])
+
+    __table_args__ = (
+        Index("ix_attendance_audit_logs_student_date", "student_id", "attendance_date"),
+        Index("ix_attendance_audit_logs_school_date", "school_id", "attendance_date"),
     )

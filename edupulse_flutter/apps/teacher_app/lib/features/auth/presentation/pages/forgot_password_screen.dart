@@ -5,6 +5,7 @@ import 'package:edupulse_localization/edupulse_localization.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../../../core/utils/email_validator.dart';
+import '../../../../core/router/routes.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -196,12 +197,24 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                                 ),
                               )
                             : Text(
-                                local?.translate('submit') ?? 'Submit',
+                                local?.translate('submit') ?? 'Send Reset Link',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold),
                               ),
                       ),
+                      if (_successMessage != null) ...[
+                        SizedBox(height: spacing.sm),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.vpn_key_outlined, size: 18),
+                          label: const Text('Enter Reset Code / Token'),
+                          onPressed: () => context.push(AppRoutes.resetPassword),
+                        ),
+                      ],
                       SizedBox(height: spacing.sm),
+                      TextButton(
+                        onPressed: () => context.push(AppRoutes.resetPassword),
+                        child: const Text('Have a reset code? Reset Password'),
+                      ),
                       TextButton(
                         onPressed: _isLoading ? null : () => context.pop(),
                         child: Text(local?.translate('back_to_login') ??

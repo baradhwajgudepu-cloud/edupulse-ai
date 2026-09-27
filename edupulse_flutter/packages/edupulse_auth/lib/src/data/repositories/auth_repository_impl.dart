@@ -78,4 +78,15 @@ class AuthRepositoryImpl implements AuthRepository, PlatformAuthRepository {
       confirmPassword: confirmPassword,
     );
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _remoteDatasource.changePassword(
+      currentPassword: currentPassword,
+      newPassword: newPassword,
+    );
+  }
 }

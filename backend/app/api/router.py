@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import health, tenants, schools, academic_years, auth, classes, sections, students, guardians, student_guardians, teachers, subjects, teacher_subject_assignments, timetables, attendances, homeworks, examinations, marks, report_cards, ai, notifications, syllabuses, teacher_ai
+from app.api.v1.endpoints import health, tenants, schools, academic_years, auth, classes, sections, students, guardians, student_guardians, teachers, subjects, teacher_subject_assignments, timetables, attendances, homeworks, examinations, marks, report_cards, ai, notifications, syllabuses, teacher_ai, curriculum
 
 api_router = APIRouter()
 
@@ -48,6 +48,7 @@ api_router.include_router(timetables.router, prefix="/timetables", tags=["timeta
 
 # Include attendances endpoints
 api_router.include_router(attendances.router, prefix="/attendances", tags=["attendances"])
+api_router.include_router(attendances.router, prefix="/attendance", tags=["attendance"])
 
 # Include homeworks endpoints
 api_router.include_router(homeworks.router, prefix="/homeworks", tags=["homeworks"])
@@ -92,6 +93,9 @@ api_router.include_router(import_jobs.router, prefix="/import-jobs", tags=["impo
 # Include syllabus metadata endpoints
 api_router.include_router(syllabuses.router, prefix="/syllabuses", tags=["syllabuses"])
 
+# Include curriculum engine endpoints
+api_router.include_router(curriculum.router, prefix="/curriculum", tags=["curriculum"])
+
 # Include reports endpoints
 from app.api.v1.endpoints import reports
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
@@ -113,4 +117,25 @@ api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"]
 api_router.include_router(action_items.router, prefix="/principal", tags=["principal"])
 api_router.include_router(ai_intelligence.router, prefix="/ai-intelligence", tags=["ai-intelligence"])
 
+# Release 2.0 Additive Endpoints
+from app.api.v1.endpoints import rooms, staff, staff_salaries, expenses, academic_planning
+api_router.include_router(rooms.router, prefix="/rooms", tags=["rooms"])
+api_router.include_router(staff.router, prefix="/staff", tags=["staff"])
+api_router.include_router(staff_salaries.router, prefix="/staff-salaries", tags=["staff-salaries"])
+api_router.include_router(expenses.router, prefix="/expenses", tags=["expenses"])
+api_router.include_router(academic_planning.router, prefix="/academic-planning", tags=["academic-planning"])
+
+from app.api.v1.endpoints import syllabus_recovery
+api_router.include_router(syllabus_recovery.router, prefix="/syllabus-recovery", tags=["syllabus-recovery"])
+
+# School Administration, Compliance, Secure Documents & Teacher Payroll
+from app.api.v1.endpoints import school_admin, school_documents, payroll
+api_router.include_router(school_admin.router, prefix="", tags=["school-admin"])
+api_router.include_router(school_documents.router, prefix="", tags=["school-documents"])
+api_router.include_router(payroll.router, prefix="", tags=["payroll"])
+
+# Class Subject Assignments & School Working Hours
+from app.api.v1.endpoints import class_subject_assignments, extended_working_hours
+api_router.include_router(class_subject_assignments.router, prefix="/class-subject-assignments", tags=["class-subject-assignments"])
+api_router.include_router(extended_working_hours.router, prefix="/working-hours", tags=["working-hours"])
 

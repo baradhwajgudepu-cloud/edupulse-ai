@@ -463,7 +463,19 @@ async def test_global_user_search_across_relations(client: AsyncClient, db_sessi
     )
     tenant_b_user.schools.append(school_b)
 
-    db_session.add_all([admin_user, teacher_user, father_user, mother_user, tenant_b_user])
+    # Add 20 unrelated dummy users to Tenant A to verify search filters down and does not return the unfiltered first 20 records
+    dummy_pw = admin_user.hashed_password
+    dummy_users = [
+        User(
+            id=uuid.uuid4(), tenant_id=t_id_a, email=f"dummy_{i}_{uid}@test.edu",
+            hashed_password=dummy_pw, first_name=f"Dummy{i}", last_name=f"User{i}",
+            status=UserStatus.ACTIVE, is_superuser=False, must_change_password=False, version=1,
+            created_at=now, updated_at=now
+        )
+        for i in range(20)
+    ]
+
+    db_session.add_all([admin_user, teacher_user, father_user, mother_user, tenant_b_user] + dummy_users)
     await db_session.flush()
 
     # Teacher entity
@@ -545,7 +557,31 @@ async def test_global_user_search_across_relations(client: AsyncClient, db_sessi
         "X-Tenant-ID": str(t_id_a)
     }
 
-    # 1. Search by Student Name with extra whitespace: 'Deepak   Boddu' -> returns both parents!
+    # 0. Baseline without search: Tenant A has 24 users total, so default limit=20 returns 20 users
+    res_baseline = await client.get("/api/v1/identity/users?skip=0&limit=20", headers=headers)
+    assert res_baseline.status_code == 200
+    baseline_body = res_baseline.json()
+    assert baseline_body["success"] is True
+    assert baseline_body["meta"]["total"] == 24
+    assert len(baseline_body["data"]) == 20
+
+    # 1. Search by Student Name 'deepak boddu' with limit=20:
+    # Proves it does NOT return the unfiltered first 20 users; returns ONLY the 2 matching parent User accounts!
+    res_exact_search = await client.get("/api/v1/identity/users?skip=0&limit=20&search=deepak+boddu", headers=headers)
+    assert res_exact_search.status_code == 200
+    exact_body = res_exact_search.json()
+    assert exact_body["success"] is True
+    assert exact_body["meta"] is not None
+    assert exact_body["meta"]["total"] == 2
+    assert len(exact_body["data"]) == 2
+    assert len(exact_body["data"]) != 20, "Regression: Search query was ignored and returned unfiltered first 20 users!"
+    exact_ids = {u["id"] for u in exact_body["data"]}
+    assert str(father_user.id) in exact_ids
+    assert str(mother_user.id) in exact_ids
+    dummy_ids = {str(d.id) for d in dummy_users}
+    assert exact_ids.isdisjoint(dummy_ids), "Unfiltered dummy users returned in search result!"
+
+    # 2. Search by Student Name with extra whitespace: 'Deepak   Boddu' -> returns both parents!
     res_student = await client.get(f"/api/v1/identity/users?search=Deepak+++Boddu", headers=headers)
     assert res_student.status_code == 200
     s_users = res_student.json()["data"]

@@ -1,4 +1,4 @@
-from typing import Generic, TypeVar, Any
+from typing import Generic, TypeVar, Any, Optional, Dict
 from pydantic import BaseModel
 
 T = TypeVar("T")
@@ -10,3 +10,4 @@ class APIResponse(BaseModel, Generic[T]):
     success: bool
     message: str
     data: T | None = None
+    meta: Optional[Dict[str, Any]] = None

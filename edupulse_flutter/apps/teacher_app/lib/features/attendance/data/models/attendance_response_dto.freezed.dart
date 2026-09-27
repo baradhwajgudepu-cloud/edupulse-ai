@@ -33,7 +33,9 @@ mixin _$AttendanceResponseDto {
   @JsonKey(name: 'student_id')
   String get studentId => throw _privateConstructorUsedError;
   @JsonKey(name: 'timetable_id')
-  String get timetableId => throw _privateConstructorUsedError;
+  String? get timetableId => throw _privateConstructorUsedError;
+  @JsonKey(name: 'session_type')
+  String? get sessionType => throw _privateConstructorUsedError;
   @JsonKey(name: 'class_id')
   String get classId => throw _privateConstructorUsedError;
   @JsonKey(name: 'section_id')
@@ -75,7 +77,8 @@ abstract class $AttendanceResponseDtoCopyWith<$Res> {
       @JsonKey(name: 'academic_year_id') String academicYearId,
       @JsonKey(name: 'attendance_session_id') String attendanceSessionId,
       @JsonKey(name: 'student_id') String studentId,
-      @JsonKey(name: 'timetable_id') String timetableId,
+      @JsonKey(name: 'timetable_id') String? timetableId,
+      @JsonKey(name: 'session_type') String? sessionType,
       @JsonKey(name: 'class_id') String classId,
       @JsonKey(name: 'section_id') String sectionId,
       @JsonKey(name: 'teacher_id') String? teacherId,
@@ -109,7 +112,8 @@ class _$AttendanceResponseDtoCopyWithImpl<$Res,
     Object? academicYearId = null,
     Object? attendanceSessionId = null,
     Object? studentId = null,
-    Object? timetableId = null,
+    Object? timetableId = freezed,
+    Object? sessionType = freezed,
     Object? classId = null,
     Object? sectionId = null,
     Object? teacherId = freezed,
@@ -145,10 +149,14 @@ class _$AttendanceResponseDtoCopyWithImpl<$Res,
           ? _value.studentId
           : studentId // ignore: cast_nullable_to_non_nullable
               as String,
-      timetableId: null == timetableId
+      timetableId: freezed == timetableId
           ? _value.timetableId
           : timetableId // ignore: cast_nullable_to_non_nullable
-              as String,
+              as String?,
+      sessionType: freezed == sessionType
+          ? _value.sessionType
+          : sessionType // ignore: cast_nullable_to_non_nullable
+              as String?,
       classId: null == classId
           ? _value.classId
           : classId // ignore: cast_nullable_to_non_nullable
@@ -205,7 +213,8 @@ abstract class _$$AttendanceResponseDtoImplCopyWith<$Res>
       @JsonKey(name: 'academic_year_id') String academicYearId,
       @JsonKey(name: 'attendance_session_id') String attendanceSessionId,
       @JsonKey(name: 'student_id') String studentId,
-      @JsonKey(name: 'timetable_id') String timetableId,
+      @JsonKey(name: 'timetable_id') String? timetableId,
+      @JsonKey(name: 'session_type') String? sessionType,
       @JsonKey(name: 'class_id') String classId,
       @JsonKey(name: 'section_id') String sectionId,
       @JsonKey(name: 'teacher_id') String? teacherId,
@@ -237,7 +246,8 @@ class __$$AttendanceResponseDtoImplCopyWithImpl<$Res>
     Object? academicYearId = null,
     Object? attendanceSessionId = null,
     Object? studentId = null,
-    Object? timetableId = null,
+    Object? timetableId = freezed,
+    Object? sessionType = freezed,
     Object? classId = null,
     Object? sectionId = null,
     Object? teacherId = freezed,
@@ -273,10 +283,14 @@ class __$$AttendanceResponseDtoImplCopyWithImpl<$Res>
           ? _value.studentId
           : studentId // ignore: cast_nullable_to_non_nullable
               as String,
-      timetableId: null == timetableId
+      timetableId: freezed == timetableId
           ? _value.timetableId
           : timetableId // ignore: cast_nullable_to_non_nullable
-              as String,
+              as String?,
+      sessionType: freezed == sessionType
+          ? _value.sessionType
+          : sessionType // ignore: cast_nullable_to_non_nullable
+              as String?,
       classId: null == classId
           ? _value.classId
           : classId // ignore: cast_nullable_to_non_nullable
@@ -327,7 +341,8 @@ class _$AttendanceResponseDtoImpl implements _AttendanceResponseDto {
       @JsonKey(name: 'academic_year_id') required this.academicYearId,
       @JsonKey(name: 'attendance_session_id') required this.attendanceSessionId,
       @JsonKey(name: 'student_id') required this.studentId,
-      @JsonKey(name: 'timetable_id') required this.timetableId,
+      @JsonKey(name: 'timetable_id') this.timetableId,
+      @JsonKey(name: 'session_type') this.sessionType,
       @JsonKey(name: 'class_id') required this.classId,
       @JsonKey(name: 'section_id') required this.sectionId,
       @JsonKey(name: 'teacher_id') this.teacherId,
@@ -360,7 +375,10 @@ class _$AttendanceResponseDtoImpl implements _AttendanceResponseDto {
   final String studentId;
   @override
   @JsonKey(name: 'timetable_id')
-  final String timetableId;
+  final String? timetableId;
+  @override
+  @JsonKey(name: 'session_type')
+  final String? sessionType;
   @override
   @JsonKey(name: 'class_id')
   final String classId;
@@ -390,7 +408,7 @@ class _$AttendanceResponseDtoImpl implements _AttendanceResponseDto {
 
   @override
   String toString() {
-    return 'AttendanceResponseDto(id: $id, tenantId: $tenantId, schoolId: $schoolId, academicYearId: $academicYearId, attendanceSessionId: $attendanceSessionId, studentId: $studentId, timetableId: $timetableId, classId: $classId, sectionId: $sectionId, teacherId: $teacherId, subjectId: $subjectId, attendanceDate: $attendanceDate, attendanceStatus: $attendanceStatus, attendanceSource: $attendanceSource, attendanceReason: $attendanceReason, remarks: $remarks)';
+    return 'AttendanceResponseDto(id: $id, tenantId: $tenantId, schoolId: $schoolId, academicYearId: $academicYearId, attendanceSessionId: $attendanceSessionId, studentId: $studentId, timetableId: $timetableId, sessionType: $sessionType, classId: $classId, sectionId: $sectionId, teacherId: $teacherId, subjectId: $subjectId, attendanceDate: $attendanceDate, attendanceStatus: $attendanceStatus, attendanceSource: $attendanceSource, attendanceReason: $attendanceReason, remarks: $remarks)';
   }
 
   @override
@@ -411,6 +429,8 @@ class _$AttendanceResponseDtoImpl implements _AttendanceResponseDto {
                 other.studentId == studentId) &&
             (identical(other.timetableId, timetableId) ||
                 other.timetableId == timetableId) &&
+            (identical(other.sessionType, sessionType) ||
+                other.sessionType == sessionType) &&
             (identical(other.classId, classId) || other.classId == classId) &&
             (identical(other.sectionId, sectionId) ||
                 other.sectionId == sectionId) &&
@@ -440,6 +460,7 @@ class _$AttendanceResponseDtoImpl implements _AttendanceResponseDto {
       attendanceSessionId,
       studentId,
       timetableId,
+      sessionType,
       classId,
       sectionId,
       teacherId,
@@ -476,7 +497,8 @@ abstract class _AttendanceResponseDto implements AttendanceResponseDto {
       @JsonKey(name: 'attendance_session_id')
       required final String attendanceSessionId,
       @JsonKey(name: 'student_id') required final String studentId,
-      @JsonKey(name: 'timetable_id') required final String timetableId,
+      @JsonKey(name: 'timetable_id') final String? timetableId,
+      @JsonKey(name: 'session_type') final String? sessionType,
       @JsonKey(name: 'class_id') required final String classId,
       @JsonKey(name: 'section_id') required final String sectionId,
       @JsonKey(name: 'teacher_id') final String? teacherId,
@@ -512,7 +534,10 @@ abstract class _AttendanceResponseDto implements AttendanceResponseDto {
   String get studentId;
   @override
   @JsonKey(name: 'timetable_id')
-  String get timetableId;
+  String? get timetableId;
+  @override
+  @JsonKey(name: 'session_type')
+  String? get sessionType;
   @override
   @JsonKey(name: 'class_id')
   String get classId;

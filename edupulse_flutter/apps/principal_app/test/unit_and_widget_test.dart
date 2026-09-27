@@ -31,9 +31,17 @@ class FakeSessionManager implements SessionManager {
   @override
   Future<String?> getRefreshToken() async => 'fake_refresh';
   @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
@@ -223,8 +231,8 @@ class FakeBaseApiClient extends BaseApiClient {
             'id': 'exam_1',
             'exam_name': 'Mid-Term 2026',
             'exam_type': 'SUMMATIVE',
-            'start_date': '2026-09-01',
-            'end_date': '2026-09-10',
+            'start_date': '2026-10-01',
+            'end_date': '2026-10-10',
             'status': 'UPCOMING',
             'schedules': [
               {
@@ -675,13 +683,12 @@ void main() {
   });
 
   group('9. Production UAT Configuration Detection and Tenant Context Checks', () {
-    test('BuildConfig throws StateError when production tenant ID is missing', () {
-      expect(
-        () => BuildConfig.fromEnvironment(
-          resolvedApiBaseUrl: 'https://edupulse-api-295242569787.asia-south1.run.app/api/v1',
-        ),
-        throwsStateError,
+    test('BuildConfig allows optional tenant ID in production when missing', () {
+      final config = BuildConfig.fromEnvironment(
+        resolvedApiBaseUrl: 'https://edupulse-api-295242569787.asia-south1.run.app/api/v1',
       );
+      expect(config.isProduction, isTrue);
+      expect(config.tenantId, equals(''));
     });
 
     test('BuildConfig accepts and maps production tenant ID when explicitly supplied', () {

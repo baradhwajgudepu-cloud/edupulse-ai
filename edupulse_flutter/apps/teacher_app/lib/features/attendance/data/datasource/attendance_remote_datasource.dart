@@ -127,4 +127,61 @@ class AttendanceRemoteDatasource {
       },
     );
   }
+
+  Future<ApiResult<AttendanceSessionDto?>> getDailySession({
+    required String schoolId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+  }) {
+    return _apiClient.get(
+      '/attendances/daily/session',
+      queryParameters: {
+        'school_id': schoolId,
+        'class_id': classId,
+        'section_id': sectionId,
+        'attendance_date': attendanceDate,
+        'session_type': sessionType,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final data = payload['data'];
+        if (data == null) return null;
+        return AttendanceSessionDto.fromJson(data as Map<String, dynamic>);
+      },
+    );
+  }
+
+  Future<ApiResult<AttendanceSessionDto>> markDailyAttendance({
+    required String schoolId,
+    required String academicYearId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+    String attendanceSource = 'MANUAL',
+    required List<Map<String, dynamic>> records,
+  }) {
+    return _apiClient.post(
+      '/attendances/daily/mark',
+      queryParameters: {
+        'school_id': schoolId,
+      },
+      data: {
+        'school_id': schoolId,
+        'academic_year_id': academicYearId,
+        'class_id': classId,
+        'section_id': sectionId,
+        'attendance_date': attendanceDate,
+        'session_type': sessionType,
+        'attendance_source': attendanceSource,
+        'records': records,
+      },
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return AttendanceSessionDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+  }
 }

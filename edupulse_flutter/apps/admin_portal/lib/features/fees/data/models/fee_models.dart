@@ -1,4 +1,4 @@
-import 'dart:convert';
+import '../../../../core/utils/numeric_utils.dart';
 
 enum ConcessionType {
   FIXED,
@@ -91,7 +91,7 @@ class Scholarship {
       schoolId: json['school_id'] as String,
       name: json['name'] as String,
       concessionType: ConcessionType.fromJson(json['concession_type'] as String),
-      value: (json['value'] as num).toDouble(),
+      value: safeParseDouble(json['value']),
       description: json['description'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
@@ -130,9 +130,9 @@ class FineRule {
       id: json['id'] as String,
       tenantId: json['tenant_id'] as String,
       feeStructureId: json['fee_structure_id'] as String,
-      gracePeriodDays: json['grace_period_days'] as int,
+      gracePeriodDays: safeParseInt(json['grace_period_days']),
       fineType: FineType.fromJson(json['fine_type'] as String),
-      fineValue: (json['fine_value'] as num).toDouble(),
+      fineValue: safeParseDouble(json['fine_value']),
     );
   }
 }
@@ -196,13 +196,13 @@ class FeeStructure {
       feeTypeId: json['fee_type_id'] as String,
       academicYearId: json['academic_year_id'] as String,
       classId: json['class_id'] as String?,
-      amount: (json['amount'] as num).toDouble(),
+      amount: safeParseDouble(json['amount']),
       dueDate: DateTime.parse(json['due_date'] as String),
       description: json['description'] as String?,
       fineRule: json['fine_rule'] != null
           ? FineRule.fromJson(json['fine_rule'] as Map<String, dynamic>)
           : null,
-      version: json['version'] as int? ?? 1,
+      version: safeParseInt(json['version'], 1),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -236,7 +236,7 @@ class OutstandingClassMetric {
   factory OutstandingClassMetric.fromJson(Map<String, dynamic> json) {
     return OutstandingClassMetric(
       className: json['class_name'] as String? ?? 'Unknown Class',
-      outstandingAmount: (json['outstanding_amount'] as num?)?.toDouble() ?? 0.0,
+      outstandingAmount: safeParseDouble(json['outstanding_amount']),
     );
   }
 }
@@ -261,11 +261,11 @@ class DashboardMetrics {
   factory DashboardMetrics.fromJson(Map<String, dynamic> json) {
     final outstandingList = json['top_outstanding_classes'] as List<dynamic>? ?? [];
     return DashboardMetrics(
-      todayCollection: (json['today_collection'] as num?)?.toDouble() ?? 0.0,
-      monthCollection: (json['month_collection'] as num?)?.toDouble() ?? 0.0,
-      pendingDues: (json['pending_dues'] as num?)?.toDouble() ?? 0.0,
-      collectionPercentage: (json['collection_percentage'] as num?)?.toDouble() ?? 0.0,
-      defaultersCount: (json['defaulters_count'] as num?)?.toInt() ?? 0,
+      todayCollection: safeParseDouble(json['today_collection']),
+      monthCollection: safeParseDouble(json['month_collection']),
+      pendingDues: safeParseDouble(json['pending_dues']),
+      collectionPercentage: safeParseDouble(json['collection_percentage']),
+      defaultersCount: safeParseInt(json['defaulters_count']),
       topOutstandingClasses: outstandingList.map((e) => OutstandingClassMetric.fromJson(e as Map<String, dynamic>)).toList(),
     );
   }
@@ -283,8 +283,8 @@ class CollectionAnalytics {
   factory CollectionAnalytics.fromJson(Map<String, dynamic> json) {
     final trendMap = json['historical_trend'] as Map<String, dynamic>? ?? {};
     return CollectionAnalytics(
-      predictedCollectionNext30Days: (json['predicted_collection_next_30_days'] as num?)?.toDouble() ?? 0.0,
-      historicalTrend: trendMap.map((key, val) => MapEntry(key, (val as num).toDouble())),
+      predictedCollectionNext30Days: safeParseDouble(json['predicted_collection_next_30_days']),
+      historicalTrend: trendMap.map((key, val) => MapEntry(key, safeParseDouble(val))),
     );
   }
 }
@@ -337,13 +337,13 @@ class StudentFeeAssignment {
       studentId: json['student_id'] as String,
       feeStructureId: json['fee_structure_id'] as String,
       academicYearId: json['academic_year_id'] as String,
-      assignedAmount: (json['assigned_amount'] as num).toDouble(),
+      assignedAmount: safeParseDouble(json['assigned_amount']),
       scholarshipId: json['scholarship_id'] as String?,
-      discountAmount: (json['discount_amount'] as num).toDouble(),
-      fineAmount: (json['fine_amount'] as num).toDouble(),
-      paidAmount: (json['paid_amount'] as num).toDouble(),
+      discountAmount: safeParseDouble(json['discount_amount']),
+      fineAmount: safeParseDouble(json['fine_amount']),
+      paidAmount: safeParseDouble(json['paid_amount']),
       status: FeeAssignmentStatus.fromJson(json['status'] as String),
-      version: json['version'] as int? ?? 1,
+      version: safeParseInt(json['version'], 1),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -362,7 +362,7 @@ class FeePaymentAllocation {
   factory FeePaymentAllocation.fromJson(Map<String, dynamic> json) {
     return FeePaymentAllocation(
       assignmentId: json['assignment_id'] as String,
-      amountAllocated: (json['amount_allocated'] as num).toDouble(),
+      amountAllocated: safeParseDouble(json['amount_allocated']),
     );
   }
 }
@@ -371,16 +371,19 @@ enum PaymentStatus {
   COMPLETED,
   CANCELLED;
 
-  static PaymentStatus fromJson(String val) => PaymentStatus.values.firstWhere((e) => e.name == val);
+  static PaymentStatus fromJson(String val) =>
+      PaymentStatus.values.firstWhere((e) => e.name == val, orElse: () => PaymentStatus.COMPLETED);
 }
 
 enum PaymentMethod {
   CASH,
   CHEQUE,
   BANK_TRANSFER,
+  CARD,
   ONLINE;
 
-  static PaymentMethod fromJson(String val) => PaymentMethod.values.firstWhere((e) => e.name == val);
+  static PaymentMethod fromJson(String val) =>
+      PaymentMethod.values.firstWhere((e) => e.name == val, orElse: () => PaymentMethod.CASH);
 }
 
 class FeePayment {
@@ -431,7 +434,7 @@ class FeePayment {
       tenantId: json['tenant_id'] as String,
       studentId: json['student_id'] as String,
       academicYearId: json['academic_year_id'] as String,
-      amountPaid: (json['amount_paid'] as num).toDouble(),
+      amountPaid: safeParseDouble(json['amount_paid']),
       paymentDate: DateTime.parse(json['payment_date'] as String),
       paymentMethod: PaymentMethod.fromJson(json['payment_method'] as String),
       status: PaymentStatus.fromJson(json['status'] as String),
@@ -442,7 +445,7 @@ class FeePayment {
       cancelledBy: json['cancelled_by'] as String?,
       cancelledAt: json['cancelled_at'] != null ? DateTime.parse(json['cancelled_at'] as String) : null,
       allocations: allocList.map((e) => FeePaymentAllocation.fromJson(e as Map<String, dynamic>)).toList(),
-      version: json['version'] as int? ?? 1,
+      version: safeParseInt(json['version'], 1),
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -473,16 +476,18 @@ class StudentLedger {
 
     return StudentLedger(
       studentId: json['student_id'] as String,
-      openingBalance: (json['opening_balance'] as num?)?.toDouble() ?? 0.0,
+      openingBalance: safeParseDouble(json['opening_balance']),
       assignments: assignList.map((e) => StudentFeeAssignment.fromJson(e as Map<String, dynamic>)).toList(),
       scholarships: scholarshipList.map((e) => Scholarship.fromJson(e as Map<String, dynamic>)).toList(),
       payments: paymentList.map((e) => FeePayment.fromJson(e as Map<String, dynamic>)).toList(),
-      closingBalance: (json['closing_balance'] as num?)?.toDouble() ?? 0.0,
+      closingBalance: safeParseDouble(json['closing_balance']),
     );
   }
 }
 
 class OutstandingFeeReportItem {
+  final String? assignmentId;
+  final String? academicYearId;
   final String studentId;
   final String studentName;
   final String admissionNumber;
@@ -502,6 +507,8 @@ class OutstandingFeeReportItem {
   final String status;
 
   OutstandingFeeReportItem({
+    this.assignmentId,
+    this.academicYearId,
     required this.studentId,
     required this.studentName,
     required this.admissionNumber,
@@ -523,6 +530,8 @@ class OutstandingFeeReportItem {
 
   factory OutstandingFeeReportItem.fromJson(Map<String, dynamic> json) {
     return OutstandingFeeReportItem(
+      assignmentId: json['assignment_id'] as String?,
+      academicYearId: json['academic_year_id'] as String?,
       studentId: json['student_id'] as String,
       studentName: json['student_name'] as String,
       admissionNumber: json['admission_number'] as String,
@@ -533,11 +542,11 @@ class OutstandingFeeReportItem {
       feeStructureId: json['fee_structure_id'] as String,
       feeTypeId: json['fee_type_id'] as String,
       feeTypeName: json['fee_type_name'] as String,
-      assignedAmount: (json['assigned_amount'] as num?)?.toDouble() ?? 0.0,
-      discountAmount: (json['discount_amount'] as num?)?.toDouble() ?? 0.0,
-      fineAmount: (json['fine_amount'] as num?)?.toDouble() ?? 0.0,
-      paidAmount: (json['paid_amount'] as num?)?.toDouble() ?? 0.0,
-      outstandingAmount: (json['outstanding_amount'] as num?)?.toDouble() ?? 0.0,
+      assignedAmount: safeParseDouble(json['assigned_amount']),
+      discountAmount: safeParseDouble(json['discount_amount']),
+      fineAmount: safeParseDouble(json['fine_amount']),
+      paidAmount: safeParseDouble(json['paid_amount']),
+      outstandingAmount: safeParseDouble(json['outstanding_amount']),
       dueDate: DateTime.parse(json['due_date'] as String),
       status: json['status'] as String,
     );

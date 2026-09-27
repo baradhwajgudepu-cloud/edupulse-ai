@@ -29,6 +29,384 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
     super.dispose();
   }
 
+  Future<void> _showCreateConcessionDialog(BuildContext context, String schoolId) async {
+    final nameController = TextEditingController();
+    final valueController = TextEditingController();
+    final descController = TextEditingController();
+    var concessionType = ConcessionType.PERCENTAGE;
+    final formKey = GlobalKey<FormState>();
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Create New Concession'),
+              content: SizedBox(
+                width: 440,
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (errorMessage != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              errorMessage!,
+                              style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
+                            ),
+                          ),
+                        ],
+                        TextFormField(
+                          controller: nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Concession Name *',
+                            hintText: 'e.g. Sibling Discount, Merit Scholarship',
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Please enter a concession name';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<ConcessionType>(
+                          value: concessionType,
+                          decoration: const InputDecoration(
+                            labelText: 'Concession Type *',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: ConcessionType.PERCENTAGE,
+                              child: Text('Percentage (%)'),
+                            ),
+                            DropdownMenuItem(
+                              value: ConcessionType.FIXED,
+                              child: Text('Fixed Amount (₹)'),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() {
+                                concessionType = val;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: valueController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: concessionType == ConcessionType.PERCENTAGE
+                                ? 'Discount Percentage (%) *'
+                                : 'Discount Amount (₹) *',
+                            hintText: concessionType == ConcessionType.PERCENTAGE ? 'e.g. 25' : 'e.g. 1000',
+                            border: const OutlineInputBorder(),
+                          ),
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Please enter a value';
+                            }
+                            final parsed = double.tryParse(val.trim());
+                            if (parsed == null || parsed <= 0) {
+                              return 'Please enter a valid positive number';
+                            }
+                            if (concessionType == ConcessionType.PERCENTAGE && parsed > 100) {
+                              return 'Percentage cannot exceed 100%';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: descController,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Description (Optional)',
+                            hintText: 'Notes or criteria for this concession',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+                          final parsedValue = double.parse(valueController.text.trim());
+                          final desc = descController.text.trim().isEmpty ? null : descController.text.trim();
+                          final created = await ref
+                              .read(scholarshipsProvider(schoolId).notifier)
+                              .createScholarshipAndReturn(
+                                nameController.text.trim(),
+                                concessionType,
+                                parsedValue,
+                                desc,
+                              );
+                          if (created != null) {
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            if (context.mounted) {
+                              setState(() {
+                                _selectedScholarship = created;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Concession "${created.name}" created and applied'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
+                          } else {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                                errorMessage = ref.read(scholarshipsProvider(schoolId)).error ?? 'Failed to create concession';
+                              });
+                            }
+                          }
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Create Concession'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    nameController.dispose();
+    valueController.dispose();
+    descController.dispose();
+  }
+
+  Future<void> _showEditConcessionDialog(
+    BuildContext context,
+    String schoolId,
+    Scholarship scholarship,
+  ) async {
+    final nameController = TextEditingController(text: scholarship.name);
+    final valueController = TextEditingController(
+      text: scholarship.value.truncateToDouble() == scholarship.value
+          ? scholarship.value.toInt().toString()
+          : scholarship.value.toString(),
+    );
+    final descController = TextEditingController(text: scholarship.description ?? '');
+    var concessionType = scholarship.concessionType;
+    final formKey = GlobalKey<FormState>();
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('Edit Concession: ${scholarship.name}'),
+              content: SizedBox(
+                width: 440,
+                child: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (errorMessage != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            margin: const EdgeInsets.only(bottom: 12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              errorMessage!,
+                              style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
+                            ),
+                          ),
+                        ],
+                        TextFormField(
+                          controller: nameController,
+                          decoration: const InputDecoration(
+                            labelText: 'Concession Name *',
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Please enter a concession name';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<ConcessionType>(
+                          value: concessionType,
+                          decoration: const InputDecoration(
+                            labelText: 'Concession Type *',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: ConcessionType.PERCENTAGE,
+                              child: Text('Percentage (%)'),
+                            ),
+                            DropdownMenuItem(
+                              value: ConcessionType.FIXED,
+                              child: Text('Fixed Amount (₹)'),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() {
+                                concessionType = val;
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: valueController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: concessionType == ConcessionType.PERCENTAGE
+                                ? 'Discount Percentage (%) *'
+                                : 'Discount Amount (₹) *',
+                            border: const OutlineInputBorder(),
+                          ),
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Please enter a value';
+                            }
+                            final parsed = double.tryParse(val.trim());
+                            if (parsed == null || parsed <= 0) {
+                              return 'Please enter a valid positive number';
+                            }
+                            if (concessionType == ConcessionType.PERCENTAGE && parsed > 100) {
+                              return 'Percentage cannot exceed 100%';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: descController,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Description (Optional)',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+                          final parsedValue = double.parse(valueController.text.trim());
+                          final desc = descController.text.trim().isEmpty ? null : descController.text.trim();
+                          final updated = await ref
+                              .read(scholarshipsProvider(schoolId).notifier)
+                              .updateScholarshipAndReturn(
+                                id: scholarship.id,
+                                name: nameController.text.trim(),
+                                concessionType: concessionType,
+                                value: parsedValue,
+                                description: desc,
+                              );
+                          if (updated != null) {
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            if (context.mounted) {
+                              setState(() {
+                                _selectedScholarship = updated;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Concession "${updated.name}" updated successfully'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
+                          } else {
+                            if (dialogContext.mounted) {
+                              setDialogState(() {
+                                isSubmitting = false;
+                                errorMessage = ref.read(scholarshipsProvider(schoolId)).error ?? 'Failed to update concession';
+                              });
+                            }
+                          }
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save Changes'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    nameController.dispose();
+    valueController.dispose();
+    descController.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -36,9 +414,16 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
     
     final schoolId = ref.watch(selectedSchoolIdProvider) ?? '';
-    final searchState = ref.watch(studentSearchProvider(schoolId));
-    final structuresState = ref.watch(feeStructuresProvider(schoolId));
-    final scholarshipsState = ref.watch(scholarshipsProvider(schoolId));
+    final effectiveSchoolId = _selectedStudent?.schoolId.isNotEmpty == true
+        ? _selectedStudent!.schoolId
+        : (_selectedStructure?.schoolId.isNotEmpty == true
+            ? _selectedStructure!.schoolId
+            : schoolId);
+    final currentSchoolId = effectiveSchoolId.isNotEmpty ? effectiveSchoolId : schoolId;
+
+    final searchState = ref.watch(studentSearchProvider(currentSchoolId));
+    final structuresState = ref.watch(feeStructuresProvider(currentSchoolId));
+    final scholarshipsState = ref.watch(scholarshipsProvider(currentSchoolId));
     final creationState = ref.watch(feeAssignmentCreationProvider);
     final typesState = ref.watch(feeTypesProvider);
 
@@ -49,19 +434,27 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
     );
 
     // Calculate preview values
-    double originalFee = _selectedStructure?.amount ?? 0.0;
-    double discount = 0.0;
+    final double originalFee = _selectedStructure?.amount ?? 0.0;
+    double rawDiscount = 0.0;
     if (_selectedStructure != null && _selectedScholarship != null) {
       if (_selectedScholarship!.concessionType == ConcessionType.FIXED) {
-        discount = _selectedScholarship!.value;
+        rawDiscount = _selectedScholarship!.value;
       } else {
-        discount = originalFee * (_selectedScholarship!.value / 100.0);
-      }
-      if (discount > originalFee) {
-        discount = originalFee;
+        rawDiscount = originalFee * (_selectedScholarship!.value / 100.0);
       }
     }
-    double netPayable = originalFee - discount;
+    final bool isConcessionExceeded = _selectedStructure != null &&
+        _selectedScholarship != null &&
+        rawDiscount > originalFee;
+    final double discount = isConcessionExceeded ? originalFee : rawDiscount;
+    final double netPayable = (originalFee - discount).clamp(0.0, double.infinity);
+
+    // Ensure selected scholarship points to current instance in list if present
+    final selectedInList = _selectedScholarship != null
+        ? (scholarshipsState.scholarships.any((s) => s.id == _selectedScholarship!.id)
+            ? scholarshipsState.scholarships.firstWhere((s) => s.id == _selectedScholarship!.id)
+            : _selectedScholarship)
+        : null;
 
     String getFeeTypeName(String feeTypeId) {
       for (final t in typesState.types) {
@@ -269,41 +662,140 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '3. Attach Concession (Optional)',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '3. Attach Concession (Optional)',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('+ Create Concession'),
+                            onPressed: currentSchoolId.isEmpty
+                                ? null
+                                : () => _showCreateConcessionDialog(context, currentSchoolId),
+                          ),
+                        ],
                       ),
                       SizedBox(height: spacing.sm),
                       if (scholarshipsState.isLoading)
                         const Center(child: CircularProgressIndicator())
-                      else
-                        DropdownButtonFormField<Scholarship?>(
-                          value: _selectedScholarship,
-                          decoration: const InputDecoration(
-                            labelText: 'Scholarship / Waiver',
-                            border: OutlineInputBorder(),
+                      else if (scholarshipsState.error != null)
+                        Container(
+                          padding: EdgeInsets.all(spacing.sm),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(radius.sm),
                           ),
-                          items: [
-                            const DropdownMenuItem<Scholarship?>(
-                              value: null,
-                              child: Text('No Concession (Full Price)'),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  scholarshipsState.error!,
+                                  style: TextStyle(color: theme.colorScheme.onErrorContainer),
+                                ),
+                              ),
+                              TextButton.icon(
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                                onPressed: () => ref
+                                    .read(scholarshipsProvider(currentSchoolId).notifier)
+                                    .fetchScholarships(),
+                              ),
+                            ],
+                          ),
+                        )
+                      else ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<Scholarship?>(
+                                key: ValueKey(selectedInList?.id ?? 'none'),
+                                value: selectedInList,
+                                decoration: const InputDecoration(
+                                  labelText: 'Scholarship / Waiver',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: [
+                                  const DropdownMenuItem<Scholarship?>(
+                                    value: null,
+                                    child: Text('No Concession (Full Price)'),
+                                  ),
+                                  ...scholarshipsState.scholarships.map((s) {
+                                    final suffix = s.concessionType == ConcessionType.PERCENTAGE
+                                        ? '${s.value.toStringAsFixed(s.value.truncateToDouble() == s.value ? 0 : 2)}%'
+                                        : currencyFormatter.format(s.value);
+                                    return DropdownMenuItem<Scholarship?>(
+                                      value: s,
+                                      child: Text('${s.name} ($suffix Waiver)'),
+                                    );
+                                  }),
+                                ],
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedScholarship = val;
+                                  });
+                                },
+                              ),
                             ),
-                            ...scholarshipsState.scholarships.map((s) {
-                              final suffix = s.concessionType == ConcessionType.PERCENTAGE ? '%' : ' Fixed';
-                              return DropdownMenuItem<Scholarship>(
-                                value: s,
-                                child: Text('${s.name} (${s.value}$suffix Waiver)'),
-                              );
-                            }),
+                            if (selectedInList != null) ...[
+                              SizedBox(width: spacing.sm),
+                              IconButton.outlined(
+                                icon: const Icon(Icons.edit_outlined),
+                                tooltip: 'Edit Concession',
+                                onPressed: () => _showEditConcessionDialog(
+                                  context,
+                                  currentSchoolId,
+                                  selectedInList,
+                                ),
+                              ),
+                            ],
                           ],
-                          onChanged: (val) {
-                            setState(() {
-                              _selectedScholarship = val;
-                            });
-                          },
                         ),
+                        if (selectedInList?.description != null && selectedInList!.description!.isNotEmpty) ...[
+                          Padding(
+                            padding: EdgeInsets.only(top: spacing.xs, left: spacing.xs),
+                            child: Text(
+                              selectedInList.description!,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (isConcessionExceeded) ...[
+                          SizedBox(height: spacing.sm),
+                          Container(
+                            padding: EdgeInsets.all(spacing.sm),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(radius.sm),
+                              border: Border.all(color: theme.colorScheme.error),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, color: theme.colorScheme.onErrorContainer),
+                                SizedBox(width: spacing.sm),
+                                Expanded(
+                                  child: Text(
+                                    'Concession cannot exceed the original fee amount (${currencyFormatter.format(originalFee)}).',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onErrorContainer,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
@@ -339,11 +831,47 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
+                          const Text('Applied Concession:'),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _selectedScholarship != null ? _selectedScholarship!.name : 'None',
+                              textAlign: TextAlign.end,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: _selectedScholarship != null ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_selectedScholarship != null) ...[
+                        SizedBox(height: spacing.xs),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Concession Rate / Type:'),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _selectedScholarship!.concessionType == ConcessionType.PERCENTAGE
+                                    ? '${_selectedScholarship!.value.toStringAsFixed(_selectedScholarship!.value.truncateToDouble() == _selectedScholarship!.value ? 0 : 2)}% (${_selectedScholarship!.concessionType.name})'
+                                    : '${currencyFormatter.format(_selectedScholarship!.value)} (${_selectedScholarship!.concessionType.name})',
+                                textAlign: TextAlign.end,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      SizedBox(height: spacing.xs),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
                           const Text('Concession / Waiver:'),
                           Text(
                             '- ${currencyFormatter.format(discount)}',
                             style: theme.textTheme.bodyLarge?.copyWith(
-                              color: Colors.green.shade700,
+                              color: discount > 0 ? Colors.green.shade700 : null,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -386,7 +914,10 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
                         width: double.infinity,
                         height: 50,
                         child: ElevatedButton(
-                          onPressed: creationState.isLoading || _selectedStudent == null
+                          onPressed: creationState.isLoading ||
+                                  _selectedStudent == null ||
+                                  _selectedStructure == null ||
+                                  isConcessionExceeded
                               ? null
                               : () async {
                                   if (_formKey.currentState!.validate()) {
@@ -397,10 +928,10 @@ class _StudentFeeAssignmentPageState extends ConsumerState<StudentFeeAssignmentP
                                           feeStructureId: _selectedStructure!.id,
                                           scholarshipId: _selectedScholarship?.id,
                                         );
-                                    if (success && mounted) {
+                                    if (success && mounted && context.mounted) {
                                       // Refresh ledger status and metrics
                                       ref.invalidate(studentLedgerProvider(_selectedStudent!.id));
-                                      ref.invalidate(feesDashboardProvider(schoolId));
+                                      ref.invalidate(feesDashboardProvider(currentSchoolId));
                                       
                                       ScaffoldMessenger.of(context).showSnackBar(
                                         const SnackBar(

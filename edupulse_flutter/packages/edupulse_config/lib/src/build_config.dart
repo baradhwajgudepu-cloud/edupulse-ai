@@ -9,6 +9,11 @@ enum AppEnvironment {
 }
 
 class BuildConfig {
+  static const String defaultProdApiBaseUrl =
+      'https://edupulse-api-295242569787.asia-south1.run.app/api/v1/';
+  static const String defaultDevApiBaseUrl = 'http://127.0.0.1:8000/api/v1/';
+  static const String defaultDevTenantId = 'd09b9362-3dc8-422d-a441-160735fcea96';
+
   final AppEnvironment env;
   final String apiBaseUrl;
   final String tenantId;
@@ -21,18 +26,23 @@ class BuildConfig {
     this.timeout = const Duration(seconds: 15),
   });
 
-  factory BuildConfig.fromEnvironment({String? resolvedApiBaseUrl, String? resolvedTenantId}) {
-    const envString = String.fromEnvironment('ENV', defaultValue: 'dev');
+  factory BuildConfig.fromEnvironment({
+    String? resolvedApiBaseUrl,
+    String? resolvedTenantId,
+    String? resolvedEnv,
+  }) {
+    const rawEnv = String.fromEnvironment('ENV');
+    final String envString;
+    if (resolvedEnv != null && resolvedEnv.isNotEmpty) {
+      envString = resolvedEnv.trim().toLowerCase();
+    } else if (rawEnv.isNotEmpty) {
+      envString = rawEnv.trim().toLowerCase();
+    } else {
+      envString = kReleaseMode ? 'prod' : 'dev';
+    }
     final AppEnvironment environment;
 
-    final rawBaseUrl = resolvedApiBaseUrl ??
-        const String.fromEnvironment(
-          'API_BASE_URL',
-          defaultValue: 'http://127.0.0.1:8000/api/v1/',
-        );
-    final apiBaseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : '$rawBaseUrl/';
-
-    switch (envString.toLowerCase()) {
+    switch (envString) {
       case 'prod':
       case 'production':
         environment = AppEnvironment.prod;
@@ -43,7 +53,10 @@ class BuildConfig {
       case 'dev':
       case 'development':
       default:
-        if (apiBaseUrl.contains('edupulse-api-295242569787')) {
+        // Backward compatibility fallback for legacy or canonical production URLs
+        if (resolvedApiBaseUrl != null &&
+            (resolvedApiBaseUrl.contains('api.edupulse.ai') ||
+             resolvedApiBaseUrl.contains('edupulse-api-295242569787'))) {
           environment = AppEnvironment.prod;
         } else {
           environment = AppEnvironment.dev;
@@ -51,20 +64,48 @@ class BuildConfig {
         break;
     }
 
-    const envTenantId = String.fromEnvironment('TENANT_ID');
-    final targetTenantId = resolvedTenantId ?? envTenantId;
-    final String tenantId;
-    if (apiBaseUrl.contains('edupulse-api-295242569787')) {
-      if (targetTenantId.isEmpty || targetTenantId == 'd09b9362-3dc8-422d-a441-160735fcea96') {
-        throw StateError(
-          'Missing production TENANT_ID configuration! '
-          'Please specify the production tenant ID using --dart-define=TENANT_ID=...',
-        );
+    final String rawBaseUrl;
+    if (resolvedApiBaseUrl != null && resolvedApiBaseUrl.isNotEmpty) {
+      rawBaseUrl = resolvedApiBaseUrl;
+    } else {
+      const envUrl = String.fromEnvironment('API_BASE_URL');
+      if (envUrl.isNotEmpty) {
+        rawBaseUrl = envUrl;
       } else {
+        rawBaseUrl = environment == AppEnvironment.prod
+            ? defaultProdApiBaseUrl
+            : defaultDevApiBaseUrl;
+      }
+    }
+    final apiBaseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : '$rawBaseUrl/';
+
+    const envTenantId = String.fromEnvironment('TENANT_ID');
+    final targetTenantId = (resolvedTenantId ?? envTenantId).trim();
+    final String tenantId;
+
+    if (environment == AppEnvironment.prod) {
+      if (apiBaseUrl.contains('127.0.0.1') ||
+          apiBaseUrl.contains('localhost') ||
+          apiBaseUrl.contains('10.0.2.2') ||
+          apiBaseUrl.contains('192.168.')) {
+        throw StateError(
+          'Invalid production API_BASE_URL configuration! '
+          'Production environment (ENV=prod) cannot use local or private LAN addresses ($apiBaseUrl). '
+          'Please specify the canonical production API URL using --dart-define=API_BASE_URL=...',
+        );
+      }
+      // In production, TENANT_ID is optional. If supplied (and not the dev default), preserve it.
+      // If absent or matching the dev default, tenantId is set to an empty string.
+      if (targetTenantId.isNotEmpty &&
+          targetTenantId != defaultDevTenantId) {
         tenantId = targetTenantId;
+      } else {
+        tenantId = '';
       }
     } else {
-      tenantId = targetTenantId.isNotEmpty ? targetTenantId : 'd09b9362-3dc8-422d-a441-160735fcea96';
+      tenantId = targetTenantId.isNotEmpty
+          ? targetTenantId
+          : defaultDevTenantId;
     }
 
     return BuildConfig(
@@ -76,13 +117,38 @@ class BuildConfig {
 
   /// Asynchronously resolves the proper API base URL depending on platform & device characteristics.
   static Future<String> resolveApiBaseUrl() async {
+    const rawEnv = String.fromEnvironment('ENV');
+    final String envString;
+    if (rawEnv.isNotEmpty) {
+      envString = rawEnv.trim().toLowerCase();
+    } else {
+      envString = kReleaseMode ? 'prod' : 'dev';
+    }
+    final isProd = envString == 'prod' || envString == 'production';
+
     const definedUrl = String.fromEnvironment('API_BASE_URL');
     if (definedUrl.isNotEmpty) {
-      return definedUrl.endsWith('/') ? definedUrl : '$definedUrl/';
+      final normalized = definedUrl.endsWith('/') ? definedUrl : '$definedUrl/';
+      if (isProd &&
+          (normalized.contains('127.0.0.1') ||
+           normalized.contains('localhost') ||
+           normalized.contains('10.0.2.2') ||
+           normalized.contains('192.168.'))) {
+        throw StateError(
+          'Invalid production API_BASE_URL configuration! '
+          'Production environment (ENV=prod) cannot use local or private LAN addresses ($normalized). '
+          'Please specify the canonical production API URL using --dart-define=API_BASE_URL=...',
+        );
+      }
+      return normalized;
+    }
+
+    if (isProd) {
+      return defaultProdApiBaseUrl;
     }
 
     if (kIsWeb) {
-      return 'http://127.0.0.1:8000/api/v1/';
+      return defaultDevApiBaseUrl;
     }
 
     if (Platform.isAndroid) {
@@ -98,7 +164,7 @@ class BuildConfig {
       }
     }
 
-    return 'http://127.0.0.1:8000/api/v1/';
+    return defaultDevApiBaseUrl;
   }
 
   void printDiagnostics() {

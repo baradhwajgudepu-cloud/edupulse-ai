@@ -16,6 +16,8 @@ import '../../../tenant_setup/data/models/tenant_models.dart';
 import '../../../tenant_setup/presentation/providers/tenant_providers.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import 'package:edupulse_config/edupulse_config.dart';
+import '../widgets/reset_school_data_dialog.dart';
+import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
 class SchoolOnboardingScreen extends ConsumerStatefulWidget {
   const SchoolOnboardingScreen({super.key});
@@ -71,7 +73,7 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
             authState.user.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN'));
     final isTenantAdmin = authState is Authenticated &&
         !isSuperAdmin &&
-        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN' || r.toUpperCase() == 'CHAIRMAN' || r.toUpperCase() == 'ADMIN' || r.toUpperCase() == 'ADMINISTRATOR');
+        authState.user.roles.any((r) => r.toUpperCase() == 'TENANT_ADMIN');
 
     final tenantId = ref.watch(activeTenantIdProvider);
     final tenantsState = ref.watch(tenantsListProvider);
@@ -152,6 +154,40 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                                         const SnackBar(
                                           content: Text('Loaded synthetic test datasets across all 13 onboarding sheets.'),
                                           duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  },
+                          ),
+                        if (isSuperAdmin || isTenantAdmin)
+                          TextButton.icon(
+                            key: const ValueKey('reset_school_data_button'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red.shade900,
+                              backgroundColor: Colors.red.shade100.withValues(alpha: 0.6),
+                            ),
+                            icon: const Icon(Icons.restore_from_trash, size: 18),
+                            label: const Text('Reset School Data and Start Onboarding Again'),
+                            onPressed: state.isProcessing || schoolId == null
+                                ? null
+                                : () async {
+                                    final resetResult = await showDialog<bool>(
+                                      context: context,
+                                      builder: (ctx) => ResetSchoolDataDialog(
+                                        schoolId: schoolId,
+                                        schoolName: schoolName,
+                                        tenantName: tenantName,
+                                        onResetComplete: () {
+                                          ref.read(schoolOnboardingProvider.notifier).reset();
+                                          ref.invalidate(schoolsListProvider);
+                                        },
+                                      ),
+                                    );
+                                    if (resetResult == true && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('School data reset completed successfully. Ready for Step 1 onboarding.'),
+                                          backgroundColor: Colors.green,
                                         ),
                                       );
                                     }
@@ -488,8 +524,9 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                       ],
                     ),
                   ] else ...[
-                    DropdownButtonFormField<String>(
+                    SafeDropdownButtonFormField<String>(
                       value: state.selectedTenantId ?? ref.watch(activeTenantIdProvider),
+                      fallbackValue: null,
                       decoration: const InputDecoration(
                         labelText: 'Select Existing Organization / Tenant *',
                         prefixIcon: Icon(Icons.business),
@@ -721,8 +758,9 @@ class _SchoolOnboardingScreenState extends ConsumerState<SchoolOnboardingScreen>
                       const SizedBox(height: 12),
                       const Text('Select Worksheet:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 4),
-                      DropdownButton<String>(
+                      SafeDropdownButton<String>(
                         value: sheet.selectedSheet,
+                        fallbackValue: sheet.sheetsList.firstOrNull,
                         items: sheet.sheetsList.map((s) {
                           return DropdownMenuItem<String>(
                             value: s,

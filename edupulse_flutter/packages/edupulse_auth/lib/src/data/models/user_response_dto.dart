@@ -13,6 +13,8 @@ class UserResponseDto {
   final String createdAt;
   final String updatedAt;
 
+  final bool mustChangePassword;
+
   const UserResponseDto({
     required this.id,
     required this.email,
@@ -27,6 +29,7 @@ class UserResponseDto {
     required this.version,
     required this.createdAt,
     required this.updatedAt,
+    this.mustChangePassword = false,
   });
 
   factory UserResponseDto.fromJson(Map<String, dynamic> json) {
@@ -44,6 +47,7 @@ class UserResponseDto {
       version: (json['version'] as num?)?.toInt() ?? 1,
       createdAt: (json['created_at'] ?? json['createdAt'] ?? '').toString(),
       updatedAt: (json['updated_at'] ?? json['updatedAt'] ?? '').toString(),
+      mustChangePassword: json['must_change_password'] == true || json['mustChangePassword'] == true,
     );
   }
 
@@ -62,6 +66,7 @@ class UserResponseDto {
       'version': version,
       'created_at': createdAt,
       'updated_at': updatedAt,
+      'must_change_password': mustChangePassword,
     };
   }
 }

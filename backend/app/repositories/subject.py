@@ -67,6 +67,7 @@ class SubjectRepository:
         academic_year_id: Optional[uuid.UUID] = None,
         category: Optional[SubjectCategory] = None,
         status: Optional[SubjectStatus] = None,
+        source_type: Optional[str] = None,
         search: Optional[str] = None,
         skip: int = 0,
         limit: int = 100
@@ -87,6 +88,8 @@ class SubjectRepository:
             filters.append(Subject.category == category)
         if status:
             filters.append(Subject.status == status)
+        if source_type:
+            filters.append(Subject.source_type == source_type)
 
         if search:
             search_clause = or_(
@@ -115,12 +118,29 @@ class SubjectRepository:
         """
         Creates and returns transient Subject entity.
         """
+        settings = dict(obj_in.settings or {})
+        if getattr(obj_in, "is_examination_applicable", None) is not None:
+            settings["is_examination_applicable"] = obj_in.is_examination_applicable
+        if getattr(obj_in, "is_marks_applicable", None) is not None:
+            settings["is_marks_applicable"] = obj_in.is_marks_applicable
+        if getattr(obj_in, "max_marks", None) is not None:
+            settings["max_marks"] = obj_in.max_marks
+        if getattr(obj_in, "appears_in_report_card", None) is not None:
+            settings["appears_in_report_card"] = obj_in.appears_in_report_card
+        if getattr(obj_in, "included_in_consolidated_result", None) is not None:
+            settings["included_in_consolidated_result"] = obj_in.included_in_consolidated_result
+        if getattr(obj_in, "included_in_rank_calculation", None) is not None:
+            settings["included_in_rank_calculation"] = obj_in.included_in_rank_calculation
+
+        source_type = getattr(obj_in, "source_type", None) or "BOARD_OFFICIAL"
+
         db_obj = Subject(
             subject_code=obj_in.subject_code,
             subject_name=obj_in.subject_name,
             short_name=obj_in.short_name,
             category=obj_in.category,
             subject_type=obj_in.subject_type,
+            source_type=source_type,
             description=obj_in.description,
             credit_hours=obj_in.credit_hours,
             weekly_periods=obj_in.weekly_periods,
@@ -129,7 +149,7 @@ class SubjectRepository:
             pass_marks=obj_in.pass_marks,
             display_color=obj_in.display_color,
             display_order=obj_in.display_order,
-            settings=obj_in.settings,
+            settings=settings,
             ai_metrics=obj_in.ai_metrics,
             tenant_id=tenant_id,
             school_id=obj_in.school_id,
@@ -149,9 +169,15 @@ class SubjectRepository:
         Updates subject details.
         """
         if isinstance(obj_in, dict):
-            update_data = obj_in
+            update_data = dict(obj_in)
         else:
             update_data = obj_in.model_dump(exclude_unset=True)
+
+        settings = dict(db_obj.settings or {})
+        for assess_key in ["is_examination_applicable", "is_marks_applicable", "max_marks", "appears_in_report_card", "included_in_consolidated_result", "included_in_rank_calculation"]:
+            if assess_key in update_data:
+                settings[assess_key] = update_data.pop(assess_key)
+        db_obj.settings = settings
 
         for field, value in update_data.items():
             setattr(db_obj, field, value)

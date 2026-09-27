@@ -5,18 +5,30 @@ import '../providers/teachers_providers.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 
 class AssignmentFormDialog extends ConsumerStatefulWidget {
-  final String teacherId;
+  final String? teacherId;
   final TeacherSubjectAssignmentDto? assignment; // Null for Create, non-null for Edit
+  final String? initialClassId;
+  final String? initialSectionId;
+  final String? initialSubjectId;
+  final String? initialAcademicYearId;
+  final bool isClassTeacherDefault;
 
   const AssignmentFormDialog({
     super.key,
-    required this.teacherId,
-    this.assignment,
-  });
+    this.teacherId,
+    TeacherSubjectAssignmentDto? assignment,
+    TeacherSubjectAssignmentDto? existingAssignment,
+    this.initialClassId,
+    this.initialSectionId,
+    this.initialSubjectId,
+    this.initialAcademicYearId,
+    this.isClassTeacherDefault = false,
+  }) : assignment = assignment ?? existingAssignment;
 
   @override
   ConsumerState<AssignmentFormDialog> createState() => _AssignmentFormDialogState();
 }
+
 
 class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
   final _formKey = GlobalKey<FormState>();
@@ -27,6 +39,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
   late final TextEditingController _maxStudentsController;
   late final TextEditingController _remarksController;
 
+  String? _selectedTeacherId;
   String? _selectedAyId;
   String? _selectedClassId;
   String? _selectedSectionId;
@@ -53,7 +66,8 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
 
     _selectedAssignmentType = a?.assignmentType ?? 'PRIMARY';
     _selectedStatus = a?.status ?? 'ACTIVE';
-    _isClassTeacher = a?.isClassTeacher ?? false;
+    _isClassTeacher = a?.isClassTeacher ?? widget.isClassTeacherDefault;
+    _selectedTeacherId = widget.teacherId ?? a?.teacherId;
 
     if (a != null) {
       _selectedAyId = a.academicYearId;
@@ -65,6 +79,10 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
         _effectiveTo = DateTime.tryParse(a.effectiveTo!);
       }
     } else {
+      _selectedAyId = widget.initialAcademicYearId;
+      _selectedClassId = widget.initialClassId;
+      _selectedSectionId = widget.initialSectionId;
+      _selectedSubjectId = widget.initialSubjectId;
       _effectiveFrom = DateTime.now();
     }
 
@@ -72,6 +90,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
     Future.microtask(() {
       final schoolId = ref.read(selectedSchoolIdProvider);
       if (schoolId != null) {
+        ref.read(teachersListProvider.notifier).fetchTeachers();
         ref.read(academicYearsProvider(schoolId).notifier).fetchYears();
         ref.read(classesProvider(schoolId).notifier).fetchClasses();
         ref.read(sectionsProvider(schoolId).notifier).fetchSections();
@@ -79,6 +98,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
       }
     });
   }
+
 
   @override
   void dispose() {
@@ -144,10 +164,18 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
       return;
     }
 
+    final effectiveTeacherId = _selectedTeacherId ?? widget.teacherId;
+    if (effectiveTeacherId == null || effectiveTeacherId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select an active teacher.')),
+      );
+      return;
+    }
+
     final data = <String, dynamic>{
       'school_id': schoolId,
       'academic_year_id': _selectedAyId,
-      'teacher_id': widget.teacherId,
+      'teacher_id': effectiveTeacherId,
       'subject_id': _selectedSubjectId,
       'class_id': _selectedClassId,
       'section_id': _selectedSectionId,
@@ -174,7 +202,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
           ? '/teacher-subject-assignments/${widget.assignment!.id}?school_id=$schoolId'
           : '/teacher-subject-assignments',
       data: data,
-      teacherId: widget.teacherId,
+      teacherId: effectiveTeacherId,
       successMsg: _isEdit ? 'Assignment updated successfully.' : 'Assignment registered successfully.',
     );
 
@@ -182,6 +210,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
       Navigator.pop(context, true);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -195,10 +224,14 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
       );
     }
 
+    final teachersState = ref.watch(teachersListProvider);
     final ayState = ref.watch(academicYearsProvider(schoolId));
     final classesState = ref.watch(classesProvider(schoolId));
     final sectionsState = ref.watch(sectionsProvider(schoolId));
     final subjectsState = ref.watch(subjectsProvider(schoolId));
+
+    // Filter active teachers
+    final activeTeachers = teachersState.teachers.where((t) => t.status == 'ACTIVE' && t.isActive).toList();
 
     // Filter subjects by academic year
     final filteredSubjects = subjectsState.subjects.where((s) {
@@ -212,14 +245,24 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
       return s.classId == _selectedClassId;
     }).toList();
 
+    final screenH = MediaQuery.of(context).size.height;
+    final screenW = MediaQuery.of(context).size.width;
+    final maxH = (screenH * 0.92).clamp(400.0, 780.0);
+    final insetPadding = EdgeInsets.symmetric(
+      horizontal: screenW < 600 ? 12 : 24,
+      vertical: screenH < 600 ? 12 : 24,
+    );
+
     return Dialog(
+      insetPadding: insetPadding,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 600),
-        padding: const EdgeInsets.all(24.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 600, maxHeight: maxH),
+        child: Padding(
+          padding: EdgeInsets.all(screenW < 600 ? 16.0 : 24.0),
+          child: Form(
+            key: _formKey,
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -227,9 +270,14 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    _isEdit ? 'Edit Subject Assignment' : 'New Subject Assignment',
-                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  Expanded(
+                    child: Text(
+                      _isEdit
+                          ? 'Edit Subject Assignment'
+                          : (widget.teacherId != null ? 'New Subject Assignment' : 'Assign Academic Subject'),
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
@@ -244,8 +292,32 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
                 child: SingleChildScrollView(
                   child: ListBody(
                     children: [
+                      // Dropdown: Teacher (shown if not pre-scoped)
+                      if (widget.teacherId == null && !_isEdit) ...[
+                        DropdownButtonFormField<String>(
+                          key: const Key('assignment_teacher_dropdown'),
+                          isExpanded: true,
+                          value: _selectedTeacherId,
+                          decoration: const InputDecoration(
+                            labelText: 'Teacher *',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.person_outline),
+                          ),
+                          items: activeTeachers.map((t) {
+                            return DropdownMenuItem(
+                              value: t.id,
+                              child: Text('${t.firstName} ${t.lastName} (${t.employeeCode}) - ${t.department}'),
+                            );
+                          }).toList(),
+                          onChanged: (val) => setState(() => _selectedTeacherId = val),
+                          validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
                       // Dropdown: Academic Year
                       DropdownButtonFormField<String>(
+
                         isExpanded: true,
                         value: _selectedAyId,
                         decoration: const InputDecoration(
@@ -518,14 +590,16 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
                 ),
 
               // Actions Panel
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: actionState.isLoading ? null : () => Navigator.pop(context),
                     child: const Text('Cancel'),
                   ),
-                  const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: actionState.isLoading ? null : _submit,
                     child: actionState.isLoading
@@ -538,6 +612,7 @@ class _AssignmentFormDialogState extends ConsumerState<AssignmentFormDialog> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

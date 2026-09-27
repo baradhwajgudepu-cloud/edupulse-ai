@@ -52,7 +52,7 @@ async def list_assignments(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
-    current_user: User = Depends(require_permission("teacher_subject_assignment.read")),
+    current_user: User = Depends(require_permission("teacher_subject_assignment.read", "student.read", "school.read")),
     service: TeacherSubjectAssignmentService = Depends(get_assignment_service)
 ) -> APIResponse[List[TeacherSubjectAssignmentResponse]]:
     role_codes = {r.code for r in current_user.roles}

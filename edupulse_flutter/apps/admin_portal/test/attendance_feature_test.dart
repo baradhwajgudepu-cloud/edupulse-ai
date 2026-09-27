@@ -11,6 +11,18 @@ import 'package:admin_portal/features/attendance/presentation/pages/attendance_s
 import 'package:admin_portal/core/routing/routes.dart';
 
 class FakeTestSessionManager implements SessionManager {
+  @override
+  Future<String?> getSchoolName() async => null;
+
+  @override
+  Future<String?> getTenantName() async => null;
+
+  @override
+  Future<void> saveSchoolName(String name) async {}
+
+  @override
+  Future<void> saveTenantName(String name) async {}
+
   String? cachedTenantId;
 
   @override
@@ -28,7 +40,7 @@ class FakeTestSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String? reason]) async {}
   @override
   Future<bool> hasSession() async => true;
   @override

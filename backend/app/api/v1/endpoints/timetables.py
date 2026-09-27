@@ -6,12 +6,45 @@ from app.api.dependencies.common import get_tenant_id
 from app.api.dependencies.timetable import get_timetable_service
 from app.api.dependencies.auth import require_permission
 from app.services.timetable import TimetableService
-from app.schemas.timetable import TimetableCreate, TimetableUpdate, TimetableResponse
+from app.schemas.timetable import (
+    TimetableCreate,
+    TimetableUpdate,
+    TimetableResponse,
+    TimetableCopyDayRequest,
+    TimetableCopySectionRequest,
+    TimetableClearDayRequest,
+    TimetableBulkStatusRequest,
+    TimetableConflictCheckRequest,
+    TimetableConflictCheckResponse,
+    TimetableMoveRequest,
+    TimetableMoveResponse,
+)
+
 from app.models.timetable import TimetableStatus, DayOfWeek
 from app.models.user import User
 from app.schemas.response import APIResponse
 
 router = APIRouter()
+
+@router.post(
+    "/move",
+    response_model=APIResponse[TimetableMoveResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Move or swap timetable period slot",
+    description="Drag-and-drop moves or swaps timetable periods, validating conflicts and saving immediately."
+)
+async def move_timetable_slot(
+    obj_in: TimetableMoveRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.update")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[TimetableMoveResponse]:
+    res = await service.move_or_swap_timetable_slot(tenant_id, obj_in, updated_by=current_user.id)
+    return APIResponse[TimetableMoveResponse](
+        success=True,
+        message=res.message,
+        data=res
+    )
 
 @router.post(
     "",
@@ -148,8 +181,109 @@ async def get_section_schedule(
         data=responses
     )
 
+@router.post(
+    "/conflicts/check",
+    response_model=APIResponse[TimetableConflictCheckResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Check slot conflict before creation",
+    description="Validates potential double bookings on teacher, room, or class before saving."
+)
+async def check_timetable_conflict(
+    obj_in: TimetableConflictCheckRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.read")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[TimetableConflictCheckResponse]:
+    result = await service.check_conflict(tenant_id, obj_in)
+    return APIResponse[TimetableConflictCheckResponse](
+        success=True,
+        message="Conflict evaluation completed.",
+        data=result
+    )
+
+@router.post(
+    "/copy-day",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+    summary="Copy daily timetable schedule",
+    description="Duplicates timetable slots from one day of week to another for the selected section."
+)
+async def copy_day_schedule(
+    obj_in: TimetableCopyDayRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.create")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[dict]:
+    count = await service.copy_day_schedule(tenant_id, obj_in, created_by=current_user.id)
+    return APIResponse[dict](
+        success=True,
+        message=f"Successfully copied {count} slot(s) to {obj_in.target_day.value}.",
+        data={"copied_count": count}
+    )
+
+@router.post(
+    "/copy-section",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+    summary="Copy section timetable schedule",
+    description="Duplicates all active timetable slots from one section to another."
+)
+async def copy_section_schedule(
+    obj_in: TimetableCopySectionRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.create")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[dict]:
+    count = await service.copy_section_schedule(tenant_id, obj_in, created_by=current_user.id)
+    return APIResponse[dict](
+        success=True,
+        message=f"Successfully copied {count} slot(s) to destination section.",
+        data={"copied_count": count}
+    )
+
+@router.post(
+    "/clear-day",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+    summary="Clear daily timetable schedule",
+    description="Soft-deletes all scheduled periods for a day in the selected section."
+)
+async def clear_day_schedule(
+    obj_in: TimetableClearDayRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.delete")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[dict]:
+    count = await service.clear_day_schedule(tenant_id, obj_in, deleted_by=current_user.id)
+    return APIResponse[dict](
+        success=True,
+        message=f"Successfully cleared {count} slot(s) on {obj_in.day_of_week.value}.",
+        data={"cleared_count": count}
+    )
+
+@router.post(
+    "/bulk-status",
+    response_model=APIResponse[dict],
+    status_code=status.HTTP_200_OK,
+    summary="Bulk update timetable status",
+    description="Publishes or unpublishes (sets status) for all slots in a class section."
+)
+async def bulk_update_status(
+    obj_in: TimetableBulkStatusRequest,
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("timetable.update")),
+    service: TimetableService = Depends(get_timetable_service)
+) -> APIResponse[dict]:
+    count = await service.bulk_update_status(tenant_id, obj_in, updated_by=current_user.id)
+    return APIResponse[dict](
+        success=True,
+        message=f"Successfully updated {count} slot(s) to status {obj_in.status.value}.",
+        data={"updated_count": count}
+    )
+
 @router.get(
     "/{id}",
+
     response_model=APIResponse[TimetableResponse],
     status_code=status.HTTP_200_OK,
     summary="Get timetable slot details",

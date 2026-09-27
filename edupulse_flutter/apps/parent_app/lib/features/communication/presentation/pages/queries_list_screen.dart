@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
-import 'package:edupulse_localization/edupulse_localization.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 import '../providers/communication_provider.dart';
 
@@ -44,7 +43,6 @@ class _QueriesListScreenState extends ConsumerState<QueriesListScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final local = EduLocalization.of(context);
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
 

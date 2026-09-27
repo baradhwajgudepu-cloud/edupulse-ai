@@ -1,0 +1,71 @@
+1
+00:00:00,800 --> 00:00:06,799
+Schools need more than separate applications. They need one connected operating system.
+
+2
+00:00:09,300 --> 00:00:15,300
+Meet EduPulse AI: a connected digital operating system designed for modern schools.
+
+3
+00:00:17,800 --> 00:00:23,800
+Start with the essentials and build your school's digital ecosystem progressively.
+
+4
+00:00:26,300 --> 00:00:32,299
+One command center gives school administrators visibility across daily operations.
+
+5
+00:00:34,799 --> 00:00:40,799
+Student 360 brings the complete student journey together.
+
+6
+00:00:43,299 --> 00:00:49,299
+Manage teachers and staff from onboarding through attendance, leave, and payroll.
+
+7
+00:00:51,799 --> 00:00:57,799
+Location-aware attendance helps schools verify staff presence within the configured campus boundary.
+
+8
+00:01:00,299 --> 00:01:06,299
+School Planner brings the school's operational activities into one coordinated workspace.
+
+9
+00:01:08,799 --> 00:01:14,799
+From fee assignment to payment and receipts, financial operations stay connected.
+
+10
+00:01:17,299 --> 00:01:23,299
+Track school expenses and staff payroll with transparent financial records.
+
+11
+00:01:25,799 --> 00:01:31,799
+Bring existing school data into EduPulse with flexible imports.
+
+12
+00:01:34,299 --> 00:01:40,299
+Turn school operations into actionable insights.
+
+13
+00:01:42,799 --> 00:01:48,799
+School leadership gets the visibility needed to coordinate the institution.
+
+14
+00:01:51,299 --> 00:01:57,299
+Teachers get essential classroom and operational tools directly in their hands.
+
+15
+00:01:59,799 --> 00:02:05,799
+Parents stay connected with their child's school journey.
+
+16
+00:02:08,300 --> 00:02:14,300
+Role-based access keeps every user's experience focused on what they are authorized to manage.
+
+17
+00:02:16,800 --> 00:02:22,800
+Built for a multi-school ecosystem, with each institution operating inside its own secure school context.
+
+18
+00:02:25,300 --> 00:02:31,300
+EduPulse AI. The intelligent operating system for modern schools.

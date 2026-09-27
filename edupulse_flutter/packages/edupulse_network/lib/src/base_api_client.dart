@@ -85,15 +85,22 @@ class BaseApiClient {
             'persistentConnection: ${_dio.options.persistentConnection} / ${options?.persistentConnection}');
       }
 
+      Options? effectiveOptions = options;
+      if (data is FormData) {
+        effectiveOptions = (options ?? Options()).copyWith(
+          contentType: 'multipart/form-data',
+        );
+      }
+
       final response = await _dio.post(
         normalizedPath,
         data: data,
         queryParameters: queryParameters,
-        options: options,
+        options: effectiveOptions,
         cancelToken: cancelToken,
       );
       if (isLogin) {
-        _logPostSuccess(normalizedPath, data, options, response);
+        _logPostSuccess(normalizedPath, data, effectiveOptions, response);
       }
       if (isStudent) {
         // ignore: avoid_print
@@ -135,12 +142,18 @@ class BaseApiClient {
     CancelToken? cancelToken,
     required T Function(dynamic json) mapper,
   }) async {
+    Options? effectiveOptions = options;
+    if (data is FormData) {
+      effectiveOptions = (options ?? Options()).copyWith(
+        contentType: 'multipart/form-data',
+      );
+    }
     return _safeRequest(
       () => _dio.put(
         _normalizePath(path),
         data: data,
         queryParameters: queryParameters,
-        options: options,
+        options: effectiveOptions,
         cancelToken: cancelToken,
       ),
       mapper,

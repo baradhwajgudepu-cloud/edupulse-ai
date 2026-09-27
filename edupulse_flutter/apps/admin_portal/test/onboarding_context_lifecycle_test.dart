@@ -220,6 +220,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           sessionManagerProvider.overrideWithValue(fakeSession),
+          apiClientProvider.overrideWithValue(fakeApi),
         ],
       );
 
@@ -254,6 +255,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           sessionManagerProvider.overrideWithValue(fakeSession),
+          apiClientProvider.overrideWithValue(fakeApi),
           selectedTenantIdProvider.overrideWith((ref) => 'existing-tenant-uuid-456'),
         ],
       );

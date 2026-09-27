@@ -15,6 +15,7 @@ from app.schemas.fee import (
     FeeTypeCreate, FeeTypeUpdate, ScholarshipCreate, ScholarshipUpdate,
     FeeStructureCreate, FeeStructureUpdate, FineRuleCreate, FineRuleUpdate
 )
+from app.models.student import Student
 
 class FeeRepository:
     def __init__(self, db: AsyncSession) -> None:
@@ -325,6 +326,46 @@ class FeeRepository:
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_payments(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: Optional[uuid.UUID] = None,
+        student_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+        payment_method: Optional[str] = None,
+        payment_status: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 50
+    ) -> Tuple[List[FeePayment], int]:
+        filters = [
+            FeePayment.tenant_id == tenant_id,
+            FeePayment.deleted_at.is_(None)
+        ]
+        if student_id:
+            filters.append(FeePayment.student_id == student_id)
+        if academic_year_id:
+            filters.append(FeePayment.academic_year_id == academic_year_id)
+        if payment_method:
+            filters.append(FeePayment.payment_method == payment_method)
+        if payment_status:
+            filters.append(FeePayment.status == payment_status)
+        
+        stmt = select(FeePayment).where(and_(*filters))
+        if school_id:
+            stmt = stmt.join(Student, FeePayment.student_id == Student.id).where(Student.school_id == school_id)
+
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_res = await self.db.execute(count_stmt)
+        total = total_res.scalar() or 0
+
+        stmt = stmt.options(
+            selectinload(FeePayment.allocations).selectinload(FeePaymentAllocation.assignment),
+            selectinload(FeePayment.receipt)
+        ).order_by(FeePayment.payment_date.desc()).offset(skip).limit(limit)
+
+        res = await self.db.execute(stmt)
+        return list(res.scalars().all()), total
 
     async def create_payment(
         self,

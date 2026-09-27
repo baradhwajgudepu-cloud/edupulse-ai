@@ -15,13 +15,22 @@ class SubjectStatus(str, enum.Enum):
 
 class SubjectCategory(str, enum.Enum):
     CORE = "CORE"
+    ADDITIONAL = "ADDITIONAL"
     ELECTIVE = "ELECTIVE"
+    REMEDIAL = "REMEDIAL"
     LANGUAGE = "LANGUAGE"
+    SKILL = "SKILL"
     OPTIONAL = "OPTIONAL"
     LAB = "LAB"
     SPORTS = "SPORTS"
     ARTS = "ARTS"
     CO_CURRICULAR = "CO_CURRICULAR"
+    VOCATIONAL = "VOCATIONAL"
+    OTHER = "OTHER"
+
+class SubjectSource(str, enum.Enum):
+    BOARD_OFFICIAL = "BOARD_OFFICIAL"
+    SCHOOL_ADDED = "SCHOOL_ADDED"
 
 class SubjectType(str, enum.Enum):
     THEORY = "THEORY"
@@ -37,6 +46,7 @@ class Subject(Base, BaseModelMixin):
     subject_code: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_name: Mapped[str] = mapped_column(String(150), nullable=False)
     short_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(50), default="BOARD_OFFICIAL", nullable=False)
     
     category: Mapped[SubjectCategory] = mapped_column(
         SQLEnum(SubjectCategory, name="subjectcategory", create_type=False),
@@ -111,10 +121,11 @@ class Subject(Base, BaseModelMixin):
         cascade="all, delete-orphan"
     )
 
-    # ==================================================
-    # Future Placeholders (Empty for mapper safety)
-    # ==================================================
-    # class_subject_assignments = relationship("ClassSubjectAssignment", back_populates="subject")
+    class_subject_assignments: Mapped[list["ClassSubjectAssignment"]] = relationship(
+        "ClassSubjectAssignment",
+        back_populates="subject",
+        cascade="all, delete-orphan"
+    )
     homeworks: Mapped[list["Homework"]] = relationship(
         "Homework",
         back_populates="subject",
@@ -122,6 +133,39 @@ class Subject(Base, BaseModelMixin):
     )
     # examinations = relationship("Examination", back_populates="subject")
     # marks = relationship("Marks", back_populates="subject")
+
+    @property
+    def name(self) -> str:
+        return self.subject_name
+
+    @property
+    def is_examination_applicable(self) -> bool:
+        return bool(self.settings.get("is_examination_applicable", True)) if self.settings else True
+
+    @property
+    def is_marks_applicable(self) -> bool:
+        return bool(self.settings.get("is_marks_applicable", True)) if self.settings else True
+
+    @property
+    def max_marks(self) -> int:
+        theory = self.theory_marks or 0
+        practical = self.practical_marks or 0
+        explicit = self.settings.get("max_marks") if self.settings else None
+        if explicit is not None:
+            return int(explicit)
+        return (theory + practical) if (theory + practical) > 0 else 100
+
+    @property
+    def appears_in_report_card(self) -> bool:
+        return bool(self.settings.get("appears_in_report_card", True)) if self.settings else True
+
+    @property
+    def included_in_consolidated_result(self) -> bool:
+        return bool(self.settings.get("included_in_consolidated_result", True)) if self.settings else True
+
+    @property
+    def included_in_rank_calculation(self) -> bool:
+        return bool(self.settings.get("included_in_rank_calculation", True)) if self.settings else True
 
     __mapper_args__ = {
         "version_id_col": version
@@ -141,9 +185,11 @@ class Subject(Base, BaseModelMixin):
         Index("ix_subjects_subject_name", "subject_name"),
         Index("ix_subjects_category", "category"),
         Index("ix_subjects_status", "status"),
+        Index("ix_subjects_source_type", "source_type"),
     )
 
 from app.models.teacher_subject_assignment import TeacherSubjectAssignment  # noqa: F401
+from app.models.class_subject_assignment import ClassSubjectAssignment  # noqa: F401
 from app.models.timetable import Timetable  # noqa: F401
 from app.models.attendance import AttendanceSession, Attendance  # noqa: F401
 from app.models.homework import Homework  # noqa: F401

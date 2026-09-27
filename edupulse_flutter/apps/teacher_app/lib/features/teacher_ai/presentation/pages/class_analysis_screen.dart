@@ -209,6 +209,10 @@ class _ClassAnalysisScreenState extends ConsumerState<ClassAnalysisScreen> {
   }
 
   Widget _buildErrorState(String message, ThemeData theme, AppSpacing spacing) {
+    final cleanMessage = (message.contains('AI_') || message.contains('502') || message.contains('503') || message.toLowerCase().contains('unavailable'))
+        ? 'AI analysis service is temporarily unavailable. Please tap Retry or try again in a few moments.'
+        : message;
+
     return Padding(
       padding: EdgeInsets.symmetric(vertical: spacing.xl),
       child: Center(
@@ -218,15 +222,32 @@ class _ClassAnalysisScreenState extends ConsumerState<ClassAnalysisScreen> {
             Icon(Icons.error_outline_rounded, size: 64, color: theme.colorScheme.error),
             SizedBox(height: spacing.md),
             Text(
-              'Failed to Generate Report',
+              'Analysis Temporarily Unavailable',
               style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             SizedBox(height: spacing.xs),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: spacing.lg),
+              child: Text(
+                cleanMessage,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
             ),
+            if (_selectedClassGroup != null && _selectedSubject != null) ...[
+              SizedBox(height: spacing.lg),
+              OutlinedButton.icon(
+                onPressed: () {
+                  ref.read(classAnalysisNotifierProvider.notifier).fetchClassAnalysis(
+                        classId: _selectedClassGroup!.classId,
+                        sectionId: _selectedClassGroup!.sectionId,
+                        subjectId: _selectedSubject!.subjectId,
+                      );
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry Analysis'),
+              ),
+            ],
           ],
         ),
       ),

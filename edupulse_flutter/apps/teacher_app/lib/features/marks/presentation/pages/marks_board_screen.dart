@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 import '../../domain/entities/student_mark_entity.dart';
 import '../../domain/repositories/marks_repository.dart';
@@ -190,7 +191,7 @@ class _MarksBoardScreenState extends ConsumerState<MarksBoardScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.examName} - ${widget.subjectName}'),
+        title: Text('${widget.examName} - ${displaySubjectName(subjectName: widget.subjectName)}'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {

@@ -5,6 +5,8 @@ import 'package:edupulse_network/edupulse_network.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../my_classes/presentation/providers/my_classes_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 import '../../../../core/router/routes.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -37,8 +39,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _loadSelectedSchool() async {
+    final activeSchool = ref.read(activeSchoolIdProvider);
     final sessionManager = ref.read(sessionManagerProvider);
-    final schoolId = await sessionManager.getSchoolId();
+    final schoolId = activeSchool ?? await sessionManager.getSchoolId();
     if (mounted) {
       setState(() {
         _selectedSchoolId = schoolId;
@@ -55,14 +58,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _switchSchool(String schoolId) async {
-    final sessionManager = ref.read(sessionManagerProvider);
-    await sessionManager.saveSchoolId(schoolId);
+    await ref.read(schoolContextControllerProvider).switchSchool(schoolId);
     setState(() {
       _selectedSchoolId = schoolId;
     });
 
-    // Invalidate dashboard state and trigger refresh
+    // Invalidate dashboard and class states to trigger refresh
     ref.read(dashboardStateProvider.notifier).fetchDashboard();
+    ref.read(myClassesStateProvider.notifier).fetchClasses();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

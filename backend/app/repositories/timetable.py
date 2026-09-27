@@ -79,7 +79,30 @@ class TimetableRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_conflicting_room(
+        self,
+        room_id: uuid.UUID,
+        day_of_week: DayOfWeek,
+        period_number: int,
+        academic_year_id: uuid.UUID,
+        tenant_id: uuid.UUID
+    ) -> Optional[Timetable]:
+        """
+        Checks if the room already has an active class booked in the specified slot.
+        """
+        stmt = select(Timetable).where(
+            Timetable.room_id == room_id,
+            Timetable.day_of_week == day_of_week,
+            Timetable.period_number == period_number,
+            Timetable.academic_year_id == academic_year_id,
+            Timetable.tenant_id == tenant_id,
+            Timetable.deleted_at.is_(None)
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_overlapping_class_slots(
+
         self,
         class_id: uuid.UUID,
         section_id: uuid.UUID,
@@ -293,3 +316,73 @@ class TimetableRepository:
         db_obj.updated_by = deleted_by
         self.db.add(db_obj)
         return db_obj
+
+    async def get_day_slots(
+        self,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        class_id: uuid.UUID,
+        section_id: uuid.UUID,
+        day_of_week: DayOfWeek,
+        tenant_id: uuid.UUID
+    ) -> List[Timetable]:
+        stmt = select(Timetable).where(
+            Timetable.school_id == school_id,
+            Timetable.academic_year_id == academic_year_id,
+            Timetable.class_id == class_id,
+            Timetable.section_id == section_id,
+            Timetable.day_of_week == day_of_week,
+            Timetable.tenant_id == tenant_id,
+            Timetable.deleted_at.is_(None)
+        ).order_by(Timetable.period_number)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def clear_day_schedule(
+        self,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        class_id: uuid.UUID,
+        section_id: uuid.UUID,
+        day_of_week: DayOfWeek,
+        tenant_id: uuid.UUID,
+        deleted_by: Optional[uuid.UUID] = None
+    ) -> int:
+        slots = await self.get_day_slots(school_id, academic_year_id, class_id, section_id, day_of_week, tenant_id)
+        now = datetime.now(timezone.utc)
+        for s in slots:
+            s.deleted_at = now
+            s.status = TimetableStatus.ARCHIVED
+            s.is_active = False
+            s.updated_by = deleted_by
+            self.db.add(s)
+        return len(slots)
+
+    async def bulk_update_status(
+        self,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        class_id: uuid.UUID,
+        section_id: uuid.UUID,
+        status: TimetableStatus,
+        tenant_id: uuid.UUID,
+        updated_by: Optional[uuid.UUID] = None
+    ) -> int:
+        stmt = select(Timetable).where(
+            Timetable.school_id == school_id,
+            Timetable.academic_year_id == academic_year_id,
+            Timetable.class_id == class_id,
+            Timetable.section_id == section_id,
+            Timetable.tenant_id == tenant_id,
+            Timetable.deleted_at.is_(None)
+        )
+        result = await self.db.execute(stmt)
+        slots = list(result.scalars().all())
+        is_active = (status == TimetableStatus.ACTIVE)
+        for s in slots:
+            s.status = status
+            s.is_active = is_active
+            s.updated_by = updated_by
+            self.db.add(s)
+        return len(slots)
+

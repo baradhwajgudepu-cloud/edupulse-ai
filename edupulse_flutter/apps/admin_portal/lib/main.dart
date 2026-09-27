@@ -10,10 +10,10 @@ import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'app.dart';
+import 'core/routing/url_strategy.dart';
 import 'core/observers/provider_observer.dart';
 import 'core/providers/bootstrap_provider.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
-import 'features/school_setup/presentation/providers/school_setup_providers.dart';
 
 void main() {
   FlutterError.onError = (details) {
@@ -32,6 +32,7 @@ void main() {
 
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
+    configureUrlStrategy();
 
     try {
       await Firebase.initializeApp(
@@ -48,29 +49,28 @@ void main() {
 
     final bootstrapResult = await BootstrapService.initialize();
 
+    final startupTimestamp = DateTime.now().toUtc().toIso8601String();
+    debugPrint('==================================================');
+    debugPrint('[APP INSTANCE]');
+    debugPrint('AUTH DEBUG BUILD: 2026-09-03-P0-TENANT-FIX (git: 4e98005)');
+    debugPrint('frontend origin: ${kIsWeb ? Uri.base.origin : "native"}');
+    debugPrint('API base URL: ${buildConfig.apiBaseUrl}');
+    debugPrint('startup timestamp: $startupTimestamp');
+    debugPrint('==================================================');
+
     final container = ProviderContainer(
       observers: [AppProviderObserver()],
       overrides: [
         bootstrapResultProvider.overrideWithValue(bootstrapResult),
         buildConfigProvider.overrideWithValue(buildConfig),
         activeTenantIdProvider.overrideWith((ref) {
-          // 1. Check if a school is selected
-          final selectedSchoolId = ref.watch(selectedSchoolIdProvider);
-          if (selectedSchoolId != null) {
-            final schoolsState = ref.watch(schoolsListProvider);
-            final match = schoolsState.schools.where((s) => s.id == selectedSchoolId);
-            if (match.isNotEmpty) {
-              return match.first.tenantId;
-            }
-          }
-
-          // 2. Check selected tenant from UI (e.g. Super Admin dropdown)
+          // 1. Check selected tenant from UI (e.g. Super Admin dropdown or synced tenant from school selection)
           final selectedTenantId = ref.watch(selectedTenantIdProvider);
           if (selectedTenantId != null && selectedTenantId.isNotEmpty) {
             return selectedTenantId;
           }
 
-          // 3. Check authenticated user's tenantId
+          // 2. Check authenticated user's tenantId
           final authState = ref.watch(authStateProvider);
           if (authState is Authenticated) {
             final userTenantId = authState.user.tenantId;
@@ -79,7 +79,7 @@ void main() {
             }
           }
           
-          // 4. Fallback to build config tenant ID
+          // 3. Fallback to build config tenant ID
           final config = ref.watch(buildConfigProvider);
           return config.tenantId;
         }),

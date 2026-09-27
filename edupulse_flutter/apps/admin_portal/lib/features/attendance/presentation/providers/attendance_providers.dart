@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../data/models/attendance_models.dart';
@@ -328,7 +330,7 @@ class AttendanceOperationsNotifier extends StateNotifier<AsyncValue<void>> {
       '/attendances/session/$sessionId/student/$studentId?school_id=$schoolId',
       data: {
         'attendance_status': status,
-        'attendance_source': 'MANUAL',
+        'attendance_source': AttendanceSource.MANUAL.wireValue,
         'attendance_reason': 'UNKNOWN',
         'remarks': remarks ?? '',
         'correction_reason': correctionReason,
@@ -344,6 +346,9 @@ class AttendanceOperationsNotifier extends StateNotifier<AsyncValue<void>> {
         _ref.invalidate(attendanceSessionDetailProvider(sessionId));
         _ref.read(attendanceSessionsProvider.notifier).fetchSessions();
         _ref.read(attendanceLogsProvider.notifier).fetchLogs();
+        _ref.read(attendanceRegisterProvider.notifier).fetchRegister();
+        _ref.read(attendanceDashboardProvider.notifier).fetchDashboard();
+        _ref.read(attendanceAuditLogsProvider.notifier).fetchAuditLogs();
         return true;
       },
       onFailure: (failure) {
@@ -1371,7 +1376,7 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
       'records': state.roster.map((r) => {
         'student_id': r.studentId,
         'attendance_status': r.status,
-        'attendance_source': 'MANUAL',
+        'attendance_source': AttendanceSource.MANUAL.wireValue,
         'attendance_reason': r.status == 'PRESENT'
             ? DropdownSafety.reasonUnknown
             : DropdownSafety.normalizeAttendanceReason(r.reason),
@@ -1396,6 +1401,8 @@ class DailyAttendanceMarkNotifier extends StateNotifier<DailyAttendanceMarkState
         );
         _ref.read(attendanceDashboardProvider.notifier).fetchDashboard();
         _ref.read(attendanceSessionsProvider.notifier).fetchSessions();
+        _ref.read(attendanceRegisterProvider.notifier).fetchRegister();
+        _ref.read(attendanceAuditLogsProvider.notifier).fetchAuditLogs();
         loadRoster(preserveSuccess: true);
         return true;
       },
@@ -1885,53 +1892,206 @@ final attendanceRegisterProvider =
 });
 
 // ==================================================
+class ParsedBulkAttendanceRow {
+  final int rowNumber;
+  final String? studentId;
+  final String admissionNumber;
+  final String? studentName;
+  final String? rollNumber;
+  final String? classId;
+  final String? className;
+  final String? sectionId;
+  final String? sectionName;
+  final String attendanceDate; // YYYY-MM-DD
+  final String sessionType; // MORNING, AFTERNOON, FULL_DAY
+  final String attendanceStatus; // PRESENT, ABSENT, LATE, HALF_DAY, EXCUSED
+  final String attendanceReason;
+  final String? remarks;
+  final bool isValid;
+  final bool isDuplicate;
+  final bool isConflict;
+  final String? conflictExistingStatus;
+  final String? errorMessage;
+
+  const ParsedBulkAttendanceRow({
+    required this.rowNumber,
+    this.studentId,
+    required this.admissionNumber,
+    this.studentName,
+    this.rollNumber,
+    this.classId,
+    this.className,
+    this.sectionId,
+    this.sectionName,
+    required this.attendanceDate,
+    required this.sessionType,
+    required this.attendanceStatus,
+    required this.attendanceReason,
+    this.remarks,
+    required this.isValid,
+    this.isDuplicate = false,
+    this.isConflict = false,
+    this.conflictExistingStatus,
+    this.errorMessage,
+  });
+}
+
+class _BulkStudentLookup {
+  final String id;
+  final String admissionNumber;
+  final String firstName;
+  final String lastName;
+  final String? rollNumber;
+  final String classId;
+  final String sectionId;
+  final String? className;
+  final String? sectionName;
+  final bool isActive;
+
+  const _BulkStudentLookup({
+    required this.id,
+    required this.admissionNumber,
+    required this.firstName,
+    required this.lastName,
+    this.rollNumber,
+    required this.classId,
+    required this.sectionId,
+    this.className,
+    this.sectionName,
+    this.isActive = true,
+  });
+
+  factory _BulkStudentLookup.fromJson(Map<String, dynamic> json) {
+    final first = (json['first_name'] ?? json['firstName'] ?? '').toString();
+    final last = (json['last_name'] ?? json['lastName'] ?? '').toString();
+    final adm = (json['admission_number'] ?? json['admission_no'] ?? json['admissionNumber'] ?? '').toString();
+    final roll = (json['roll_number'] ?? json['roll_no'] ?? json['rollNumber'])?.toString();
+    final cid = (json['class_id'] ?? json['classId'] ?? '').toString();
+    final sid = (json['section_id'] ?? json['sectionId'] ?? '').toString();
+    final cName = (json['class_name'] ?? json['className'])?.toString();
+    final sName = (json['section_name'] ?? json['sectionName'])?.toString();
+    final active = json['is_active'] != false && (json['status'] == null || json['status'] == 'ACTIVE');
+
+    return _BulkStudentLookup(
+      id: (json['id'] ?? '').toString(),
+      admissionNumber: adm,
+      firstName: first,
+      lastName: last,
+      rollNumber: roll,
+      classId: cid,
+      sectionId: sid,
+      className: cName,
+      sectionName: sName,
+      isActive: active,
+    );
+  }
+}
+
+// ==================================================
 // 8. Bulk Attendance Upload Wizard State & Notifier
 // ==================================================
 class BulkAttendanceUploadState {
   final int currentStep;
   final List<int>? selectedFileBytes;
   final String? selectedFileName;
+  final String? selectedAcademicYearId;
   final BulkAttendanceValidateDto? validateResult;
+  final List<ParsedBulkAttendanceRow> parsedRows;
   final String conflictStrategy;
   final BulkAttendanceImportResponseDto? importResult;
   final bool isValidating;
   final bool isImporting;
   final String? errorMessage;
+  final String? importId;
+  final int totalImportRows;
+  final int processedImportRows;
+  final int remainingImportRows;
+  final int currentBatchIndex;
+  final int totalBatches;
+  final int importSuccessCount;
+  final int importSkippedCount;
+  final int importFailureCount;
+  final int? lastFailedBatchIndex;
+  final int previewCurrentPage;
+  final int previewPageSize;
 
   const BulkAttendanceUploadState({
     this.currentStep = 0,
     this.selectedFileBytes,
     this.selectedFileName,
+    this.selectedAcademicYearId,
     this.validateResult,
+    this.parsedRows = const [],
     this.conflictStrategy = 'SKIP_EXISTING',
     this.importResult,
     this.isValidating = false,
     this.isImporting = false,
     this.errorMessage,
+    this.importId,
+    this.totalImportRows = 0,
+    this.processedImportRows = 0,
+    this.remainingImportRows = 0,
+    this.currentBatchIndex = 0,
+    this.totalBatches = 0,
+    this.importSuccessCount = 0,
+    this.importSkippedCount = 0,
+    this.importFailureCount = 0,
+    this.lastFailedBatchIndex,
+    this.previewCurrentPage = 1,
+    this.previewPageSize = 25,
   });
 
   BulkAttendanceUploadState copyWith({
     int? currentStep,
     List<int>? selectedFileBytes,
     String? selectedFileName,
+    String? selectedAcademicYearId,
     BulkAttendanceValidateDto? validateResult,
+    List<ParsedBulkAttendanceRow>? parsedRows,
     String? conflictStrategy,
     BulkAttendanceImportResponseDto? importResult,
     bool? isValidating,
     bool? isImporting,
     String? errorMessage,
     bool clearError = false,
+    bool clearFailedBatch = false,
+    String? importId,
+    int? totalImportRows,
+    int? processedImportRows,
+    int? remainingImportRows,
+    int? currentBatchIndex,
+    int? totalBatches,
+    int? importSuccessCount,
+    int? importSkippedCount,
+    int? importFailureCount,
+    int? lastFailedBatchIndex,
+    int? previewCurrentPage,
+    int? previewPageSize,
   }) {
     return BulkAttendanceUploadState(
       currentStep: currentStep ?? this.currentStep,
       selectedFileBytes: selectedFileBytes ?? this.selectedFileBytes,
       selectedFileName: selectedFileName ?? this.selectedFileName,
+      selectedAcademicYearId: selectedAcademicYearId ?? this.selectedAcademicYearId,
       validateResult: validateResult ?? this.validateResult,
+      parsedRows: parsedRows ?? this.parsedRows,
       conflictStrategy: conflictStrategy ?? this.conflictStrategy,
       importResult: importResult ?? this.importResult,
       isValidating: isValidating ?? this.isValidating,
       isImporting: isImporting ?? this.isImporting,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      importId: importId ?? this.importId,
+      totalImportRows: totalImportRows ?? this.totalImportRows,
+      processedImportRows: processedImportRows ?? this.processedImportRows,
+      remainingImportRows: remainingImportRows ?? this.remainingImportRows,
+      currentBatchIndex: currentBatchIndex ?? this.currentBatchIndex,
+      totalBatches: totalBatches ?? this.totalBatches,
+      importSuccessCount: importSuccessCount ?? this.importSuccessCount,
+      importSkippedCount: importSkippedCount ?? this.importSkippedCount,
+      importFailureCount: importFailureCount ?? this.importFailureCount,
+      lastFailedBatchIndex: clearFailedBatch ? null : (lastFailedBatchIndex ?? this.lastFailedBatchIndex),
+      previewCurrentPage: previewCurrentPage ?? this.previewCurrentPage,
+      previewPageSize: previewPageSize ?? this.previewPageSize,
     );
   }
 }
@@ -1947,6 +2107,10 @@ class BulkAttendanceUploadNotifier extends StateNotifier<BulkAttendanceUploadSta
 
   void setConflictStrategy(String strategy) => state = state.copyWith(conflictStrategy: strategy);
 
+  void setPreviewPage(int page) => state = state.copyWith(previewCurrentPage: page);
+
+  void setPreviewPageSize(int size) => state = state.copyWith(previewPageSize: size, previewCurrentPage: 1);
+
   void reset() => state = const BulkAttendanceUploadState();
 
   Future<void> downloadTemplate() async {
@@ -1954,12 +2118,21 @@ class BulkAttendanceUploadNotifier extends StateNotifier<BulkAttendanceUploadSta
     if (schoolId == null) return;
 
     try {
-      const templateHeaders = "Admission Number,Student Name,Class,Section,Attendance Date,Session,Status,Remarks\n";
-      final sampleRow = "ADM2025001,John Doe,Grade 10,Section A,${DateTime.now().toIso8601String().substring(0, 10)},FULL_DAY,PRESENT,Regular attendance\n";
+      const templateHeaders = "admission_number,student_name,roll_number,class_code,section_code,attendance_date,session_type,attendance_status,attendance_reason,remarks\n";
+      final sampleRow = "ADM001,Aarav Sharma,1,G10,G10-A,${DateTime.now().toIso8601String().substring(0, 10)},MORNING,PRESENT,UNKNOWN,Regular attendance\n";
       downloadCsvFile('attendance_import_template.csv', templateHeaders + sampleRow);
     } catch (e) {
       state = state.copyWith(errorMessage: 'Failed to download template: $e');
     }
+  }
+
+  void selectFile(List<int> bytes, String fileName) {
+    state = state.copyWith(
+      selectedFileBytes: bytes,
+      selectedFileName: fileName,
+      currentStep: 1,
+      clearError: true,
+    );
   }
 
   Future<void> pickFile() async {
@@ -1986,6 +2159,69 @@ class BulkAttendanceUploadNotifier extends StateNotifier<BulkAttendanceUploadSta
     }
   }
 
+  static List<List<String>> _parseCsvBytes(List<int> bytes) {
+    var content = utf8.decode(bytes, allowMalformed: true);
+    if (content.startsWith('\uFEFF')) {
+      content = content.substring(1);
+    }
+    return _parseCsvString(content);
+  }
+
+  static List<List<String>> _parseCsvString(String text) {
+    final rows = <List<String>>[];
+    final currentRow = <String>[];
+    final currentField = StringBuffer();
+    bool insideQuotes = false;
+
+    for (int i = 0; i < text.length; i++) {
+      final char = text[i];
+
+      if (char == '"') {
+        if (insideQuotes && i + 1 < text.length && text[i + 1] == '"') {
+          currentField.write('"');
+          i++; // Skip escaped quote
+        } else {
+          insideQuotes = !insideQuotes;
+        }
+      } else if (char == ',' && !insideQuotes) {
+        currentRow.add(currentField.toString().trim());
+        currentField.clear();
+      } else if ((char == '\n' || char == '\r') && !insideQuotes) {
+        if (char == '\r' && i + 1 < text.length && text[i + 1] == '\n') {
+          i++; // Skip \n in \r\n
+        }
+        currentRow.add(currentField.toString().trim());
+        currentField.clear();
+        if (currentRow.any((c) => c.isNotEmpty)) {
+          rows.add(List<String>.from(currentRow));
+        }
+        currentRow.clear();
+      } else {
+        currentField.write(char);
+      }
+    }
+
+    if (currentField.isNotEmpty || currentRow.isNotEmpty) {
+      currentRow.add(currentField.toString().trim());
+      if (currentRow.any((c) => c.isNotEmpty)) {
+        rows.add(List<String>.from(currentRow));
+      }
+    }
+
+    return rows;
+  }
+
+  static String _normHeader(String h) {
+    var cleaned = h.replaceAll('\uFEFF', '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_').replaceAll(RegExp(r'_+'), '_');
+    while (cleaned.startsWith('_')) {
+      cleaned = cleaned.substring(1);
+    }
+    while (cleaned.endsWith('_')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    return cleaned;
+  }
+
   Future<void> validateFile(String academicYearId) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null || state.selectedFileBytes == null || state.selectedFileName == null) return;
@@ -1993,85 +2229,730 @@ class BulkAttendanceUploadNotifier extends StateNotifier<BulkAttendanceUploadSta
     state = state.copyWith(isValidating: true, clearError: true);
 
     try {
-      final formData = FormData.fromMap({
-        'school_id': schoolId,
-        'academic_year_id': academicYearId,
-        'file': MultipartFile.fromBytes(
-          state.selectedFileBytes!,
-          filename: state.selectedFileName!,
-        ),
-      });
+      final fileName = state.selectedFileName?.toLowerCase() ?? '';
+      final isCsv = fileName.endsWith('.csv');
 
-      final result = await _apiClient.post(
-        '/attendances/bulk/validate',
-        data: formData,
+      List<List<String>> rawRows = [];
+      String? parseError;
+
+      if (isCsv) {
+        // Zero network overhead: CSV files are parsed locally in memory using RFC-4180 parser.
+        // Never calls /import-jobs/parse for CSV files.
+        try {
+          rawRows = _parseCsvBytes(state.selectedFileBytes!);
+        } catch (e) {
+          parseError = 'Failed to parse CSV file: $e';
+        }
+      } else {
+        // For non-CSV spreadsheets (Excel .xlsx, .xls), attempt remote parsing endpoint
+        try {
+          final formData = FormData.fromMap({
+            'file': MultipartFile.fromBytes(
+              state.selectedFileBytes!,
+              filename: state.selectedFileName!,
+            ),
+          });
+
+          final parseRes = await _apiClient.post<Map<String, dynamic>>(
+            '/import-jobs/parse',
+            data: formData,
+            mapper: (json) {
+              if (json is! Map) return {};
+              final data = json['data'];
+              if (data is Map) return Map<String, dynamic>.from(data);
+              return {};
+            },
+          );
+
+          parseRes.when(
+            onSuccess: (data) {
+              final headersList = data['headers'] as List?;
+              if (headersList != null && headersList.isNotEmpty) {
+                rawRows.add(headersList.map((c) => c?.toString() ?? '').toList());
+              }
+              final rowsList = (data['rows'] as List?) ?? (data['preview_rows'] as List?);
+              if (rowsList != null && rowsList.isNotEmpty) {
+                for (final r in rowsList) {
+                  if (r is List) {
+                    rawRows.add(r.map((c) => c?.toString() ?? '').toList());
+                  }
+                }
+              }
+            },
+            onFailure: (_) {
+              // Clear, actionable ERP message instead of raw HTTP 404
+              parseError = 'Excel parsing service is unavailable. Please save your file as CSV format (.csv) and re-upload for instant client-side processing.';
+            },
+          );
+        } catch (_) {
+          parseError = 'Excel parsing service is unavailable. Please save your file as CSV format (.csv) and re-upload for instant client-side processing.';
+        }
+      }
+
+      if (rawRows.isEmpty) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: parseError ?? 'Unable to parse spreadsheet. Ensure valid CSV file format.',
+        );
+        return;
+      }
+
+      if (rawRows.length < 2) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: 'Spreadsheet contains no data rows (header row + at least 1 record required).',
+        );
+        return;
+      }
+
+      // 2. Identify columns from header row
+      final headers = rawRows[0];
+      int colAdm = -1;
+      int colName = -1;
+      int colRoll = -1;
+      int colClass = -1;
+      int colSec = -1;
+      int colDate = -1;
+      int colSess = -1;
+      int colStatus = -1;
+      int colReason = -1;
+      int colRemarks = -1;
+
+      for (int i = 0; i < headers.length; i++) {
+        final h = _normHeader(headers[i]);
+        if (h == 'admission_number' || h == 'adm_no' || h == 'admission_no' || h == 'admission' || h == 'student_id') {
+          colAdm = i;
+        } else if (h == 'student_name' || h == 'name' || h == 'student' || h == 'full_name') {
+          colName = i;
+        } else if (h == 'roll_number' || h == 'roll_no' || h == 'roll') {
+          colRoll = i;
+        } else if (h == 'class_code' || h == 'class_name' || h == 'class' || h == 'grade') {
+          colClass = i;
+        } else if (h == 'section_code' || h == 'section_name' || h == 'section' || h == 'sec') {
+          colSec = i;
+        } else if (h == 'attendance_date' || h == 'date') {
+          colDate = i;
+        } else if (h == 'session_type' || h == 'session') {
+          colSess = i;
+        } else if (h == 'attendance_status' || h == 'status') {
+          colStatus = i;
+        } else if (h == 'attendance_reason' || h == 'reason') {
+          colReason = i;
+        } else if (h == 'remarks' || h == 'remark' || h == 'notes' || h == 'comment' || h == 'comments') {
+          colRemarks = i;
+        }
+      }
+
+      if (colAdm == -1) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: "Mandatory column 'Admission Number' not found in spreadsheet header.",
+        );
+        return;
+      }
+      if (colDate == -1) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: "Mandatory column 'Date' not found in spreadsheet header.",
+        );
+        return;
+      }
+      if (colStatus == -1) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: "Mandatory column 'Status' not found in spreadsheet header.",
+        );
+        return;
+      }
+
+      // 3. Load students for school to validate admission numbers via safe chunked pagination (limit <= 100)
+      final List<_BulkStudentLookup> schoolStudents = [];
+      const int studentPageSize = 100;
+      int currentSkip = 0;
+      bool hasMoreStudents = true;
+      String? studentsError;
+
+      while (hasMoreStudents) {
+        final studentsRes = await _apiClient.get(
+          '/students?school_id=$schoolId&skip=$currentSkip&limit=$studentPageSize',
+          mapper: (json) {
+            final payload = json as Map<String, dynamic>;
+            final list = payload['data'] as List? ?? [];
+            return list
+                .whereType<Map>()
+                .map((m) => _BulkStudentLookup.fromJson(Map<String, dynamic>.from(m)))
+                .toList();
+          },
+        );
+
+        studentsRes.when(
+          onSuccess: (chunk) {
+            schoolStudents.addAll(chunk);
+            if (chunk.length < studentPageSize || schoolStudents.length >= 2000) {
+              hasMoreStudents = false;
+            } else {
+              currentSkip += studentPageSize;
+            }
+          },
+          onFailure: (failure) {
+            hasMoreStudents = false;
+            studentsError = failure.message;
+          },
+        );
+      }
+
+      if (studentsError != null && schoolStudents.isEmpty) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isValidating: false,
+          errorMessage: 'Failed to retrieve school students for validation: $studentsError',
+        );
+        return;
+      }
+
+      final studentsByAdm = <String, _BulkStudentLookup>{};
+      final studentsById = <String, _BulkStudentLookup>{};
+      for (final s in schoolStudents) {
+        final cleanAdm = s.admissionNumber.replaceAll('\uFEFF', '').replaceAll('"', '').replaceAll("'", '').trim();
+        if (cleanAdm.isNotEmpty) {
+          studentsByAdm[cleanAdm.toLowerCase()] = s;
+        }
+        final cleanId = s.id.replaceAll('"', '').replaceAll("'", '').trim();
+        if (cleanId.isNotEmpty) {
+          studentsById[cleanId.toLowerCase()] = s;
+        }
+      }
+
+      // 4. Load classes and sections (auto-fetch if not already populated)
+      var classesState = _ref.read(classesProvider(schoolId));
+      if (classesState.classes.isEmpty && !classesState.isLoading) {
+        await _ref.read(classesProvider(schoolId).notifier).fetchClasses();
+        classesState = _ref.read(classesProvider(schoolId));
+      }
+
+      var sectionsState = _ref.read(sectionsProvider(schoolId));
+      if (sectionsState.sections.isEmpty && !sectionsState.isLoading) {
+        await _ref.read(sectionsProvider(schoolId).notifier).fetchSections();
+        sectionsState = _ref.read(sectionsProvider(schoolId));
+      }
+
+      final classesById = {for (final c in classesState.classes) c.id: c};
+      final classesByNameOrCode = <String, dynamic>{};
+      for (final c in classesState.classes) {
+        classesByNameOrCode[c.name.trim().toLowerCase()] = c;
+        if (c.code.trim().isNotEmpty) {
+          classesByNameOrCode[c.code.trim().toLowerCase()] = c;
+        }
+      }
+
+      final sectionsById = {for (final s in sectionsState.sections) s.id: s};
+      final sectionsByNameOrCode = <String, dynamic>{};
+      for (final s in sectionsState.sections) {
+        sectionsByNameOrCode['${s.classId}|${s.name.trim().toLowerCase()}'] = s;
+        if (s.code.trim().isNotEmpty) {
+          sectionsByNameOrCode['${s.classId}|${s.code.trim().toLowerCase()}'] = s;
+        }
+      }
+
+      // 5. Query existing sessions to detect conflicts
+      final existingSessionsRes = await _apiClient.get(
+        '/attendances/sessions?school_id=$schoolId&limit=100',
         mapper: (json) {
           final payload = json as Map<String, dynamic>;
-          return BulkAttendanceValidateDto.fromJson(Map<String, dynamic>.from(payload['data'] as Map));
+          final list = payload['data'] as List? ?? [];
+          return list
+              .whereType<Map>()
+              .map((m) => AttendanceSessionDto.fromJson(Map<String, dynamic>.from(m)))
+              .toList();
         },
+      );
+      final List<AttendanceSessionDto> existingSessions = [];
+      existingSessionsRes.when(
+        onSuccess: (list) => existingSessions.addAll(list),
+        onFailure: (_) {},
+      );
+
+      final existingSessionMap = <String, AttendanceSessionDto>{};
+      for (final s in existingSessions) {
+        final key = '${s.classId}|${s.sectionId}|${s.attendanceDate}|${s.sessionType.toUpperCase()}';
+        existingSessionMap[key] = s;
+      }
+
+      // 6. Validate each row
+      final parsedRows = <ParsedBulkAttendanceRow>[];
+      final previewRows = <BulkValidateRowPreviewDto>[];
+      final List<String> summaryErrors = [];
+      final Set<String> seenInFile = {};
+
+      int validRowsCount = 0;
+      int invalidRowsCount = 0;
+      int duplicateRowsCount = 0;
+      int conflictRowsCount = 0;
+
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+      const allowedStatuses = {
+        'PRESENT',
+        'ABSENT',
+        'LATE',
+        'HALF_DAY',
+        'EXCUSED',
+        'MEDICAL_LEAVE',
+        'ON_LEAVE',
+        'LEAVE'
+      };
+
+      for (int rIdx = 1; rIdx < rawRows.length; rIdx++) {
+        final row = rawRows[rIdx];
+        if (row.isEmpty || row.every((c) => c.trim().isEmpty)) continue;
+
+        final rawAdm = colAdm >= 0 && colAdm < row.length ? row[colAdm].trim() : '';
+        final rawName = colName >= 0 && colName < row.length ? row[colName].trim() : '';
+        final rawRoll = colRoll >= 0 && colRoll < row.length ? row[colRoll].trim() : '';
+        final rawClass = colClass >= 0 && colClass < row.length ? row[colClass].trim() : '';
+        final rawSec = colSec >= 0 && colSec < row.length ? row[colSec].trim() : '';
+        final rawDate = colDate >= 0 && colDate < row.length ? row[colDate].trim() : '';
+        final rawSess = colSess >= 0 && colSess < row.length ? row[colSess].trim() : 'FULL_DAY';
+        final rawStatus = colStatus >= 0 && colStatus < row.length ? row[colStatus].trim() : '';
+        final rawReason = colReason >= 0 && colReason < row.length ? row[colReason].trim() : '';
+        final rawRemarks = colRemarks >= 0 && colRemarks < row.length ? row[colRemarks].trim() : '';
+
+        final rowErrors = <String>[];
+
+        // A. Resolve student
+        _BulkStudentLookup? student;
+        final cleanAdm = rawAdm.replaceAll('\uFEFF', '').replaceAll('"', '').replaceAll("'", '').trim();
+        if (cleanAdm.isEmpty) {
+          rowErrors.add('Admission number is missing');
+        } else {
+          student = studentsByAdm[cleanAdm.toLowerCase()] ?? studentsById[cleanAdm.toLowerCase()];
+          if (student == null) {
+            rowErrors.add("Student with admission number '$cleanAdm' not found in this school campus");
+          } else if (!student.isActive) {
+            rowErrors.add("Student '$cleanAdm' is marked inactive");
+          }
+        }
+
+        // B. Resolve class & section
+        String? resolvedClassId = student?.classId;
+        String? resolvedClassName = student?.className;
+        String? resolvedSectionId = student?.sectionId;
+        String? resolvedSectionName = student?.sectionName;
+
+        if (student != null && rawClass.isNotEmpty) {
+          final matchedClass = classesByNameOrCode[rawClass.toLowerCase()];
+          if (matchedClass != null && matchedClass.id != student.classId) {
+            rowErrors.add("Student belongs to class '${student.className ?? student.classId}', not '$rawClass'");
+          } else if (matchedClass == null && rawClass.toLowerCase() != (student.className ?? '').toLowerCase()) {
+            rowErrors.add("Class '$rawClass' not found or mismatch with student roster");
+          }
+        }
+
+        if (student != null && rawSec.isNotEmpty) {
+          final matchedSec = sectionsByNameOrCode['${student.classId}|${rawSec.toLowerCase()}'];
+          if (matchedSec != null && matchedSec.id != student.sectionId) {
+            rowErrors.add("Student belongs to section '${student.sectionName ?? student.sectionId}', not '$rawSec'");
+          } else if (matchedSec == null && rawSec.toLowerCase() != (student.sectionName ?? '').toLowerCase()) {
+            rowErrors.add("Section '$rawSec' not found or mismatch with student roster");
+          }
+        }
+
+        if (resolvedClassId != null && resolvedClassName == null) {
+          resolvedClassName = classesById[resolvedClassId]?.name;
+        }
+        if (resolvedSectionId != null && resolvedSectionName == null) {
+          resolvedSectionName = sectionsById[resolvedSectionId]?.name;
+        }
+
+        // C. Validate Date
+        String isoDate = '';
+        if (rawDate.isEmpty) {
+          rowErrors.add('Attendance date is missing');
+        } else {
+          DateTime? parsedDate;
+          final datePart = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
+          for (final fmt in ['yyyy-MM-dd', 'dd-MM-yyyy', 'dd/MM/yyyy', 'yyyy/MM/dd']) {
+            try {
+              parsedDate = DateFormat(fmt).parseStrict(datePart);
+              break;
+            } catch (_) {}
+          }
+          if (parsedDate == null) {
+            rowErrors.add("Invalid date format '$rawDate'. Expected YYYY-MM-DD or DD/MM/YYYY");
+          } else {
+            isoDate = DateFormat('yyyy-MM-dd').format(parsedDate);
+            final checkDate = DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
+            if (checkDate.isAfter(todayDate)) {
+              rowErrors.add("Attendance date '$rawDate' is in the future. Future attendance is prohibited");
+            }
+          }
+        }
+
+        // D. Validate Session
+        String normSession = 'FULL_DAY';
+        if (rawSess.isNotEmpty) {
+          final sUpper = rawSess.toUpperCase().replaceAll(' ', '_');
+          if (sUpper == 'MORNING' || sUpper == 'AFTERNOON' || sUpper == 'FULL_DAY') {
+            normSession = sUpper;
+          } else {
+            rowErrors.add("Invalid session '$rawSess'. Allowed: MORNING, AFTERNOON, FULL_DAY");
+          }
+        }
+
+        // E. Validate Status
+        String normStatus = rawStatus.toUpperCase().replaceAll(' ', '_');
+        if (normStatus.isEmpty) {
+          rowErrors.add('Attendance status is missing');
+        } else if (!allowedStatuses.contains(normStatus)) {
+          rowErrors.add("Invalid status '$rawStatus'. Allowed: PRESENT, ABSENT, LATE, HALF_DAY, EXCUSED");
+        } else {
+          if (normStatus == 'MEDICAL_LEAVE' || normStatus == 'ON_LEAVE' || normStatus == 'LEAVE') {
+            normStatus = 'EXCUSED';
+          }
+        }
+
+        // F. Validate Reason
+        String normReason = 'UNKNOWN';
+        if (normStatus == 'PRESENT') {
+          normReason = DropdownSafety.reasonUnknown;
+        } else if (rawReason.isNotEmpty) {
+          normReason = DropdownSafety.normalizeAttendanceReason(rawReason);
+        }
+
+        // G. Duplicate & Conflict Detection
+        bool isDuplicate = false;
+        bool isConflict = false;
+        String? conflictStatus;
+        String validationStatus = 'VALID';
+
+        if (rowErrors.isNotEmpty) {
+          validationStatus = 'INVALID';
+          invalidRowsCount++;
+          if (summaryErrors.length < 50) {
+            summaryErrors.add('Row $rIdx: ${rowErrors.join("; ")}');
+          }
+        } else if (student != null && isoDate.isNotEmpty) {
+          final fileKey = '${student.id}|$isoDate|$normSession';
+          if (seenInFile.contains(fileKey)) {
+            isDuplicate = true;
+            validationStatus = 'DUPLICATE';
+            duplicateRowsCount++;
+            rowErrors.add('Duplicate record in file for same student, date, and session');
+            if (summaryErrors.length < 50) {
+              summaryErrors.add('Row $rIdx: Duplicate entry for admission number $rawAdm on $isoDate');
+            }
+          } else {
+            seenInFile.add(fileKey);
+
+            // Check if existing session in database for that class/section/date/session
+            final sessionKey = '$resolvedClassId|$resolvedSectionId|$isoDate|$normSession';
+            final existingSession = existingSessionMap[sessionKey];
+            if (existingSession != null) {
+              if (existingSession.status.toUpperCase() == 'LOCKED') {
+                validationStatus = 'INVALID';
+                invalidRowsCount++;
+                rowErrors.add('Attendance session on $isoDate ($normSession) is locked');
+              } else {
+                isConflict = true;
+                validationStatus = 'CONFLICT';
+                conflictRowsCount++;
+                conflictStatus = 'SESSION_EXISTS';
+              }
+            } else {
+              validRowsCount++;
+            }
+          }
+        }
+
+        final studentFullName = (rawName.isNotEmpty && rawName != '-')
+            ? rawName
+            : (student != null ? '${student.firstName} ${student.lastName}'.trim() : '-');
+
+        final parsedRow = ParsedBulkAttendanceRow(
+          rowNumber: rIdx,
+          studentId: student?.id,
+          admissionNumber: cleanAdm.isNotEmpty ? cleanAdm : rawAdm,
+          studentName: studentFullName,
+          rollNumber: rawRoll.isNotEmpty ? rawRoll : student?.rollNumber,
+          classId: resolvedClassId,
+          className: resolvedClassName ?? rawClass,
+          sectionId: resolvedSectionId,
+          sectionName: resolvedSectionName ?? rawSec,
+          attendanceDate: isoDate.isNotEmpty ? isoDate : rawDate,
+          sessionType: normSession,
+          attendanceStatus: normStatus,
+          attendanceReason: normReason,
+          remarks: rawRemarks.isNotEmpty ? rawRemarks : null,
+          isValid: rowErrors.isEmpty,
+          isDuplicate: isDuplicate,
+          isConflict: isConflict,
+          conflictExistingStatus: conflictStatus,
+          errorMessage: rowErrors.isNotEmpty ? rowErrors.join('; ') : null,
+        );
+
+        parsedRows.add(parsedRow);
+
+        if (previewRows.length < 50) {
+          previewRows.add(BulkValidateRowPreviewDto(
+            rowNumber: rIdx,
+            admissionNumber: cleanAdm.isNotEmpty ? cleanAdm : (rawAdm.isNotEmpty ? rawAdm : '-'),
+            studentName: studentFullName,
+            className: resolvedClassName ?? rawClass,
+            sectionName: resolvedSectionName ?? rawSec,
+            attendanceDate: isoDate.isNotEmpty ? isoDate : rawDate,
+            session: normSession,
+            status: normStatus.isNotEmpty ? normStatus : '-',
+            validationStatus: validationStatus,
+            errorMessage: rowErrors.isNotEmpty ? rowErrors.join('; ') : null,
+            conflictExistingStatus: conflictStatus,
+          ));
+        }
+      }
+
+      final validateDto = BulkAttendanceValidateDto(
+        jobId: 'bulk_${DateTime.now().millisecondsSinceEpoch}',
+        filename: state.selectedFileName ?? 'attendance.csv',
+        totalRows: parsedRows.length,
+        validRows: validRowsCount,
+        invalidRows: invalidRowsCount,
+        duplicateRows: duplicateRowsCount,
+        conflictRows: conflictRowsCount,
+        previewRows: previewRows,
+        errors: summaryErrors,
       );
 
       if (!mounted) return;
 
-      result.when(
-        onSuccess: (valResult) {
-          state = state.copyWith(
-            isValidating: false,
-            validateResult: valResult,
-            currentStep: 2,
-          );
-        },
-        onFailure: (failure) {
-          state = state.copyWith(isValidating: false, errorMessage: failure.message);
-        },
+      state = state.copyWith(
+        isValidating: false,
+        validateResult: validateDto,
+        parsedRows: parsedRows,
+        selectedAcademicYearId: academicYearId,
+        currentStep: 2,
       );
     } catch (e) {
       if (mounted) {
-        state = state.copyWith(isValidating: false, errorMessage: e.toString());
+        state = state.copyWith(isValidating: false, errorMessage: 'Validation error: $e');
       }
     }
   }
 
-  Future<void> executeImport() async {
+  Future<void> executeImport({int chunkSize = 1000, bool retryFromFailed = false}) async {
     final schoolId = _ref.read(selectedSchoolIdProvider);
     if (schoolId == null || state.validateResult == null) return;
 
-    state = state.copyWith(isImporting: true, clearError: true);
+    // Filter rows to import according to conflict strategy
+    final rowsToImport = state.parsedRows.where((r) {
+      if (!r.isValid || r.isDuplicate) return false;
+      if (state.conflictStrategy == 'SKIP_EXISTING' && r.isConflict) return false;
+      return r.studentId != null && r.classId != null && r.sectionId != null;
+    }).toList();
 
-    try {
-      final result = await _apiClient.post(
-        '/attendances/bulk/import?school_id=$schoolId',
-        data: {
-          'job_id': state.validateResult!.jobId,
-          'conflict_strategy': state.conflictStrategy,
-        },
-        mapper: (json) {
-          final payload = json as Map<String, dynamic>;
-          return BulkAttendanceImportResponseDto.fromJson(Map<String, dynamic>.from(payload['data'] as Map));
-        },
+    if (rowsToImport.isEmpty) {
+      if (!mounted) return;
+      state = state.copyWith(
+        isImporting: false,
+        errorMessage: 'No valid rows available to import under the selected conflict strategy.',
       );
+      return;
+    }
+
+    final totalRows = rowsToImport.length;
+    final totalBatches = (totalRows / chunkSize).ceil();
+    final importId = state.importId ?? 'imp_${DateTime.now().millisecondsSinceEpoch}';
+
+    final startIndex = retryFromFailed ? (state.lastFailedBatchIndex ?? 0) : 0;
+
+    state = state.copyWith(
+      isImporting: true,
+      importId: importId,
+      totalImportRows: totalRows,
+      processedImportRows: startIndex == 0 ? 0 : state.processedImportRows,
+      remainingImportRows: startIndex == 0 ? totalRows : (totalRows - state.processedImportRows),
+      currentBatchIndex: startIndex + 1,
+      totalBatches: totalBatches,
+      importSuccessCount: startIndex == 0 ? 0 : state.importSuccessCount,
+      importSkippedCount: startIndex == 0 ? 0 : state.importSkippedCount,
+      importFailureCount: startIndex == 0 ? 0 : state.importFailureCount,
+      clearError: true,
+    );
+
+    int runningSuccess = state.importSuccessCount;
+    int runningSkipped = state.importSkippedCount;
+    int runningFailed = state.importFailureCount;
+    int runningProcessed = state.processedImportRows;
+    final List<String> batchErrors = [];
+
+    for (int b = startIndex; b < totalBatches; b++) {
+      final chunkStart = b * chunkSize;
+      final chunkEnd = ((b + 1) * chunkSize).clamp(0, totalRows);
+      final chunkRows = rowsToImport.sublist(chunkStart, chunkEnd);
+      final batchNum = b + 1;
+      final idempotencyKey = '${importId}_batch_$batchNum';
 
       if (!mounted) return;
+      state = state.copyWith(
+        currentBatchIndex: batchNum,
+        remainingImportRows: totalRows - runningProcessed,
+      );
 
-      result.when(
-        onSuccess: (impResult) {
+      final chunkPayload = {
+        'import_id': importId,
+        'school_id': schoolId,
+        'academic_year_id': state.selectedAcademicYearId,
+        'conflict_strategy': state.conflictStrategy,
+        'batch_index': batchNum,
+        'total_batches': totalBatches,
+        'total_rows': totalRows,
+        'idempotency_key': idempotencyKey,
+        'filename': state.selectedFileName ?? 'attendance.csv',
+        'records': chunkRows.map((r) => {
+          'row_number': r.rowNumber,
+          'student_id': r.studentId,
+          'class_id': r.classId,
+          'section_id': r.sectionId,
+          'attendance_date': r.attendanceDate,
+          'session_type': r.sessionType, // STRICTLY PRESERVE MORNING
+          'attendance_status': r.attendanceStatus,
+          'attendance_reason': r.attendanceReason,
+          'remarks': r.remarks,
+        }).toList(),
+      };
+
+      try {
+        final chunkRes = await _apiClient.post(
+          '/attendances/bulk/chunk?school_id=$schoolId',
+          data: chunkPayload,
+          options: Options(
+            sendTimeout: const Duration(seconds: 60),
+            receiveTimeout: const Duration(seconds: 60),
+          ),
+          mapper: (json) {
+            if (json is! Map) return null;
+            final data = json['data'];
+            return data is Map ? Map<String, dynamic>.from(data) : null;
+          },
+        );
+
+        bool batchSucceeded = false;
+        chunkRes.when(
+          onSuccess: (data) {
+            batchSucceeded = true;
+            if (data != null) {
+              final imp = (data['imported_rows'] as num?)?.toInt() ?? 0;
+              final skp = (data['skipped_rows'] as num?)?.toInt() ?? 0;
+              final fail = (data['failed_rows'] as num?)?.toInt() ?? 0;
+
+              runningSuccess += imp;
+              runningSkipped += skp;
+              runningFailed += fail;
+              runningProcessed += chunkRows.length;
+
+              final errs = data['errors'] as List?;
+              if (errs != null) {
+                batchErrors.addAll(errs.map((e) => e.toString()));
+              }
+            } else {
+              runningSuccess += chunkRows.length;
+              runningProcessed += chunkRows.length;
+            }
+          },
+          onFailure: (failure) {
+            batchErrors.add('Batch $batchNum failed: ${failure.message}');
+          },
+        );
+
+        if (!batchSucceeded) {
+          if (!mounted) return;
           state = state.copyWith(
             isImporting: false,
-            importResult: impResult,
-            currentStep: 4,
+            lastFailedBatchIndex: b,
+            errorMessage: 'Batch $batchNum of $totalBatches failed: ${batchErrors.isNotEmpty ? batchErrors.last : "Network or server error"}. Click "Retry Remaining Records" to safely resume without duplicates.',
+            importSuccessCount: runningSuccess,
+            importSkippedCount: runningSkipped,
+            importFailureCount: runningFailed,
+            processedImportRows: runningProcessed,
+            remainingImportRows: totalRows - runningProcessed,
           );
-          _ref.read(attendanceDashboardProvider.notifier).fetchDashboard();
-          _ref.read(attendanceImportsHistoryProvider.notifier).fetchHistory();
-        },
-        onFailure: (failure) {
-          state = state.copyWith(isImporting: false, errorMessage: failure.message);
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        state = state.copyWith(isImporting: false, errorMessage: e.toString());
+          return;
+        }
+
+        if (!mounted) return;
+        state = state.copyWith(
+          processedImportRows: runningProcessed,
+          remainingImportRows: totalRows - runningProcessed,
+          importSuccessCount: runningSuccess,
+          importSkippedCount: runningSkipped,
+          importFailureCount: runningFailed,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        state = state.copyWith(
+          isImporting: false,
+          lastFailedBatchIndex: b,
+          errorMessage: 'Batch $batchNum request timed out or encountered network failure: $e. Click "Retry Remaining Records" to resume.',
+          importSuccessCount: runningSuccess,
+          importSkippedCount: runningSkipped,
+          importFailureCount: runningFailed,
+          processedImportRows: runningProcessed,
+          remainingImportRows: totalRows - runningProcessed,
+        );
+        return;
       }
     }
+
+    if (!mounted) return;
+
+    // Record persistent audit log in backend
+    try {
+      final dateList = state.parsedRows.map((r) => r.attendanceDate).where((d) => d.isNotEmpty).toSet().toList()..sort();
+      final dateRange = dateList.isEmpty ? null : (dateList.length == 1 ? dateList.first : '${dateList.first} to ${dateList.last}');
+
+      await _apiClient.post(
+        '/attendances/imports/record',
+        data: {
+          'school_id': schoolId,
+          'filename': state.selectedFileName ?? 'attendance.csv',
+          'total_rows': totalRows,
+          'successful_rows': runningSuccess,
+          'failed_rows': runningFailed,
+          'skipped_rows': runningSkipped,
+          'status': runningFailed == 0 ? 'COMPLETED' : (runningSuccess > 0 ? 'COMPLETED_WITH_ERRORS' : 'FAILED'),
+          'date_range': dateRange,
+          'error_summary': batchErrors.isNotEmpty ? batchErrors.take(10).join('; ') : null,
+          'errors': [],
+        },
+        mapper: (json) => json,
+      );
+    } catch (_) {}
+
+    final importResponse = BulkAttendanceImportResponseDto(
+      jobId: importId,
+      status: runningFailed == 0 ? 'COMPLETED' : (runningSuccess > 0 ? 'PARTIALLY_COMPLETED' : 'FAILED'),
+      totalRows: totalRows,
+      importedRows: runningSuccess,
+      skippedRows: runningSkipped,
+      failedRows: runningFailed,
+      conflictRows: state.validateResult!.conflictRows,
+      message: runningFailed == 0
+          ? 'Successfully imported $runningSuccess records across $totalBatches batch(es).'
+          : 'Imported $runningSuccess records with $runningFailed failed records across $totalBatches batch(es).',
+    );
+
+    state = state.copyWith(
+      isImporting: false,
+      importResult: importResponse,
+      currentStep: 4,
+      clearFailedBatch: true,
+      errorMessage: batchErrors.isNotEmpty && runningSuccess == 0
+          ? batchErrors.join('\n')
+          : null,
+    );
   }
 }
 
@@ -2126,61 +3007,61 @@ class AttendanceImportsHistoryNotifier extends StateNotifier<AttendanceImportsHi
 
     state = state.copyWith(isLoading: true, clearError: true);
 
-    // Canonical production endpoint: /import-jobs?school_id=...&import_type=ATTENDANCE
+    final jobsMap = <String, AttendanceImportJobDto>{};
+
+    // 1. Query canonical /import-jobs?school_id=...&import_type=ATTENDANCE
     final canonicalResult = await _apiClient.get(
       '/import-jobs?school_id=$schoolId&import_type=ATTENDANCE&limit=50',
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
         final list = payload['data'] as List? ?? [];
-        final total = (payload['meta'] as Map?)?['total'] as int? ?? list.length;
-        return {
-          'jobs': list.map((e) => AttendanceImportJobDto.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
-          'total': total,
-        };
+        return list.map((e) => AttendanceImportJobDto.fromJson(Map<String, dynamic>.from(e as Map))).toList();
       },
+    );
+
+    canonicalResult.when(
+      onSuccess: (list) {
+        for (final job in list) {
+          jobsMap[job.id] = job;
+        }
+      },
+      onFailure: (_) {},
+    );
+
+    // 2. Query /attendances/imports?school_id=...
+    final fallbackResult = await _apiClient.get(
+      '/attendances/imports?school_id=$schoolId&limit=50',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final list = payload['data'] as List? ?? [];
+        return list.map((e) => AttendanceImportJobDto.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      },
+    );
+
+    fallbackResult.when(
+      onSuccess: (list) {
+        for (final job in list) {
+          jobsMap[job.id] = job;
+        }
+      },
+      onFailure: (_) {},
     );
 
     if (!mounted) return;
 
-    await canonicalResult.when(
-      onSuccess: (data) async {
-        state = state.copyWith(
-          jobs: data['jobs'] as List<AttendanceImportJobDto>,
-          total: data['total'] as int,
-          isLoading: false,
-        );
-      },
-      onFailure: (failure) async {
-        // Fallback to /attendances/imports if available
-        final fallbackResult = await _apiClient.get(
-          '/attendances/imports?school_id=$schoolId&limit=50',
-          mapper: (json) {
-            final payload = json as Map<String, dynamic>;
-            final list = payload['data'] as List? ?? [];
-            final total = (payload['meta'] as Map?)?['total'] as int? ?? list.length;
-            return {
-              'jobs': list.map((e) => AttendanceImportJobDto.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
-              'total': total,
-            };
-          },
-        );
+    final allJobs = jobsMap.values.toList()
+      ..sort((a, b) {
+        try {
+          return DateTime.parse(b.createdAt).compareTo(DateTime.parse(a.createdAt));
+        } catch (_) {
+          return b.createdAt.compareTo(a.createdAt);
+        }
+      });
 
-        if (!mounted) return;
-
-        fallbackResult.when(
-          onSuccess: (data) {
-            state = state.copyWith(
-              jobs: data['jobs'] as List<AttendanceImportJobDto>,
-              total: data['total'] as int,
-              isLoading: false,
-            );
-          },
-          onFailure: (fallbackFailure) {
-            // When neither is available or no jobs yet, show empty list cleanly
-            state = state.copyWith(jobs: [], total: 0, isLoading: false);
-          },
-        );
-      },
+    state = state.copyWith(
+      jobs: allJobs,
+      total: allJobs.length,
+      isLoading: false,
     );
   }
 

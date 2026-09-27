@@ -812,30 +812,30 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                 ...capacityBanners,
               ],
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: const InputDecoration(
-                        labelText: 'Search students (first_name, last_name, admission_number, roll_number, email)...',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      onChanged: (val) {
-                        setState(() {
-                          _searchQuery = val;
-                          _previewPage = 0;
-                        });
-                      },
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isNarrow = constraints.maxWidth < 750;
+                  final searchField = TextField(
+                    controller: _searchController,
+                    decoration: const InputDecoration(
+                      labelText: 'Search students (first_name, last_name, admission_number, roll_number, email)...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      isDense: true,
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                    onChanged: (val) {
+                      setState(() {
+                        _searchQuery = val;
+                        _previewPage = 0;
+                      });
+                    },
+                  );
+
+                  final buttons = Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
-                      if (state.selectedType == ImportType.students) ...[
+                      if (state.selectedType == ImportType.students)
                         ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: theme.colorScheme.secondaryContainer,
@@ -847,8 +847,6 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                           icon: const Icon(Icons.auto_awesome),
                           label: const Text('Suggest Roll Numbers'),
                         ),
-                        const SizedBox(width: 12),
-                      ],
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: theme.colorScheme.primaryContainer,
@@ -873,8 +871,27 @@ class _BulkImportScreenState extends ConsumerState<BulkImportScreen> {
                         label: const Text('Download Corrected CSV'),
                       ),
                     ],
-                  ),
-                ],
+                  );
+
+                  if (isNarrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        searchField,
+                        const SizedBox(height: 12),
+                        buttons,
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      Expanded(child: searchField),
+                      const SizedBox(width: 16),
+                      buttons,
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
               Row(

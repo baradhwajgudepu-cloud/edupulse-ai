@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "edupulse-ai-17221"
-  }
+  },
+  "targets": {
+    "edupulse-ai-17221": {
+      "hosting": {
+        "admin-portal": [
+          "edupulse-ai-17221"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

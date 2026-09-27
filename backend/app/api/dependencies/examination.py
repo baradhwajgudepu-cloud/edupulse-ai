@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.repositories.examination import (
     ExamTypeMasterRepository, ExamTemplateRepository,
-    ExaminationRepository, ExamScheduleRepository
+    ExaminationRepository, ExamScheduleRepository, ExamPaperRepository
 )
 from app.repositories.school import SchoolRepository
 from app.repositories.academic_year import AcademicYearRepository
@@ -23,12 +23,16 @@ def get_examination_repository(db: AsyncSession = Depends(get_db)) -> Examinatio
 def get_schedule_repository(db: AsyncSession = Depends(get_db)) -> ExamScheduleRepository:
     return ExamScheduleRepository(db)
 
+def get_paper_repository(db: AsyncSession = Depends(get_db)) -> ExamPaperRepository:
+    return ExamPaperRepository(db)
+
 def get_examination_service(
     db: AsyncSession = Depends(get_db),
     type_repo: ExamTypeMasterRepository = Depends(get_exam_type_repository),
     template_repo: ExamTemplateRepository = Depends(get_template_repository),
     exam_repo: ExaminationRepository = Depends(get_examination_repository),
-    schedule_repo: ExamScheduleRepository = Depends(get_schedule_repository)
+    schedule_repo: ExamScheduleRepository = Depends(get_schedule_repository),
+    paper_repo: ExamPaperRepository = Depends(get_paper_repository)
 ) -> ExaminationService:
     school_repo = SchoolRepository(db)
     academic_year_repo = AcademicYearRepository(db)
@@ -41,5 +45,7 @@ def get_examination_service(
         schedule_repo=schedule_repo,
         school_repo=school_repo,
         academic_year_repo=academic_year_repo,
-        tsa_repo=tsa_repo
+        tsa_repo=tsa_repo,
+        paper_repo=paper_repo
     )
+

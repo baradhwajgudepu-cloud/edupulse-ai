@@ -39,6 +39,26 @@ class AuthStateNotifier extends Notifier<AuthState> {
     state = Authenticated(user);
   }
 
+  void clearMustChangePassword() {
+    if (state is Authenticated) {
+      final cur = (state as Authenticated).user;
+      state = Authenticated(
+        UserEntity(
+          id: cur.id,
+          email: cur.email,
+          firstName: cur.firstName,
+          lastName: cur.lastName,
+          tenantId: cur.tenantId,
+          isSuperuser: cur.isSuperuser,
+          roles: cur.roles,
+          schools: cur.schools,
+          schoolNames: cur.schoolNames,
+          mustChangePassword: false,
+        ),
+      );
+    }
+  }
+
   Future<void> checkAuth() async {
     final sessionManager = ref.read(sessionManagerProvider);
     final hasSession = await sessionManager.hasSession();
@@ -61,6 +81,14 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
     await result.when(
       onSuccess: (user) async {
+        final hasParentRole = user.roles.map((r) => r.toUpperCase()).contains('PARENT');
+        if (!hasParentRole && !user.isSuperuser) {
+          EduLogger.w('Unauthorized login attempt: User does not possess PARENT role.');
+          await sessionManager.clearSession();
+          ref.read(selectedTenantIdProvider.notifier).state = null;
+          state = const AuthError('UNAUTHORIZED_ROLE: This application is restricted to Parents.');
+          return;
+        }
         if (user.schools.isNotEmpty) {
           await sessionManager.saveSchoolId(user.schools.first);
         }
@@ -105,6 +133,15 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
         await userResult.when(
           onSuccess: (user) async {
+            final hasParentRole = user.roles.map((r) => r.toUpperCase()).contains('PARENT');
+            if (!hasParentRole && !user.isSuperuser) {
+              EduLogger.w('Unauthorized login attempt: User does not possess PARENT role.');
+              final sessionManager = ref.read(sessionManagerProvider);
+              await sessionManager.clearSession();
+              ref.read(selectedTenantIdProvider.notifier).state = null;
+              state = const AuthError('UNAUTHORIZED_ROLE: This application is restricted to Parents.');
+              return;
+            }
             final sessionManager = ref.read(sessionManagerProvider);
             if (user.schools.isNotEmpty) {
               await sessionManager.saveSchoolId(user.schools.first);
@@ -135,8 +172,8 @@ class AuthStateNotifier extends Notifier<AuthState> {
     try {
       final dio = Dio(
         BaseOptions(
-          connectTimeout: const Duration(seconds: 3),
-          receiveTimeout: const Duration(seconds: 3),
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
         ),
       );
 
@@ -144,7 +181,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
           ? apiBaseUrl.substring(0, apiBaseUrl.length - 1)
           : apiBaseUrl;
 
-      // 1. Try system health endpoint
+      // 1. Try system health endpoint (/api/v1/system/health)
       try {
         final response = await dio.get('$normalizedBase/system/health');
         if (response.statusCode == 200) {
@@ -157,7 +194,20 @@ class AuthStateNotifier extends Notifier<AuthState> {
         }
       }
 
-      // 2. Fallback to openapi.json connectivity verification
+      // 2. Try standard health endpoint (/api/v1/health)
+      try {
+        final response = await dio.get('$normalizedBase/health');
+        if (response.statusCode == 200) {
+          return true;
+        }
+      } on DioException catch (e) {
+        if (e.response != null) {
+          // If we received any response, server is active and reachable
+          return true;
+        }
+      }
+
+      // 3. Fallback to openapi.json connectivity verification
       try {
         final response = await dio.get('$normalizedBase/openapi.json');
         if (response.statusCode == 200) {
@@ -223,7 +273,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
     try {
       if (error is Error && error.stackTrace != null) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
-      } else if (error is DioException && error.stackTrace != null) {
+      } else if (error is DioException) {
         buffer.writeln('Stack Trace:\n${error.stackTrace}');
       }
     } catch (_) {}

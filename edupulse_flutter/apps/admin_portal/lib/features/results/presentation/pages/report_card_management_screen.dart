@@ -868,6 +868,111 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
     );
   }
 
+  Future<String?> _showRejectDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.cancel_outlined, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Reject Report Card'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Please provide a reason for rejecting this report card. It will be returned to Draft status for review and correction.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Enter rejection reason (e.g. Marks calculation discrepancy in Mathematics)...',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(ctx, controller.text.trim());
+              }
+            },
+            child: const Text('Reject & Return to Draft'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showUnpublishDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.undo, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Unpublish Report Card'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Unpublishing will remove this report card from student/parent visibility and revert its status to Draft.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                hintText: 'Optional reason for unpublishing...',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade800,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Confirm Unpublish'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1090,8 +1195,8 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                   labelText: 'Academic Year',
                                   contentPadding: EdgeInsets.symmetric(horizontal: 12),
                                 ),
-                                items: uniqueYears.map((y) {
-                                  return DropdownMenuItem(
+                                items: uniqueYears.map<DropdownMenuItem<String>>((y) {
+                                  return DropdownMenuItem<String>(
                                     value: y.id,
                                     child: Text('${y.name} ${y.isCurrent ? "(Current)" : ""}'),
                                   );
@@ -1109,8 +1214,8 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                   labelText: 'Class',
                                   contentPadding: EdgeInsets.symmetric(horizontal: 12),
                                 ),
-                                items: uniqueClasses.map((c) {
-                                  return DropdownMenuItem(
+                                items: uniqueClasses.map<DropdownMenuItem<String>>((c) {
+                                  return DropdownMenuItem<String>(
                                     value: c.id,
                                     child: Text(c.name),
                                   );
@@ -1129,8 +1234,8 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                   labelText: 'Section',
                                   contentPadding: EdgeInsets.symmetric(horizontal: 12),
                                 ),
-                                items: uniqueSections.map((s) {
-                                  return DropdownMenuItem(
+                                items: uniqueSections.map<DropdownMenuItem<String>>((s) {
+                                  return DropdownMenuItem<String>(
                                     value: s.id,
                                     child: Text(s.name),
                                   );
@@ -1540,9 +1645,108 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                   );
                                 }
 
+                                final readyCount = filtered.where((st) {
+                                  final c = cards.firstWhere(
+                                    (card) => card.studentId == st.id,
+                                    orElse: () => ReportCardDto(
+                                      id: '',
+                                      verificationUuid: '',
+                                      status: 'NOT GENERATED',
+                                      pdfHistory: const [],
+                                      tenantId: '',
+                                      schoolId: '',
+                                      academicYearId: '',
+                                      studentId: st.id,
+                                      aiMetrics: const {},
+                                    ),
+                                  );
+                                  return c.id.isNotEmpty &&
+                                      !c.classRank.toLowerCase().contains('incomplete') &&
+                                      !c.classRank.toLowerCase().contains('unavailable');
+                                }).length;
+                                final incompleteCount = filtered.length - readyCount;
+
                                 return Column(
                                   crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
+                                    // Readiness Summary Banner
+                                    Container(
+                                      margin: const EdgeInsets.only(bottom: 16),
+                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                      decoration: BoxDecoration(
+                                        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: theme.colorScheme.outlineVariant),
+                                      ),
+                                      child: Wrap(
+                                        alignment: WrapAlignment.spaceBetween,
+                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                        spacing: 12,
+                                        runSpacing: 8,
+                                        children: [
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.assessment_outlined, size: 20, color: theme.colorScheme.primary),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                'Consolidated Assessment Readiness: ',
+                                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: theme.colorScheme.onSurface),
+                                              ),
+                                            ],
+                                          ),
+                                          Wrap(
+                                            spacing: 8,
+                                            runSpacing: 6,
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.green.shade50,
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  border: Border.all(color: Colors.green.shade300),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Icon(Icons.check_circle, size: 14, color: Colors.green.shade700),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      '$readyCount Ready',
+                                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green.shade800),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: incompleteCount > 0 ? Colors.amber.shade50 : Colors.grey.shade100,
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  border: Border.all(color: incompleteCount > 0 ? Colors.amber.shade300 : Colors.grey.shade300),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Icon(Icons.warning_amber_rounded, size: 14, color: incompleteCount > 0 ? Colors.amber.shade800 : Colors.grey),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      '$incompleteCount Incomplete / Pending',
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: incompleteCount > 0 ? Colors.amber.shade900 : Colors.grey.shade700,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+
                                     // Selection Context Action Toolbar
                                     if (_selectedStudentIds.isNotEmpty)
                                       Container(
@@ -1670,6 +1874,21 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text('Adm No: ${s.admissionNumber}  •  $className-$secName'),
+                                                  if (card.id.isNotEmpty) ...[
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      'Score: ${card.totalMax > 0 ? "${card.totalObtained.toStringAsFixed(1)}/${card.totalMax.toStringAsFixed(0)}" : "-"} (${card.overallPercentage > 0 ? "${card.overallPercentage.toStringAsFixed(1)}%" : "-"}) • Grade: ${card.overallGrade.isNotEmpty ? card.overallGrade : "-"}',
+                                                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                                                    ),
+                                                    Text(
+                                                      'Class Rank: ${card.classRank.isNotEmpty ? card.classRank : "-"}',
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontStyle: card.classRank.contains('incomplete') ? FontStyle.italic : FontStyle.normal,
+                                                        color: card.classRank.contains('incomplete') ? Colors.orange.shade800 : Colors.grey.shade700,
+                                                      ),
+                                                    ),
+                                                  ],
                                                   const SizedBox(height: 4),
                                                   _buildStatusBadge(card.status),
                                                 ],
@@ -1722,6 +1941,11 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                             const DataColumn(label: Text('Admission No')),
                                             const DataColumn(label: Text('Student Name')),
                                             const DataColumn(label: Text('Class & Section')),
+                                            const DataColumn(label: Text('Total')),
+                                            const DataColumn(label: Text('%')),
+                                            const DataColumn(label: Text('Grade')),
+                                            const DataColumn(label: Text('Section Rank')),
+                                            const DataColumn(label: Text('Class Rank')),
                                             const DataColumn(label: Text('Report Card Status')),
                                             const DataColumn(label: Text('Actions')),
                                           ],
@@ -1784,6 +2008,42 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
                                                   ),
                                                 ),
                                                 DataCell(Text('$className - $secName')),
+                                                DataCell(
+                                                  Text(
+                                                    card.totalMax > 0
+                                                        ? '${card.totalObtained.toStringAsFixed(1)} / ${card.totalMax.toStringAsFixed(0)}'
+                                                        : '-',
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    card.overallPercentage > 0
+                                                        ? '${card.overallPercentage.toStringAsFixed(1)}%'
+                                                        : '-',
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    card.overallGrade.isNotEmpty ? card.overallGrade : '-',
+                                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    card.sectionRank.isNotEmpty ? card.sectionRank : '-',
+                                                    style: card.sectionRank.toLowerCase().contains('incomplete') || card.sectionRank.toLowerCase().contains('unavailable')
+                                                        ? TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.orange.shade800)
+                                                        : null,
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Text(
+                                                    card.classRank.isNotEmpty ? card.classRank : '-',
+                                                    style: card.classRank.toLowerCase().contains('incomplete') || card.classRank.toLowerCase().contains('unavailable')
+                                                        ? TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.orange.shade800)
+                                                        : null,
+                                                  ),
+                                                ),
                                                 DataCell(_buildStatusBadge(card.status)),
                                                 DataCell(
                                                   _buildPopupMenuButton(card, s, schoolId),
@@ -1862,6 +2122,32 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
           case 'approve':
             res = await ops.approve(id: card.id, schoolId: schoolId);
             successText = 'Report card approved successfully.';
+            break;
+          case 'reject':
+            final rejectionReason = await _showRejectDialog(context);
+            if (rejectionReason != null && rejectionReason.trim().isNotEmpty) {
+              res = await ops.reject(
+                id: card.id,
+                schoolId: schoolId,
+                rejectionReason: rejectionReason.trim(),
+              );
+              successText = 'Report card rejected and returned to draft.';
+            } else {
+              return;
+            }
+            break;
+          case 'unpublish':
+            final unpubReason = await _showUnpublishDialog(context);
+            if (unpubReason != null) {
+              res = await ops.unpublish(
+                id: card.id,
+                schoolId: schoolId,
+                reason: unpubReason.trim().isEmpty ? null : unpubReason.trim(),
+              );
+              successText = 'Report card unpublished and returned to draft.';
+            } else {
+              return;
+            }
             break;
           case 'publish':
             final filters = ref.read(resultsFiltersProvider);
@@ -1947,25 +2233,69 @@ class _ReportCardManagementScreenState extends ConsumerState<ReportCardManagemen
               ),
             ),
           ],
-          if (status == 'UNDER_REVIEW')
+          if (hasCard && status != 'PUBLISHED' && status != 'LOCKED') ...[
+            const PopupMenuItem(
+              value: 'download_pdf',
+              child: ListTile(
+                leading: Icon(Icons.download),
+                title: Text('Download PDF'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'view_pdf',
+              child: ListTile(
+                leading: Icon(Icons.picture_as_pdf),
+                title: Text('View PDF'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+          if (status == 'UNDER_REVIEW') ...[
             const PopupMenuItem(
               value: 'approve',
               child: ListTile(
-                leading: Icon(Icons.check_circle_outline),
+                leading: Icon(Icons.check_circle_outline, color: Colors.green),
                 title: Text('Approve'),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
-          if (status == 'APPROVED')
+            const PopupMenuItem(
+              value: 'reject',
+              child: ListTile(
+                leading: Icon(Icons.cancel_outlined, color: Colors.red),
+                title: Text('Reject & Return to Draft', style: TextStyle(color: Colors.red)),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+          if (status == 'APPROVED') ...[
             const PopupMenuItem(
               value: 'publish',
               child: ListTile(
-                leading: Icon(Icons.publish),
+                leading: Icon(Icons.publish, color: Colors.indigo),
                 title: Text('Publish'),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
+            const PopupMenuItem(
+              value: 'reject',
+              child: ListTile(
+                leading: Icon(Icons.cancel_outlined, color: Colors.red),
+                title: Text('Reject & Return to Draft', style: TextStyle(color: Colors.red)),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
           if (status == 'PUBLISHED') ...[
+            const PopupMenuItem(
+              value: 'unpublish',
+              child: ListTile(
+                leading: Icon(Icons.undo, color: Colors.orange),
+                title: Text('Unpublish & Revert to Draft', style: TextStyle(color: Colors.orange)),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
             const PopupMenuItem(
               value: 'lock',
               child: ListTile(

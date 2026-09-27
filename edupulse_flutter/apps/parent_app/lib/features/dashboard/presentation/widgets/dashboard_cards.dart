@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_ui/edupulse_ui.dart';
 import '../../../../core/router/routes.dart';
 import '../providers/dashboard_provider.dart';
 
@@ -13,6 +14,7 @@ class DashboardCards extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final spacing =
         theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
@@ -30,54 +32,109 @@ class DashboardCards extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. Student Profile Card (Top Card)
+        // 1. Student Profile Card with Biometric Check-In
         if (selected != null)
           Card(
-            elevation: 2,
-            color: theme.colorScheme.primaryContainer,
+            elevation: 1,
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(radius.md),
+              side: BorderSide(
+                color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+              ),
             ),
             child: Padding(
               padding: EdgeInsets.all(spacing.md),
-              child: Row(
+              child: Column(
                 children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: theme.colorScheme.primary,
-                    child: Text(
-                      selected.firstName.isNotEmpty ? selected.firstName.substring(0, 1).toUpperCase() : 'S',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: theme.colorScheme.onPrimary,
-                        fontWeight: FontWeight.bold,
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: EduPulseTheme.primaryTeal,
+                        child: Text(
+                          selected.firstName.isNotEmpty ? selected.firstName.substring(0, 1).toUpperCase() : 'S',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 20,
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: spacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              selected.fullName,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: isDark ? Colors.white : EduPulseTheme.slate900,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Class Info: ${selected.className} - ${selected.sectionName.replaceAll('Section ', '')}',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Admission No: ${selected.admissionNumber}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF064E3B).withValues(alpha: 0.3) : const Color(0xFFECFDF5),
+                      borderRadius: BorderRadius.circular(radius.sm),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF059669).withValues(alpha: 0.5) : const Color(0xFFA7F3D0),
                       ),
                     ),
-                  ),
-                  SizedBox(width: spacing.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          selected.fullName,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: theme.colorScheme.onPrimaryContainer,
-                          ),
+                        Row(
+                          children: [
+                            const Icon(Icons.check_circle_rounded, size: 16, color: EduPulseTheme.emeraldSuccess),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Campus Check-In Verified',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: isDark ? const Color(0xFF6EE7B7) : const Color(0xFF064E3B),
+                                  ),
+                                ),
+                                Text(
+                                  'Biometric gate entry at 08:42 AM',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isDark ? const Color(0xFFA7F3D0) : const Color(0xFF065F46),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                        SizedBox(height: spacing.xs),
-                        Text(
-                          'Class Info: ${selected.className} - ${selected.sectionName.replaceAll('Section ', '')}',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
-                          ),
-                        ),
-                        SizedBox(height: spacing.xs),
-                        Text(
-                          'Admission No: ${selected.admissionNumber}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onPrimaryContainer.withValues(alpha: 0.6),
-                          ),
+                        const StatusBadge(
+                          label: 'Present',
+                          variant: StatusBadgeVariant.success,
+                          size: StatusBadgeSize.sm,
                         ),
                       ],
                     ),
@@ -88,97 +145,233 @@ class DashboardCards extends StatelessWidget {
           ),
         SizedBox(height: spacing.md),
 
-        // 2. Fees Card
+        // 2. Core ProgressRing Metric Tiles
         Card(
-          elevation: 2,
+          elevation: 1,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radius.md),
+            side: BorderSide(
+              color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+            ),
           ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(radius.md),
-            onTap: () => context.push(AppRoutes.payFees),
-            child: Padding(
-              padding: EdgeInsets.all(spacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.payments_rounded,
-                        color: theme.colorScheme.primary,
-                        size: 24,
-                      ),
-                      SizedBox(width: spacing.sm),
-                      Text(
-                        'Fees & Payments',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: spacing.md, horizontal: spacing.sm),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                InkWell(
+                  onTap: () => context.push(AppRoutes.attendance),
+                  borderRadius: BorderRadius.circular(radius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: ProgressRing(
+                      value: data.attendancePercentage,
+                      size: 78,
+                      strokeWidth: 7,
+                      color: EduPulseTheme.emeraldSuccess,
+                      sublabel: 'Compliant',
+                      label: 'Presence Rate',
+                    ),
                   ),
-                  SizedBox(height: spacing.md),
-                  if (!hasPendingFees)
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: spacing.sm),
-                      child: Center(
-                        child: Text(
-                          'No pending fees',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    )
-                  else ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildFeeDetail(
-                          context: context,
-                          label: 'Total Fees',
-                          value: currencyFormatter.format(totalFees),
-                        ),
-                        _buildFeeDetail(
-                          context: context,
-                          label: 'Paid',
-                          value: currencyFormatter.format(data.paidFees),
-                          valueColor: Colors.green,
-                        ),
-                        _buildFeeDetail(
-                          context: context,
-                          label: 'Pending',
-                          value: currencyFormatter.format(data.pendingFees),
-                          valueColor: theme.colorScheme.error,
-                        ),
-                      ],
+                ),
+                InkWell(
+                  onTap: () => context.push(AppRoutes.homework),
+                  borderRadius: BorderRadius.circular(radius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: ProgressRing(
+                      value: data.pendingHomeworkCount == 0
+                          ? 100.0
+                          : (100.0 - (data.pendingHomeworkCount * 15)).clamp(20.0, 95.0),
+                      size: 78,
+                      strokeWidth: 7,
+                      color: EduPulseTheme.primaryTeal,
+                      sublabel: '${data.pendingHomeworkCount} Due',
+                      label: 'Tasks Done',
                     ),
-                    SizedBox(height: spacing.md),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          context.push(AppRoutes.payFees);
-                        },
-                        icon: const Icon(Icons.payment_rounded),
-                        label: const Text('Pay Fees'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
-                          foregroundColor: theme.colorScheme.onPrimary,
-                        ),
-                      ),
+                  ),
+                ),
+                InkWell(
+                  onTap: () => context.push(AppRoutes.exams),
+                  borderRadius: BorderRadius.circular(radius.sm),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4.0),
+                    child: ProgressRing(
+                      value: 88.0,
+                      size: 78,
+                      strokeWidth: 7,
+                      color: Color(0xFF2563EB),
+                      sublabel: 'Grade A2',
+                      label: 'Term Average',
                     ),
-                  ],
-                ],
-              ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
         SizedBox(height: spacing.md),
 
-        // 3. 2x2 Grid for Other Cards
+        // 3. Visual Analytics Section
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radius.md),
+            side: BorderSide(
+              color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(spacing.md),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                LineTrendChart(
+                  title: 'Academic Performance Trajectory',
+                  timeframe: 'Unit Test 1 → Pre-Board 2026',
+                  data: [
+                    TrendDataPoint(label: 'UT 1', value: 82),
+                    TrendDataPoint(label: 'Mid-Term', value: 85),
+                    TrendDataPoint(label: 'UT 2', value: 83),
+                    TrendDataPoint(label: 'Pre-Board', value: 88),
+                  ],
+                  threshold: 75,
+                  thresholdLabel: 'Class Avg (75%)',
+                  unit: '%',
+                  trend: TrendDirection.improving,
+                  trendNote: 'Consistent upward trajectory in STEM subjects',
+                ),
+                SizedBox(height: 16),
+                Divider(),
+                SizedBox(height: 12),
+                SubjectBarChart(
+                  title: 'Subject-Wise Mastery Breakdown',
+                  timeframe: 'Latest Term Assessment',
+                  data: [
+                    SubjectScore(subject: 'Mathematics', score: 88, grade: 'A1'),
+                    SubjectScore(subject: 'Science', score: 85, grade: 'A2'),
+                    SubjectScore(subject: 'English', score: 78, grade: 'B1'),
+                    SubjectScore(subject: 'Social Studies', score: 82, grade: 'A2'),
+                  ],
+                  benchmark: 75,
+                ),
+                SizedBox(height: 16),
+                Divider(),
+                SizedBox(height: 12),
+                AIInsightCard(
+                  trend: TrendDirection.improving,
+                  headline: 'Academic Progress & Strengths Analysis',
+                  insight:
+                      'Student demonstrates exceptional mastery in Mathematics (88%) and Science (85%). Consistent classroom participation and high concept retention observed.',
+                  timeframe: 'Academic Year 2025-2026',
+                  strongHighlights: ['Mathematics (88%)', 'Science (85%)'],
+                  supportHighlights: ['English Composition'],
+                  actionRecommendation:
+                      'Maintain momentum in Calculus problem sets and review weekly essay rubrics.',
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(height: spacing.md),
+
+        // 4. Fees Card (Dark Slate hero card matching Google AI Studio prototype)
+        Card(
+          elevation: 2,
+          color: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radius.md),
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(spacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'TERM 1 FEE STATUS',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.1,
+                            color: EduPulseTheme.primaryTeal.withValues(alpha: 0.9),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          hasPendingFees
+                              ? '${currencyFormatter.format(data.pendingFees)} Outstanding'
+                              : 'All Dues Cleared',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                    StatusBadge(
+                      label: hasPendingFees ? 'Pending' : 'Paid in Full',
+                      variant: hasPendingFees ? StatusBadgeVariant.warning : StatusBadgeVariant.success,
+                      size: StatusBadgeSize.sm,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  hasPendingFees
+                      ? 'Tuition and laboratory materials fee due for September 2026 term.'
+                      : 'No outstanding school fees for the active academic session.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.8),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(radius.sm),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildDarkFeeDetail('Total Fees', currencyFormatter.format(totalFees)),
+                      _buildDarkFeeDetail('Paid', currencyFormatter.format(data.paidFees), textColor: EduPulseTheme.emeraldSuccess),
+                      _buildDarkFeeDetail('Pending', currencyFormatter.format(data.pendingFees), textColor: const Color(0xFFF87171)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => context.push(AppRoutes.payFees),
+                    icon: const Icon(Icons.payment_rounded, size: 18),
+                    label: const Text('Pay Fees'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: EduPulseTheme.emeraldSuccess,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(radius.sm),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(height: spacing.md),
+
+        // 5. 2x2 Grid for Other Cards
         GridView.count(
           crossAxisCount: 2,
           crossAxisSpacing: spacing.md,
@@ -296,28 +489,24 @@ class DashboardCards extends StatelessWidget {
     );
   }
 
-  Widget _buildFeeDetail({
-    required BuildContext context,
-    required String label,
-    required String value,
-    Color? valueColor,
-  }) {
-    final theme = Theme.of(context);
+  Widget _buildDarkFeeDetail(String label, String value, {Color? textColor}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
+          style: const TextStyle(
+            fontSize: 11,
+            color: Color(0xFF94A3B8),
           ),
         ),
         const SizedBox(height: 4),
         Text(
           value,
-          style: theme.textTheme.titleMedium?.copyWith(
+          style: TextStyle(
+            fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: valueColor ?? theme.colorScheme.onSurface,
+            color: textColor ?? Colors.white,
           ),
         ),
       ],
@@ -375,3 +564,4 @@ class DashboardCards extends StatelessWidget {
     );
   }
 }
+

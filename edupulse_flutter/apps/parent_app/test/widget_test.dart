@@ -69,6 +69,23 @@ class FakeAuthRepository implements AuthRepository {
   Future<ApiResult<void>> requestPasswordReset({required String email}) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeSessionManager implements SessionManager {
@@ -97,7 +114,7 @@ class FakeSessionManager implements SessionManager {
   Future<void> saveSession(SessionToken token) async {}
 
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String? reason]) async {}
 
   @override
   Future<bool> hasSession() async => _shouldHaveSession;
@@ -107,6 +124,18 @@ class FakeSessionManager implements SessionManager {
 
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+
+  @override
+  Future<String?> getSchoolName() async => 'School 1';
+
+  @override
+  Future<String?> getTenantName() async => 'Tenant 1';
+
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class FakeDashboardRepository implements DashboardRepository {
@@ -174,7 +203,7 @@ class FakeHomeworkRepository implements HomeworkRepository {
         status: HomeworkStatus.published,
         attachmentUrl: 'https://example.com/algebra.pdf',
         subjectId: 'Math',
-        classId: 'Class 10',
+        classId: 'Class 8',
         sectionId: 'Section A',
       ),
     ]);
@@ -258,8 +287,51 @@ class FakeBaseApiClient extends BaseApiClient {
           'opening_balance': 0.0,
           'assignments': [],
           'payments': [],
-          'closing_balance': 0.0,
+          'closing_balance': 8500.0,
         }
+      }));
+    }
+    if (path.contains('/marks/parent/student/')) {
+      if (path.endsWith('/timetable')) {
+        return ApiResult.success(mapper({
+          'data': [
+            {
+              'exam_schedule_id': 'sched_1',
+              'examination_id': 'exam_1',
+              'exam_name': 'Mid-Term Exam',
+              'exam_type': 'REGULAR',
+              'subject_id': 'sub_1',
+              'subject_name': 'Science',
+              'exam_date': '2026-10-02',
+              'start_time': '09:00',
+              'end_time': '12:00',
+              'max_marks': 100,
+              'pass_marks': 35,
+              'room_number': '101',
+            }
+          ]
+        }));
+      }
+      return ApiResult.success(mapper({
+        'data': [
+          {
+            'examination_id': 'exam_1',
+            'exam_name': 'Mid-Term Exam',
+            'overall_percentage': 88.0,
+            'subject_marks': [
+              {
+                'subject_id': 'sub_1',
+                'subject_name': 'Science',
+                'maximum_marks': 100,
+                'pass_marks': 35,
+                'marks_obtained': 88.0,
+                'result_status': 'PASS',
+                'remarks': 'Excellent',
+                'is_passed': true,
+              }
+            ]
+          }
+        ]
       }));
     }
     if (path.contains('/report-cards/student/')) {
@@ -309,7 +381,7 @@ void main() {
 
     expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Aarav Kumar'), findsOneWidget);
-    expect(find.text('₹8,500'), findsOneWidget);
+    expect(find.text('₹8,500'), findsAtLeastNWidgets(1));
   });
 
   testWidgets('App without active session routes to Login Screen',

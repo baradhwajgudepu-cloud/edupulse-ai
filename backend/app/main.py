@@ -158,17 +158,45 @@ async def ensure_marks_enum_values():
         logger.warning(f"Could not automatically ensure marksstatus enum values during startup: {e}")
 
 
+async def ensure_import_enum_values():
+    """
+    Safely ensures that modern ImportType enum values ('ATTENDANCE') and AttendanceSource enum values ('IMPORT') exist in PostgreSQL on application startup.
+    This guarantees zero-downtime compatibility and prevents InvalidTextRepresentationError.
+    """
+    from app.db.session import engine
+    from sqlalchemy import text
+    try:
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            for val in ["ATTENDANCE"]:
+                await conn.execute(text(f"ALTER TYPE importtype ADD VALUE IF NOT EXISTS '{val}'"))
+            for val in ["IMPORT"]:
+                await conn.execute(text(f"ALTER TYPE attendancesource ADD VALUE IF NOT EXISTS '{val}'"))
+    except Exception as e:
+        logger.warning(f"Could not automatically ensure import enum values during startup: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
 
     setup_logging()
 
+    import os
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        yield
+        return
+
     logger.info("Starting up EduPulse AI backend foundation...")
     try:
         await ensure_marks_enum_values()
     except Exception as e:
         logger.error(f"Failed to ensure marksstatus enum values during startup: {e}")
+
+    try:
+        await ensure_import_enum_values()
+    except Exception as e:
+        logger.error(f"Failed to ensure import enum values during startup: {e}")
 
     try:
         await seed_reports_settings_permissions()
@@ -284,5 +312,7 @@ app.add_middleware(
 
 setup_exception_handlers(app)
 
-app.include_router(api_router, prefix=settings.API_PREFIX)
-# Dev CORS update reload trigger - recycle pool
+from app.api.v1.endpoints import health
+app.include_router(health.router, prefix="", tags=["health"])
+app.include_router(health.router, prefix="/system", tags=["health"])
+app.include_router(api_router, prefix=settings.API_PREFIX)

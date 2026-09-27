@@ -7,6 +7,7 @@ import '../../data/datasource/homework_remote_datasource.dart';
 import '../../data/repositories/homework_repository_impl.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 // --- PROVIDER DEFINITIONS ---
 
@@ -65,7 +66,7 @@ class HomeworkListNotifier extends StateNotifier<HomeworkListState> {
       return;
     }
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const HomeworkListError('No school associated with this user.');
       return;
@@ -95,6 +96,12 @@ class HomeworkListNotifier extends StateNotifier<HomeworkListState> {
       status: status,
       search: search,
     );
+
+    // Guard against race condition: discard response if active school changed in-flight
+    final currentSchoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (list) {
@@ -148,9 +155,9 @@ class HomeworkDetailNotifier extends StateNotifier<HomeworkDetailState> {
     state = const HomeworkDetailLoading();
 
     final authState = _ref.read(authStateProvider);
-    final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
         ? authState.user.schools.first
-        : null;
+        : null);
 
     if (schoolId == null) {
       state = const HomeworkDetailError('Authentication mismatch.');
@@ -174,9 +181,9 @@ class HomeworkDetailNotifier extends StateNotifier<HomeworkDetailState> {
 
   Future<bool> publish() async {
     final authState = _ref.read(authStateProvider);
-    final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
         ? authState.user.schools.first
-        : null;
+        : null);
 
     if (schoolId == null) return false;
 
@@ -199,9 +206,9 @@ class HomeworkDetailNotifier extends StateNotifier<HomeworkDetailState> {
 
   Future<bool> delete() async {
     final authState = _ref.read(authStateProvider);
-    final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
         ? authState.user.schools.first
-        : null;
+        : null);
 
     if (schoolId == null) return false;
 
@@ -279,7 +286,7 @@ class HomeworkFormNotifier extends StateNotifier<HomeworkFormState> {
       return false;
     }
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const HomeworkFormError('No school associated.');
       return false;
@@ -347,7 +354,7 @@ class HomeworkFormNotifier extends StateNotifier<HomeworkFormState> {
       return false;
     }
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const HomeworkFormError('No school associated.');
       return false;
@@ -390,9 +397,9 @@ class HomeworkFormNotifier extends StateNotifier<HomeworkFormState> {
     state = const HomeworkFormSubmitting();
 
     final authState = _ref.read(authStateProvider);
-    final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
         ? authState.user.schools.first
-        : null;
+        : null);
 
     if (schoolId == null) {
       state = const HomeworkFormError('Authentication mismatch.');
@@ -430,9 +437,9 @@ class HomeworkFormNotifier extends StateNotifier<HomeworkFormState> {
     state = const HomeworkFormSubmitting();
 
     final authState = _ref.read(authStateProvider);
-    final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
         ? authState.user.schools.first
-        : null;
+        : null);
 
     if (schoolId == null) {
       state = const HomeworkFormError('Authentication mismatch.');
@@ -468,9 +475,9 @@ final homeworkFormNotifierProvider = StateNotifierProvider<HomeworkFormNotifier,
 final homeworkTemplatesProvider = FutureProvider.family<List<String>, String?>((ref, subjectId) async {
   final repo = ref.watch(homeworkRepositoryProvider);
   final authState = ref.watch(authStateProvider);
-  final schoolId = authState is Authenticated && authState.user.schools.isNotEmpty
+  final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated && authState.user.schools.isNotEmpty
       ? authState.user.schools.first
-      : null;
+      : null);
 
   if (schoolId == null) return [];
 

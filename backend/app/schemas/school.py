@@ -12,15 +12,15 @@ class SchoolBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Legal name of the school campus")
     display_name: Optional[str] = Field(None, max_length=255, description="Display name for branding/UI headers")
     
-    # Code matching ^[A-Z0-9_-]{2,20}$
-    code: str = Field(
-        ...,
+    # Code matching ^[A-Z0-9_-]{2,20}$ (auto-generated if omitted)
+    code: Optional[str] = Field(
+        None,
         pattern=r"^[A-Z0-9_-]{2,20}$",
-        description="Unique uppercase alphanumeric identifier within the tenant (e.g. MAIN, CBSE_01)"
+        description="Unique uppercase alphanumeric identifier (auto-generated if omitted)"
     )
     
-    board: SchoolBoard = Field(..., description="Educational affiliation board (e.g. CBSE, ICSE)")
-    school_type: SchoolType = Field(SchoolType.HIGH_SCHOOL, description="Educational type classification (e.g. PRIMARY, HIGH_SCHOOL)")
+    board: Optional[SchoolBoard] = Field(None, description="Educational affiliation board (e.g. CBSE, ICSE)")
+    school_type: Optional[SchoolType] = Field(None, description="Educational type classification (e.g. PRIMARY, HIGH_SCHOOL)")
     
     email: EmailStr = Field(..., description="Primary school contact email address")
     
@@ -179,6 +179,38 @@ class SchoolResponse(SchoolBase):
     def branding_logo_url(self) -> Optional[str]:
         return self.logo_url
 
+    @computed_field
+    @property
+    def school_id(self) -> uuid.UUID:
+        return self.id
+
+    @computed_field
+    @property
+    def logo_updated_at(self) -> Optional[str]:
+        if self.settings and isinstance(self.settings, dict):
+            branding = self.settings.get("branding", {})
+            if isinstance(branding, dict):
+                return branding.get("logo_updated_at")
+        return self.updated_at.isoformat() if self.updated_at else None
+
+    @computed_field
+    @property
+    def logo_storage_key(self) -> Optional[str]:
+        if self.settings and isinstance(self.settings, dict):
+            branding = self.settings.get("branding", {})
+            if isinstance(branding, dict):
+                return branding.get("logo_storage_key")
+        return None
+
+    @computed_field
+    @property
+    def geofencing_enabled(self) -> bool:
+        if self.settings and isinstance(self.settings, dict):
+            gf = self.settings.get("geofence", {})
+            if isinstance(gf, dict) and "enabled" in gf:
+                return bool(gf["enabled"])
+        return bool(self.latitude is not None and self.longitude is not None)
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
@@ -219,3 +251,186 @@ class SchoolResponse(SchoolBase):
             }
         }
     )
+
+
+class SchoolLogoResponse(BaseModel):
+    school_id: uuid.UUID
+    logo_url: str
+    logo_storage_key: Optional[str] = None
+    logo_updated_at: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SchoolGeofenceUpdate(BaseModel):
+    """
+    Schema for configuring school geofence coordinates and attendance radius.
+    """
+    enabled: bool = Field(True, description="Whether attendance geofencing is enforced for this school")
+    latitude: Optional[float] = Field(None, ge=-90.0, le=90.0, description="School latitude (-90 to +90)")
+    longitude: Optional[float] = Field(None, ge=-180.0, le=180.0, description="School longitude (-180 to +180)")
+    radius_meters: int = Field(100, gt=0, le=10000, description="Geofence radius in meters (1 to 10,000m)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_radius(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "geofence_radius" in data and "radius_meters" not in data:
+                data["radius_meters"] = data["geofence_radius"]
+            elif "geofence_radius_meters" in data and "radius_meters" not in data:
+                data["radius_meters"] = data["geofence_radius_meters"]
+        return data
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "SchoolGeofenceUpdate":
+        if self.enabled:
+            if self.latitude is None or self.longitude is None:
+                raise ValueError("Latitude and Longitude are required when geofencing is enabled.")
+        else:
+            if (self.latitude is None and self.longitude is not None) or (self.latitude is not None and self.longitude is None):
+                raise ValueError("Latitude and Longitude must both be provided, or both be null.")
+        return self
+
+
+class SchoolGeofenceResponse(BaseModel):
+    """
+    Schema representing active school geofence configuration.
+    """
+    school_id: uuid.UUID
+    enabled: bool
+    latitude: Optional[float]
+    longitude: Optional[float]
+    radius_meters: int
+    is_configured: bool
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[uuid.UUID] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SchoolDataSummaryResponse(BaseModel):
+    """
+    Schema for pre-reset data summary and dry-run counts.
+    Includes verification tokens, query health checks, and blocking dependencies.
+    """
+    school_id: uuid.UUID
+    school_name: str
+    tenant_id: uuid.UUID
+    tenant_name: str
+    records_to_delete: Dict[str, int]
+    total_records_to_delete: int = 0
+    records_to_preserve: Dict[str, Any]
+    eligible: bool = True
+    blocking_dependencies: list[str] = []
+    query_errors: list[str] = []
+    warnings: list[str] = []
+    confirmation_token: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SchoolDataResetRequest(BaseModel):
+    """
+    Schema for initiating a permanent school data reset.
+    Requires exact case-sensitive school name, explicit confirmation, non-empty reason,
+    and a valid, unexpired confirmation token generated from the pre-reset summary.
+    """
+    school_name: str = Field(..., min_length=1, description="Exact case-sensitive legal name of the school")
+    confirm_destruction: bool = Field(..., description="Explicit acknowledgement of permanent operational data deletion")
+    reason: str = Field(..., min_length=3, description="Justification/audit reason for the reset")
+    confirmation_token: str = Field(..., min_length=10, description="Cryptographically signed confirmation token from pre-reset data summary")
+
+
+class SchoolDataResetResponse(BaseModel):
+    """
+    Schema representing the outcome of a school data reset operation.
+    """
+    audit_id: str
+    status: str = "COMPLETED"
+    school_id: uuid.UUID
+    school_name: str
+    tenant_id: uuid.UUID
+    deleted_counts: Dict[str, int]
+    total_records_deleted: int
+    timestamp: datetime
+    message: str = "School operational and onboarding data reset successfully."
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuickSchoolOnboardingRequest(BaseModel):
+    """
+    Minimal schema for initial quick school creation.
+    Requires ONLY: school_name, principal_name, principal_email, principal_password.
+    Logo and advanced metadata are optional.
+    """
+    school_name: str = Field(..., min_length=2, max_length=255, description="Legal name of the school")
+    principal_name: str = Field(..., min_length=2, max_length=255, description="Full name of the Principal / Head of Institution")
+    principal_email: EmailStr = Field(..., description="Principal login email / ID")
+    principal_password: str = Field(..., min_length=8, max_length=128, description="Secure account password")
+
+    # Optional fields - never defaulted to CBSE/HIGH_SCHOOL
+    logo_base64: Optional[str] = Field(None, description="Optional base64 or data URI of school logo")
+    board: Optional[str] = Field(None, max_length=100, description="Optional affiliation board; remains Not Configured if omitted")
+    school_type: Optional[str] = Field(None, max_length=100, description="Optional school type; remains Not Configured if omitted")
+    school_code: Optional[str] = Field(None, max_length=20, description="Optional custom school code; globally auto-generated if omitted")
+    phone: Optional[str] = Field(None, max_length=50, description="Contact phone number")
+    address: Optional[str] = Field(None, max_length=255, description="Campus street address")
+    city: Optional[str] = Field(None, max_length=100, description="City")
+    state: Optional[str] = Field(None, max_length=100, description="State")
+    postal_code: Optional[str] = Field(None, max_length=20, description="Postal / PIN code")
+    website: Optional[str] = Field(None, max_length=255, description="School website URL")
+    custom_fields: Optional[Dict[str, Any]] = Field(default_factory=dict, description="School custom metadata")
+
+
+class QuickSchoolOnboardingResponse(BaseModel):
+    """
+    Response returned upon successful atomic school onboarding.
+    Provides tenant context, school details, principal identity, and immediate access token.
+    """
+    tenant_id: str
+    tenant_name: str
+    tenant_code: str
+    subdomain: str
+
+    school_id: str
+    school_name: str
+    school_code: str
+    board: str
+    school_type: str
+    logo_url: Optional[str] = None
+
+    principal_id: str
+    principal_name: str
+    principal_email: str
+
+    access_token: str
+    token_type: str = "bearer"
+    status: str = "ACTIVE"
+    message: str = "School created and activated successfully. Principal account provisioned."
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SetupStepItem(BaseModel):
+    step_key: str
+    title: str
+    description: str
+    is_completed: bool
+    route: str
+    action_label: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SchoolSetupProgressResponse(BaseModel):
+    school_id: str
+    school_name: str
+    completed_count: int
+    total_steps: int
+    progress_percentage: int
+    steps: list[SetupStepItem]
+
+    model_config = ConfigDict(from_attributes=True)
+

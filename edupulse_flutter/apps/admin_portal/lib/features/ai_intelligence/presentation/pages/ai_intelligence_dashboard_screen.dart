@@ -1,11 +1,14 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../../core/routing/routes.dart';
+import '../../data/models/ai_intelligence_models.dart';
 import '../providers/ai_intelligence_providers.dart';
 import '../widgets/ai_components.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
+import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
 class AIIntelligenceDashboardScreen extends ConsumerStatefulWidget {
   const AIIntelligenceDashboardScreen({super.key});
@@ -48,21 +51,24 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header Bar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
+            // Header Bar (Responsive: Stacks on narrow screens, Expanded Row on desktop)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 720;
+                final titleWidget = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         const Icon(Icons.auto_awesome, color: Colors.purple, size: 28),
                         const SizedBox(width: 10),
-                        Text(
-                          'School Intelligence Command Center',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+                        Flexible(
+                          child: Text(
+                            'School Intelligence Command Center',
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
@@ -73,13 +79,35 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
                       style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
                     ),
                   ],
-                ),
-                OutlinedButton.icon(
+                );
+
+                final actionButton = OutlinedButton.icon(
                   onPressed: () => ref.invalidate(aiIntelligenceSummaryProvider),
                   icon: const Icon(Icons.refresh),
                   label: const Text('Refresh Analytics'),
-                ),
-              ],
+                );
+
+                if (isNarrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      titleWidget,
+                      const SizedBox(height: 12),
+                      actionButton,
+                    ],
+                  );
+                }
+
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: titleWidget),
+                    const SizedBox(width: 16),
+                    actionButton,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 16),
 
@@ -92,7 +120,7 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
             ),
             const SizedBox(height: 20),
 
-            // Scoping Filters
+            // Scoping Filters (Responsive LayoutBuilder: Proportional Row on wide, Wrap on narrow)
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -101,62 +129,153 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Wrap(
-                  spacing: 16,
-                  runSpacing: 12,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    // Academic Year Filter
-                    if (academicYearsState != null)
-                      SizedBox(
-                        width: 220,
-                        child: DropdownButtonFormField<String>(
-                          value: filters.academicYearId,
-                          decoration: const InputDecoration(labelText: 'Academic Year', isDense: true, border: OutlineInputBorder()),
-                          items: [
-                            const DropdownMenuItem<String>(value: null, child: Text('All Academic Years')),
-                            ...academicYearsState.years.map<DropdownMenuItem<String>>((AcademicYearDto ay) => DropdownMenuItem<String>(value: ay.id, child: Text(ay.name))),
-                          ],
-                          onChanged: (val) => ref.read(aiFiltersProvider.notifier).setAcademicYear(val),
-                        ),
-                      ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final availableWidth = constraints.maxWidth;
+                    if (availableWidth >= 820) {
+                      // Desktop & Wide Laptop view: Clean horizontal alignment adapting to full available width
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (academicYearsState != null)
+                            Expanded(
+                              flex: 3,
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.academicYearId,
+                                decoration: const InputDecoration(
+                                  labelText: 'Academic Year',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Academic Years', overflow: TextOverflow.ellipsis)),
+                                  ...academicYearsState.years.map<DropdownMenuItem<String>>((AcademicYearDto ay) =>
+                                    DropdownMenuItem<String>(value: ay.id, child: Text(ay.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setAcademicYear(val),
+                              ),
+                            ),
+                          const SizedBox(width: 12),
 
-                    // Class Filter
-                    if (classesState != null)
-                      SizedBox(
-                        width: 180,
-                        child: DropdownButtonFormField<String>(
-                          value: filters.classId,
-                          decoration: const InputDecoration(labelText: 'Class', isDense: true, border: OutlineInputBorder()),
-                          items: [
-                            const DropdownMenuItem<String>(value: null, child: Text('All Classes')),
-                            ...classesState.classes.map<DropdownMenuItem<String>>((ClassDto c) => DropdownMenuItem<String>(value: c.id, child: Text(c.name))),
-                          ],
-                          onChanged: (val) => ref.read(aiFiltersProvider.notifier).setClass(val),
-                        ),
-                      ),
+                          if (classesState != null)
+                            Expanded(
+                              flex: 2,
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.classId,
+                                decoration: const InputDecoration(
+                                  labelText: 'Class',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Classes', overflow: TextOverflow.ellipsis)),
+                                  ...classesState.classes.map<DropdownMenuItem<String>>((ClassDto c) =>
+                                    DropdownMenuItem<String>(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setClass(val),
+                              ),
+                            ),
 
-                    // Section Filter
-                    if (filters.classId != null)
-                      SizedBox(
-                        width: 180,
-                        child: DropdownButtonFormField<String>(
-                          value: filters.sectionId,
-                          decoration: const InputDecoration(labelText: 'Section', isDense: true, border: OutlineInputBorder()),
-                          items: [
-                            const DropdownMenuItem<String>(value: null, child: Text('All Sections')),
-                            ...classSections.map<DropdownMenuItem<String>>((SectionDto s) => DropdownMenuItem<String>(value: s.id, child: Text(s.name))),
+                          if (filters.classId != null) ...[
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 2,
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.sectionId,
+                                decoration: const InputDecoration(
+                                  labelText: 'Section',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Sections', overflow: TextOverflow.ellipsis)),
+                                  ...classSections.map<DropdownMenuItem<String>>((SectionDto s) =>
+                                    DropdownMenuItem<String>(value: s.id, child: Text(s.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setSection(val),
+                              ),
+                            ),
                           ],
-                          onChanged: (val) => ref.read(aiFiltersProvider.notifier).setSection(val),
-                        ),
-                      ),
 
-                    TextButton.icon(
-                      icon: const Icon(Icons.clear_all),
-                      label: const Text('Reset Filters'),
-                      onPressed: () => ref.read(aiFiltersProvider.notifier).reset(),
-                    ),
-                  ],
+                          const SizedBox(width: 12),
+                          TextButton.icon(
+                            icon: const Icon(Icons.clear_all),
+                            label: const Text('Reset Filters'),
+                            onPressed: () => ref.read(aiFiltersProvider.notifier).reset(),
+                          ),
+                        ],
+                      );
+                    } else {
+                      // Narrow & Tablet view: Gracefully wrapped without horizontal overflows
+                      final itemWidth = (availableWidth - 16) / 2 > 170 ? (availableWidth - 16) / 2 : availableWidth;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (academicYearsState != null)
+                            SizedBox(
+                              width: itemWidth.clamp(170.0, 260.0),
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.academicYearId,
+                                decoration: const InputDecoration(labelText: 'Academic Year', isDense: true, border: OutlineInputBorder()),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Academic Years', overflow: TextOverflow.ellipsis)),
+                                  ...academicYearsState.years.map<DropdownMenuItem<String>>((AcademicYearDto ay) =>
+                                    DropdownMenuItem<String>(value: ay.id, child: Text(ay.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setAcademicYear(val),
+                              ),
+                            ),
+
+                          if (classesState != null)
+                            SizedBox(
+                              width: itemWidth.clamp(150.0, 220.0),
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.classId,
+                                decoration: const InputDecoration(labelText: 'Class', isDense: true, border: OutlineInputBorder()),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Classes', overflow: TextOverflow.ellipsis)),
+                                  ...classesState.classes.map<DropdownMenuItem<String>>((ClassDto c) =>
+                                    DropdownMenuItem<String>(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setClass(val),
+                              ),
+                            ),
+
+                          if (filters.classId != null)
+                            SizedBox(
+                              width: itemWidth.clamp(150.0, 220.0),
+                              child: SafeDropdownButtonFormField<String>(
+                                isExpanded: true,
+                                value: filters.sectionId,
+                                decoration: const InputDecoration(labelText: 'Section', isDense: true, border: OutlineInputBorder()),
+                                items: [
+                                  const DropdownMenuItem<String>(value: null, child: Text('All Sections', overflow: TextOverflow.ellipsis)),
+                                  ...classSections.map<DropdownMenuItem<String>>((SectionDto s) =>
+                                    DropdownMenuItem<String>(value: s.id, child: Text(s.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) => ref.read(aiFiltersProvider.notifier).setSection(val),
+                              ),
+                            ),
+
+                          TextButton.icon(
+                            icon: const Icon(Icons.clear_all),
+                            label: const Text('Reset Filters'),
+                            onPressed: () => ref.read(aiFiltersProvider.notifier).reset(),
+                          ),
+                        ],
+                      );
+                    }
+                  },
                 ),
               ),
             ),
@@ -211,13 +330,45 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
                     const SizedBox(height: 28),
 
                     // Section 3: Performance Trend Intelligence & Subject Difficulty
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: _buildPerformanceTrendsSection(context, summary, theme)),
-                        const SizedBox(width: 20),
-                        Expanded(child: _buildSubjectDifficultySection(context, summary, theme)),
-                      ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (constraints.maxWidth < 920) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildPerformanceTrendsSection(context, summary, theme),
+                              const SizedBox(height: 20),
+                              _buildSubjectDifficultySection(
+                                context,
+                                summary,
+                                theme,
+                                filters,
+                                academicYearsState,
+                                classesState,
+                                classSections,
+                              ),
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: _buildPerformanceTrendsSection(context, summary, theme)),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: _buildSubjectDifficultySection(
+                                context,
+                                summary,
+                                theme,
+                                filters,
+                                academicYearsState,
+                                classesState,
+                                classSections,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 28),
 
@@ -313,9 +464,9 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -348,16 +499,22 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
               children: [
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     const Icon(Icons.radar, color: Colors.red, size: 22),
                     const SizedBox(width: 10),
-                    Text(
-                      'Academic Risk Radar (${riskList.length} Flagged Students)',
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    Flexible(
+                      child: Text(
+                        'Academic Risk Radar (${riskList.length} Flagged Students)',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ],
                 ),
@@ -406,15 +563,16 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(student.studentName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                const SizedBox(width: 8),
                                 Text(
                                   '(${student.className} - ${student.sectionName})',
                                   style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                                 ),
-                                const Spacer(),
                                 AIRiskBadge(tier: student.riskTier, confidenceScore: student.confidenceScore),
                               ],
                             ),
@@ -467,9 +625,11 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
               children: [
                 const Icon(Icons.trending_up, color: Colors.indigo, size: 20),
                 const SizedBox(width: 8),
-                Text(
-                  'Performance Trend Intelligence',
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Text(
+                    'Performance Trend Intelligence',
+                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),
@@ -514,7 +674,15 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
     );
   }
 
-  Widget _buildSubjectDifficultySection(BuildContext context, summary, ThemeData theme) {
+  Widget _buildSubjectDifficultySection(
+    BuildContext context,
+    summary,
+    ThemeData theme,
+    AIFiltersState filters,
+    AcademicYearsState? academicYearsState,
+    ClassesState? classesState,
+    List<SectionDto> classSections,
+  ) {
     final subjects = summary.subjectDifficultyAnalysis;
 
     return Card(
@@ -529,16 +697,37 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Icon(Icons.psychology, color: Colors.deepOrange, size: 20),
+                Expanded(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.psychology, color: Colors.deepOrange, size: 20),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Subject Difficulty Analysis',
+                          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  'Subject Difficulty Analysis',
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                  '${subjects.length} Subjects',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 6),
+            Text(
+              'Click any subject row or badge to open difficulty details and distribution.',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+            ),
+            const SizedBox(height: 14),
             if (subjects.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(16.0),
@@ -549,34 +738,457 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: subjects.length,
-                separatorBuilder: (_, __) => const Divider(height: 16),
+                separatorBuilder: (_, __) => const Divider(height: 12),
                 itemBuilder: (context, idx) {
                   final s = subjects[idx];
                   final isHigh = s.difficultyIndex == 'HIGH';
+                  final isMod = s.difficultyIndex == 'MODERATE';
+                  final isWatch = s.difficultyIndex == 'WATCH';
 
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  final Color statusColor = isHigh
+                      ? Colors.red
+                      : (isMod ? Colors.deepOrange : (isWatch ? Colors.amber.shade900 : Colors.grey.shade600));
+
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    mouseCursor: SystemMouseCursors.click,
+                    onTap: () => _showSubjectDetailDialog(
+                      context,
+                      s,
+                      filters,
+                      academicYearsState,
+                      classesState,
+                      classSections,
+                    ),
+                    child: Tooltip(
+                      message: 'Click to view ${s.subjectName} difficulty analysis & marks distribution',
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(s.subjectName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            Text('${s.below50Percentage}% scored below 50%', style: TextStyle(fontSize: 11, color: isHigh ? Colors.red : Colors.grey.shade600)),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    s.subjectName,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${s.below50Percentage}% scored below 50% • Avg: ${s.averagePercentage}%',
+                                    style: TextStyle(fontSize: 11, color: statusColor),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            InkWell(
+                              onTap: () => _showSubjectDetailDialog(
+                                context,
+                                s,
+                                filters,
+                                academicYearsState,
+                                classesState,
+                                classSections,
+                              ),
+                              child: _buildDifficultyBadge(s.difficultyIndex),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
                           ],
                         ),
                       ),
-                      Chip(
-                        label: Text(s.difficultyIndex, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isHigh ? Colors.red : Colors.blue)),
-                        backgroundColor: isHigh ? Colors.red.shade50 : Colors.blue.shade50,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
+                    ),
                   );
                 },
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showSubjectDetailDialog(
+    BuildContext context,
+    SubjectDifficultyModel subject,
+    AIFiltersState filters,
+    AcademicYearsState? academicYearsState,
+    ClassesState? classesState,
+    List<SectionDto> classSections,
+  ) {
+    final theme = Theme.of(context);
+    final isHigh = subject.difficultyIndex == 'HIGH';
+    final isMod = subject.difficultyIndex == 'MODERATE';
+    final isWatch = subject.difficultyIndex == 'WATCH';
+
+    final Color statusColor = isHigh
+        ? Colors.red
+        : (isMod ? Colors.deepOrange : (isWatch ? Colors.amber.shade800 : Colors.green));
+
+    final selectedYearName = filters.academicYearId != null && academicYearsState != null
+        ? academicYearsState.years.where((y) => y.id == filters.academicYearId).firstOrNull?.name ?? 'All Academic Years'
+        : 'All Academic Years';
+
+    final selectedClassName = filters.classId != null && classesState != null
+        ? classesState.classes.where((c) => c.id == filters.classId).firstOrNull?.name ?? 'All Classes'
+        : 'All Classes';
+
+    final selectedSectionName = filters.sectionId != null
+        ? classSections.where((s) => s.id == filters.sectionId).firstOrNull?.name ?? 'All Sections'
+        : 'All Sections';
+
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Row
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.psychology, color: statusColor, size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    subject.subjectName,
+                                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                _buildDifficultyBadge(subject.difficultyIndex),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                _buildFilterScopeChip(Icons.calendar_today, selectedYearName),
+                                _buildFilterScopeChip(Icons.school, selectedClassName),
+                                _buildFilterScopeChip(Icons.grid_view, selectedSectionName),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Deterministic Difficulty Explanation Box
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: statusColor, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            subject.difficultyExplanation.isNotEmpty
+                                ? subject.difficultyExplanation
+                                : '${subject.subjectName} is classified as ${subject.difficultyIndex} based on student scoring trends and academic averages.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade900,
+                              fontWeight: FontWeight.w500,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Performance Metrics Grid
+                  Text('Performance Metrics', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final isWide = c.maxWidth >= 500;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Total Evaluated',
+                            value: '${subject.totalStudentsEvaluated} Students',
+                            icon: Icons.people_outline,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Average Marks',
+                            value: '${subject.averagePercentage}%',
+                            icon: Icons.analytics_outlined,
+                            color: Colors.indigo,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Median Marks',
+                            value: subject.medianPercentage != null ? '${subject.medianPercentage}%' : 'N/A',
+                            icon: Icons.show_chart,
+                            color: Colors.blue.shade700,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Highest Marks',
+                            value: '${subject.highestPercentage}%',
+                            icon: Icons.arrow_upward,
+                            color: Colors.green,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Lowest Marks',
+                            value: '${subject.lowestPercentage}%',
+                            icon: Icons.arrow_downward,
+                            color: Colors.red.shade700,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Pass Percentage',
+                            value: '${subject.passPercentage}%',
+                            icon: Icons.check_circle_outline,
+                            color: subject.passPercentage >= 75 ? Colors.green : Colors.amber.shade900,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Students Below 50%',
+                            value: '${subject.below50Count} (${subject.below50Percentage}%)',
+                            icon: Icons.warning_amber_rounded,
+                            color: subject.below50Percentage >= 25 ? Colors.red : Colors.grey.shade800,
+                          ),
+                          _buildMetricTile(
+                            width: isWide ? (c.maxWidth - 24) / 3 : (c.maxWidth - 12) / 2,
+                            label: 'Difficulty Score',
+                            value: '${subject.difficultyScore} / 100',
+                            icon: Icons.speed,
+                            color: statusColor,
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Marks Distribution Breakdown
+                  Text('Marks Distribution', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  _buildDistributionSection(subject.marksDistribution, subject.totalStudentsEvaluated),
+                  const SizedBox(height: 20),
+
+                  // Remedial Recommendation
+                  if (subject.remedialRecommendation.isNotEmpty) ...[
+                    Text('Remedial Recommendation', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Text(
+                        subject.remedialRecommendation,
+                        style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // Footer Actions
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close Details'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDistributionSection(MarksDistributionModel dist, int total) {
+    final denom = total > 0 ? total : 1;
+    return Column(
+      children: [
+        _buildDistributionRow('90–100%', dist.score90To100, denom, Colors.green.shade600),
+        const SizedBox(height: 8),
+        _buildDistributionRow('75–89%', dist.score75To89, denom, Colors.teal.shade600),
+        const SizedBox(height: 8),
+        _buildDistributionRow('60–74%', dist.score60To74, denom, Colors.blue.shade600),
+        const SizedBox(height: 8),
+        _buildDistributionRow('50–59%', dist.score50To59, denom, Colors.amber.shade700),
+        const SizedBox(height: 8),
+        _buildDistributionRow('Below 50%', dist.scoreBelow50, denom, Colors.red.shade600),
+      ],
+    );
+  }
+
+  Widget _buildDistributionRow(String rangeLabel, int count, int total, Color color) {
+    final pct = total > 0 ? (count / total) * 100.0 : 0.0;
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            rangeLabel,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: total > 0 ? (count / total).clamp(0.0, 1.0) : 0.0,
+              minHeight: 12,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 85,
+          child: Text(
+            '$count (${pct.toStringAsFixed(1)}%)',
+            textAlign: TextAlign.end,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade800),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricTile({
+    required double width,
+    required String label,
+    required String value,
+    required IconData icon,
+    Color? color,
+  }) {
+    final tileColor = color ?? Colors.grey.shade800;
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: tileColor),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: tileColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterScopeChip(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: Colors.grey.shade700),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade800, fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDifficultyBadge(String tier) {
+    final upper = tier.toUpperCase();
+    final isHigh = upper == 'HIGH';
+    final isMod = upper == 'MODERATE';
+    final isWatch = upper == 'WATCH';
+
+    final color = isHigh
+        ? Colors.red
+        : (isMod ? Colors.deepOrange : (isWatch ? Colors.amber.shade900 : Colors.green.shade800));
+    final bg = isHigh
+        ? Colors.red.shade50
+        : (isMod ? Colors.deepOrange.shade50 : (isWatch ? Colors.amber.shade50 : Colors.green.shade50));
+    final border = isHigh
+        ? Colors.red.shade200
+        : (isMod ? Colors.deepOrange.shade200 : (isWatch ? Colors.amber.shade200 : Colors.green.shade200));
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        upper,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color),
       ),
     );
   }
@@ -599,9 +1211,11 @@ class _AIIntelligenceDashboardScreenState extends ConsumerState<AIIntelligenceDa
               children: [
                 const Icon(Icons.analytics, color: Colors.teal, size: 20),
                 const SizedBox(width: 8),
-                Text(
-                  'Marks Anomaly & Statistical Variance Detection',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                Expanded(
+                  child: Text(
+                    'Marks Anomaly & Statistical Variance Detection',
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
                 ),
               ],
             ),

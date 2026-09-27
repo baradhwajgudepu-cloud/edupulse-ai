@@ -21,6 +21,11 @@ abstract class AuthRepository {
     required String newPassword,
     String? confirmPassword,
   });
+
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  });
 }
 
 abstract class PlatformAuthRepository {

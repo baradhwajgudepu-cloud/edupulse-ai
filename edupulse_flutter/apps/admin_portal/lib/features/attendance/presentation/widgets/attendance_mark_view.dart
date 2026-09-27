@@ -9,7 +9,12 @@ import '../../../../core/presentation/utils/dropdown_safety.dart';
 import '../../../../core/presentation/widgets/safe_dropdown.dart';
 
 class AttendanceMarkView extends ConsumerStatefulWidget {
-  const AttendanceMarkView({super.key});
+  final VoidCallback? onBackToDashboard;
+
+  const AttendanceMarkView({
+    super.key,
+    this.onBackToDashboard,
+  });
 
   @override
   ConsumerState<AttendanceMarkView> createState() => _AttendanceMarkViewState();
@@ -81,11 +86,24 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
       return const Center(child: Text('Please select a school campus.'));
     }
 
+    final markNotifier = ref.read(dailyAttendanceMarkProvider.notifier);
+
     // Listen for campus switch: clear attendance mark state and re-fetch setup data
     ref.listen<String?>(selectedSchoolIdProvider, (prev, next) {
       if (next != null && next != prev) {
-        ref.read(dailyAttendanceMarkProvider.notifier).reset();
+        markNotifier.reset();
         _loadSchoolSetupData(next);
+      }
+    });
+
+    // Listen for academic years loading: auto-select active academic year reactively
+    ref.listen<AcademicYearsState>(academicYearsProvider(schoolId), (prev, next) {
+      if (ref.read(dailyAttendanceMarkProvider).academicYearId == null && next.years.isNotEmpty) {
+        final selectedAy = ref.read(selectedAcademicYearIdProvider);
+        final defaultAy = (selectedAy != null && next.years.any((y) => y.id == selectedAy))
+            ? selectedAy
+            : (next.years.firstWhere((y) => y.isCurrent, orElse: () => next.years.first).id);
+        markNotifier.setSelection(academicYearId: defaultAy);
       }
     });
 
@@ -93,24 +111,16 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
     final isTeacher = permissions.isTeacher;
 
     final markState = ref.watch(dailyAttendanceMarkProvider);
-    final markNotifier = ref.read(dailyAttendanceMarkProvider.notifier);
 
     final ayState = ref.watch(academicYearsProvider(schoolId));
     final classesState = ref.watch(classesProvider(schoolId));
     final sectionsState = ref.watch(sectionsProvider(schoolId));
 
-    // Auto-select active academic year if not yet selected and years are loaded
     final selectedAyId = ref.watch(selectedAcademicYearIdProvider);
-    if (markState.academicYearId == null && ayState.years.isNotEmpty) {
-      final defaultAy = (selectedAyId != null && ayState.years.any((y) => y.id == selectedAyId))
-          ? selectedAyId
-          : (ayState.years.firstWhere((y) => y.isCurrent, orElse: () => ayState.years.first).id);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && ref.read(dailyAttendanceMarkProvider).academicYearId == null) {
-          markNotifier.setSelection(academicYearId: defaultAy);
-        }
-      });
-    }
+    final String? defaultAy = (selectedAyId != null && ayState.years.any((y) => y.id == selectedAyId))
+        ? selectedAyId
+        : (ayState.years.isEmpty ? null : ayState.years.firstWhere((y) => y.isCurrent, orElse: () => ayState.years.first).id);
+    final effectiveAyId = markState.academicYearId ?? defaultAy;
 
     // Teacher assignment scoping
     final teacherAssignmentsAsync = isTeacher ? ref.watch(teacherAttendanceAssignmentsProvider(schoolId)) : null;
@@ -118,7 +128,7 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
 
     // Filter classes by selected academic year and teacher assignment
     final availableClasses = classesState.classes.where((c) {
-      if (markState.academicYearId != null && c.academicYearId != markState.academicYearId) {
+      if (effectiveAyId != null && c.academicYearId != effectiveAyId) {
         return false;
       }
       if (isTeacher) {
@@ -205,6 +215,48 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Top Navigation / Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  if (widget.onBackToDashboard != null) ...[
+                    IconButton(
+                      key: const Key('mark_back_to_dashboard_btn'),
+                      icon: const Icon(Icons.arrow_back),
+                      tooltip: 'Back to Dashboard',
+                      onPressed: widget.onBackToDashboard,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Mark Daily Attendance',
+                        style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Take and submit student attendance for assigned classes & sections',
+                        style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              if (widget.onBackToDashboard != null)
+                OutlinedButton.icon(
+                  key: const Key('mark_back_to_dashboard_outline_btn'),
+                  icon: const Icon(Icons.arrow_back, size: 16),
+                  label: const Text('Back to Dashboard'),
+                  onPressed: widget.onBackToDashboard,
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
           // 1. Selector Bar
           Card(
             elevation: 0,
@@ -270,7 +322,7 @@ class _AttendanceMarkViewState extends ConsumerState<AttendanceMarkView> {
                         width: 190,
                         child: SafeDropdownButtonFormField<String>(
                           isExpanded: true,
-                          value: markState.academicYearId,
+                          value: effectiveAyId,
                           decoration: InputDecoration(
                             labelText: 'Academic Year',
                             border: const OutlineInputBorder(),

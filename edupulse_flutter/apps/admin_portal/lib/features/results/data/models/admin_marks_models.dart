@@ -341,6 +341,8 @@ class ExamWideUploadRowModel {
   final String? sectionId;
   final String? subjectId;
 
+  final bool isExisting;
+
   const ExamWideUploadRowModel({
     required this.rowNumber,
     required this.className,
@@ -359,6 +361,7 @@ class ExamWideUploadRowModel {
     this.classId,
     this.sectionId,
     this.subjectId,
+    this.isExisting = false,
   });
 
   factory ExamWideUploadRowModel.fromJson(Map<String, dynamic> json) {
@@ -380,6 +383,7 @@ class ExamWideUploadRowModel {
       classId: json['class_id']?.toString(),
       sectionId: json['section_id']?.toString(),
       subjectId: json['subject_id']?.toString(),
+      isExisting: json['is_existing'] == true,
     );
   }
 
@@ -396,6 +400,7 @@ class ExamWideUploadRowModel {
       'status': status,
       if (remarks != null) 'remarks': remarks,
       'is_valid': isValid,
+      'is_existing': isExisting,
       if (errorMessage != null) 'error_message': errorMessage,
       if (studentId != null) 'student_id': studentId,
       if (examScheduleId != null) 'exam_schedule_id': examScheduleId,
@@ -407,27 +412,80 @@ class ExamWideUploadRowModel {
 }
 
 @immutable
+class ExamWideClassSummary {
+  final String className;
+  final String? classId;
+  final int sectionsCount;
+  final List<String> sections;
+  final int studentsCount;
+  final int validRows;
+  final int invalidRows;
+  final int existingRows;
+
+  const ExamWideClassSummary({
+    required this.className,
+    this.classId,
+    required this.sectionsCount,
+    required this.sections,
+    required this.studentsCount,
+    required this.validRows,
+    required this.invalidRows,
+    required this.existingRows,
+  });
+
+  factory ExamWideClassSummary.fromJson(Map<String, dynamic> json) {
+    return ExamWideClassSummary(
+      className: (json['class_name'] ?? '').toString(),
+      classId: json['class_id']?.toString(),
+      sectionsCount: (json['sections_count'] is num) ? (json['sections_count'] as num).toInt() : 0,
+      sections: (json['sections'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      studentsCount: (json['students_count'] is num) ? (json['students_count'] as num).toInt() : 0,
+      validRows: (json['valid_rows'] is num) ? (json['valid_rows'] as num).toInt() : 0,
+      invalidRows: (json['invalid_rows'] is num) ? (json['invalid_rows'] as num).toInt() : 0,
+      existingRows: (json['existing_rows'] is num) ? (json['existing_rows'] as num).toInt() : 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'class_name': className,
+      if (classId != null) 'class_id': classId,
+      'sections_count': sectionsCount,
+      'sections': sections,
+      'students_count': studentsCount,
+      'valid_rows': validRows,
+      'invalid_rows': invalidRows,
+      'existing_rows': existingRows,
+    };
+  }
+}
+
+@immutable
 class ExamWideUploadPreviewModel {
   final int totalRows;
   final int validRowsCount;
   final int invalidRowsCount;
+  final int existingMarksCount;
   final List<String> classesDetected;
   final List<String> sectionsDetected;
   final List<String> subjectsDetected;
   final int studentsCount;
   final List<String> errors;
   final List<ExamWideUploadRowModel> previewRows;
+  final List<ExamWideClassSummary> classesSummary;
 
   const ExamWideUploadPreviewModel({
     required this.totalRows,
     required this.validRowsCount,
     required this.invalidRowsCount,
+    this.existingMarksCount = 0,
     required this.classesDetected,
     required this.sectionsDetected,
     required this.subjectsDetected,
     required this.studentsCount,
     required this.errors,
     required this.previewRows,
+    this.classesSummary = const [],
   });
 
   factory ExamWideUploadPreviewModel.fromJson(Map<String, dynamic> json) {
@@ -435,6 +493,7 @@ class ExamWideUploadPreviewModel {
       totalRows: (json['total_rows'] is num) ? (json['total_rows'] as num).toInt() : 0,
       validRowsCount: (json['valid_rows_count'] is num) ? (json['valid_rows_count'] as num).toInt() : 0,
       invalidRowsCount: (json['invalid_rows_count'] is num) ? (json['invalid_rows_count'] as num).toInt() : 0,
+      existingMarksCount: (json['existing_marks_count'] is num) ? (json['existing_marks_count'] as num).toInt() : 0,
       classesDetected: (json['classes_detected'] as List?)?.map((e) => e.toString()).toList() ?? [],
       sectionsDetected: (json['sections_detected'] as List?)?.map((e) => e.toString()).toList() ?? [],
       subjectsDetected: (json['subjects_detected'] as List?)?.map((e) => e.toString()).toList() ?? [],
@@ -443,7 +502,81 @@ class ExamWideUploadPreviewModel {
       previewRows: (json['preview_rows'] as List?)
           ?.map((e) => ExamWideUploadRowModel.fromJson(e as Map<String, dynamic>))
           .toList() ?? [],
+      classesSummary: (json['classes_summary'] as List?)
+          ?.map((e) => ExamWideClassSummary.fromJson(e as Map<String, dynamic>))
+          .toList() ?? [],
     );
+  }
+}
+
+@immutable
+class ExamWideClassImportResult {
+  final String? classId;
+  final String className;
+  final int sectionsCount;
+  final List<String> sections;
+  final int studentsCount;
+  final int totalRecords;
+  final int createdCount;
+  final int updatedCount;
+  final int skippedCount;
+  final int failedCount;
+  final String? status;
+  final String? reason;
+
+  const ExamWideClassImportResult({
+    this.classId,
+    required this.className,
+    this.sectionsCount = 0,
+    this.sections = const [],
+    this.studentsCount = 0,
+    this.totalRecords = 0,
+    this.createdCount = 0,
+    this.updatedCount = 0,
+    this.skippedCount = 0,
+    this.failedCount = 0,
+    this.status,
+    this.reason,
+  });
+
+  factory ExamWideClassImportResult.fromJson(Map<String, dynamic> json) {
+    final rawTotal = json['total_records'] ?? json['processed'];
+    final rawCreated = json['created_count'] ?? json['created'];
+    final rawUpdated = json['updated_count'] ?? json['updated'];
+    final rawSkipped = json['skipped_count'] ?? json['skipped'];
+    final rawFailed = json['failed_count'] ?? json['failed'];
+
+    return ExamWideClassImportResult(
+      classId: json['class_id']?.toString(),
+      className: (json['class_name'] ?? '').toString(),
+      sectionsCount: (json['sections_count'] is num) ? (json['sections_count'] as num).toInt() : 0,
+      sections: (json['sections'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      studentsCount: (json['students_count'] is num) ? (json['students_count'] as num).toInt() : 0,
+      totalRecords: (rawTotal is num) ? rawTotal.toInt() : 0,
+      createdCount: (rawCreated is num) ? rawCreated.toInt() : 0,
+      updatedCount: (rawUpdated is num) ? rawUpdated.toInt() : 0,
+      skippedCount: (rawSkipped is num) ? rawSkipped.toInt() : 0,
+      failedCount: (rawFailed is num) ? rawFailed.toInt() : 0,
+      status: json['status']?.toString(),
+      reason: json['reason']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      if (classId != null) 'class_id': classId,
+      'class_name': className,
+      'sections_count': sectionsCount,
+      'sections': sections,
+      'students_count': studentsCount,
+      'total_records': totalRecords,
+      'created_count': createdCount,
+      'updated_count': updatedCount,
+      'skipped_count': skippedCount,
+      'failed_count': failedCount,
+      if (status != null) 'status': status,
+      if (reason != null) 'reason': reason,
+    };
   }
 }
 
@@ -458,6 +591,11 @@ class ExamWideUploadResultModel {
   final int totalRecords;
   final int savedCount;
   final int failedCount;
+  final int createdCount;
+  final int updatedCount;
+  final int skippedCount;
+  final List<ExamWideClassImportResult> classesBreakdown;
+  final Map<String, int> failureBreakdown;
 
   const ExamWideUploadResultModel({
     required this.examinationId,
@@ -469,9 +607,22 @@ class ExamWideUploadResultModel {
     required this.totalRecords,
     required this.savedCount,
     required this.failedCount,
+    this.createdCount = 0,
+    this.updatedCount = 0,
+    this.skippedCount = 0,
+    this.classesBreakdown = const [],
+    this.failureBreakdown = const {},
   });
 
   factory ExamWideUploadResultModel.fromJson(Map<String, dynamic> json) {
+    final rawFailure = json['failure_breakdown'] as Map<String, dynamic>? ?? {};
+    final failureMap = <String, int>{};
+    for (final e in rawFailure.entries) {
+      if (e.value is num) {
+        failureMap[e.key] = (e.value as num).toInt();
+      }
+    }
+
     return ExamWideUploadResultModel(
       examinationId: (json['examination_id'] ?? '').toString(),
       examinationName: (json['examination_name'] ?? 'Examination').toString(),
@@ -482,6 +633,13 @@ class ExamWideUploadResultModel {
       totalRecords: (json['total_records'] is num) ? (json['total_records'] as num).toInt() : 0,
       savedCount: (json['saved_count'] is num) ? (json['saved_count'] as num).toInt() : 0,
       failedCount: (json['failed_count'] is num) ? (json['failed_count'] as num).toInt() : 0,
+      createdCount: (json['created_count'] is num) ? (json['created_count'] as num).toInt() : 0,
+      updatedCount: (json['updated_count'] is num) ? (json['updated_count'] as num).toInt() : 0,
+      skippedCount: (json['skipped_count'] is num) ? (json['skipped_count'] as num).toInt() : 0,
+      classesBreakdown: (json['classes_breakdown'] as List?)
+          ?.map((e) => ExamWideClassImportResult.fromJson(e as Map<String, dynamic>))
+          .toList() ?? [],
+      failureBreakdown: failureMap,
     );
   }
 }
@@ -491,6 +649,8 @@ class ExaminationMissingBreakdownModel {
   final String className;
   final String sectionName;
   final String subjectName;
+  final String? subjectCode;
+  final String? subjectId;
   final String classId;
   final String sectionId;
   final String scheduleId;
@@ -502,6 +662,8 @@ class ExaminationMissingBreakdownModel {
     required this.className,
     required this.sectionName,
     required this.subjectName,
+    this.subjectCode,
+    this.subjectId,
     required this.classId,
     required this.sectionId,
     required this.scheduleId,
@@ -515,6 +677,8 @@ class ExaminationMissingBreakdownModel {
       className: (json['class_name'] ?? 'Class').toString(),
       sectionName: (json['section_name'] ?? 'Section').toString(),
       subjectName: (json['subject_name'] ?? 'Subject').toString(),
+      subjectCode: json['subject_code']?.toString(),
+      subjectId: json['subject_id']?.toString(),
       classId: (json['class_id'] ?? '').toString(),
       sectionId: (json['section_id'] ?? '').toString(),
       scheduleId: (json['schedule_id'] ?? '').toString(),
@@ -562,3 +726,65 @@ class ExaminationPublishSummaryModel {
     );
   }
 }
+
+@immutable
+class ClassAllSubjectsUploadResultModel {
+  final String examinationId;
+  final String examinationName;
+  final String classId;
+  final String className;
+  final String sectionId;
+  final String sectionName;
+  final int totalStudentsProcessed;
+  final int totalSubjectsDetected;
+  final int totalMarksCreated;
+  final int totalMarksUpdated;
+  final int failedRows;
+  final List<String> validationErrors;
+
+  const ClassAllSubjectsUploadResultModel({
+    required this.examinationId,
+    required this.examinationName,
+    required this.classId,
+    required this.className,
+    required this.sectionId,
+    required this.sectionName,
+    required this.totalStudentsProcessed,
+    required this.totalSubjectsDetected,
+    required this.totalMarksCreated,
+    required this.totalMarksUpdated,
+    required this.failedRows,
+    required this.validationErrors,
+  });
+
+  factory ClassAllSubjectsUploadResultModel.fromJson(Map<String, dynamic> json) {
+    return ClassAllSubjectsUploadResultModel(
+      examinationId: (json['examination_id'] ?? '').toString(),
+      examinationName: (json['examination_name'] ?? '').toString(),
+      classId: (json['class_id'] ?? '').toString(),
+      className: (json['class_name'] ?? '').toString(),
+      sectionId: (json['section_id'] ?? '').toString(),
+      sectionName: (json['section_name'] ?? '').toString(),
+      totalStudentsProcessed: (json['total_students_processed'] is num)
+          ? (json['total_students_processed'] as num).toInt()
+          : 0,
+      totalSubjectsDetected: (json['total_subjects_detected'] is num)
+          ? (json['total_subjects_detected'] as num).toInt()
+          : 0,
+      totalMarksCreated: (json['total_marks_created'] is num)
+          ? (json['total_marks_created'] as num).toInt()
+          : 0,
+      totalMarksUpdated: (json['total_marks_updated'] is num)
+          ? (json['total_marks_updated'] as num).toInt()
+          : 0,
+      failedRows: (json['failed_rows'] is num)
+          ? (json['failed_rows'] as num).toInt()
+          : 0,
+      validationErrors: (json['validation_errors'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
+    );
+  }
+}
+

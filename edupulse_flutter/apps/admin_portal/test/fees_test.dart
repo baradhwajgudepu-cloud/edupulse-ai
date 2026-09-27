@@ -8,6 +8,9 @@ import 'package:admin_portal/features/fees/data/models/fee_models.dart';
 import 'package:admin_portal/features/fees/presentation/providers/fees_provider.dart';
 import 'package:admin_portal/features/fees/presentation/pages/fees_dashboard_screen.dart';
 import 'package:admin_portal/features/fees/presentation/pages/outstanding_dues_page.dart';
+import 'package:admin_portal/features/fees/presentation/widgets/fee_receipt_dialog.dart';
+import 'package:admin_portal/features/students/data/models/student_models.dart';
+import 'package:admin_portal/features/students/presentation/widgets/student_360_modal.dart';
 
 class FakeFeesRepository implements AuthRepository {
   @override
@@ -48,6 +51,14 @@ class FakeFeesRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeFeesSessionManager implements SessionManager {
@@ -68,13 +79,21 @@ class FakeFeesSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class FakeFeesApiClient extends BaseApiClient {
@@ -245,6 +264,55 @@ class FakeFeesApiClient extends BaseApiClient {
         ]
       }));
     }
+    if (path.contains('/download')) {
+      return ApiResult.success(mapper([37, 80, 68, 70, 45, 49, 46, 52])); // %PDF-1.4
+    }
+    if (path.startsWith('/fees/ledgers/')) {
+      return ApiResult.success(mapper({
+        'data': {
+          'student_id': 'student_1',
+          'opening_balance': 0.0,
+          'assignments': [
+            {
+              'id': 'assign_1',
+              'tenant_id': 'tenant_1',
+              'school_id': 'school_1',
+              'student_id': 'student_1',
+              'fee_structure_id': 'struct_1',
+              'academic_year_id': 'ay_1',
+              'assigned_amount': 5000.0,
+              'discount_amount': 0.0,
+              'fine_amount': 0.0,
+              'paid_amount': 2000.0,
+              'status': 'PARTIALLY_PAID',
+              'due_date': '2026-09-10',
+              'created_at': '2026-08-11T00:00:00Z',
+              'updated_at': '2026-08-11T00:00:00Z',
+            }
+          ],
+          'scholarships': [],
+          'payments': [
+            {
+              'id': 'pay_1',
+              'tenant_id': 'tenant_1',
+              'student_id': 'student_1',
+              'academic_year_id': 'ay_1',
+              'amount_paid': 2000.0,
+              'payment_method': 'ONLINE',
+              'payment_date': '2026-08-15T00:00:00Z',
+              'status': 'COMPLETED',
+              'receipt_number': 'RCPT-2026-0001',
+              'transaction_reference': 'TXN001',
+              'allocations': [],
+              'version': 1,
+              'created_at': '2026-08-15T00:00:00Z',
+              'updated_at': '2026-08-15T00:00:00Z',
+            }
+          ],
+          'closing_balance': 3000.0,
+        }
+      }));
+    }
     return ApiResult.success(mapper({'data': []}));
   }
 
@@ -257,6 +325,9 @@ class FakeFeesApiClient extends BaseApiClient {
     CancelToken? cancelToken,
     required T Function(dynamic json) mapper,
   }) async {
+    if (path.contains('/propagate')) {
+      return ApiResult.success(mapper({'data': {'assigned_count': 35}}));
+    }
     if (path == '/fees/types') {
       if (simulateDuplicateType) {
         return ApiResult.failure(const ApiFailure(message: 'Fee type code already exists within tenant', type: ApiFailureType.unknown));
@@ -658,6 +729,175 @@ void main() {
       // Verify page titles and stats card
       expect(find.text('Late Defaulters'), findsWidgets);
       expect(find.text('John Doe'), findsOneWidget);
+    });
+
+    test('22. FeeStructuresNotifier propagates fee structure to class students', () async {
+      final fakeApiClient = FakeFeesApiClient();
+      final container = ProviderContainer(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeApiClient),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(feeStructuresProvider('school_1').notifier);
+      final count = await notifier.propagateStructure('struct_1');
+      expect(count, equals(35));
+    });
+
+    testWidgets('23. FeeReceiptDialog renders receipt details and supports download', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final fakeApiClient = FakeFeesApiClient();
+      final payment = FeePayment(
+        id: 'pay_test_1',
+        tenantId: 'tenant_1',
+        studentId: 'student_1',
+        academicYearId: 'ay_1',
+        amountPaid: 25000.0,
+        paymentMethod: PaymentMethod.ONLINE,
+        paymentDate: DateTime(2026, 8, 15),
+        status: PaymentStatus.COMPLETED,
+        receiptNumber: 'RCPT-2026-0099',
+        transactionReference: 'TXN998877',
+        allocations: const [],
+        version: 1,
+        createdAt: DateTime(2026, 8, 15),
+        updatedAt: DateTime(2026, 8, 15),
+      );
+
+      const student = StudentDto(
+        id: 'student_1',
+        tenantId: 'tenant_1',
+        schoolId: 'school_1',
+        academicYearId: 'ay_1',
+        classId: 'class_5_id',
+        sectionId: 'sec_A_id',
+        admissionNumber: 'ADM2025001',
+        firstName: 'Akhil',
+        lastName: 'Rao',
+        dateOfBirth: '2015-01-01',
+        gender: 'MALE',
+        admissionDate: '2025-06-01',
+        className: 'Class 5',
+        sectionName: 'A',
+        rollNumber: '1',
+        status: 'ACTIVE',
+        isActive: true,
+        address: {},
+        medicalInformation: {},
+        settings: {},
+        aiMetrics: const {},
+        version: 1,
+        createdAt: '2025-06-01T00:00:00Z',
+        updatedAt: '2025-06-01T00:00:00Z',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FeeReceiptDialog(
+              payment: payment,
+              student: student,
+              schoolName: 'Delhi Public School',
+              academicYearName: '2026-2027',
+              feeTypeName: 'Tuition Fee',
+              assignedAmount: 50000.0,
+              remainingBalance: 25000.0,
+              apiClient: fakeApiClient,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify receipt dialog elements
+      expect(find.text('Delhi Public School'), findsOneWidget);
+      expect(find.text('RCPT-2026-0099'), findsWidgets);
+      expect(find.text('Akhil Rao'), findsWidgets);
+      expect(find.text('ADM2025001'), findsWidgets);
+      expect(find.text('Class 5 (A)'), findsWidgets);
+      expect(find.text('Download Receipt'), findsOneWidget);
+      expect(find.text('Print Receipt'), findsOneWidget);
+
+      // Tap Download Receipt
+      await tester.ensureVisible(find.text('Download Receipt'));
+      await tester.tap(find.text('Download Receipt'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('downloaded successfully'), findsOneWidget);
+    });
+
+    testWidgets('24. Student360Modal fees tab displays gross dues from assignments', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final fakeApiClient = FakeFeesApiClient();
+      const student = StudentDto(
+        id: 'student_1',
+        tenantId: 'tenant_1',
+        schoolId: 'school_1',
+        academicYearId: 'ay_1',
+        classId: 'class_5_id',
+        sectionId: 'sec_A_id',
+        admissionNumber: 'ADM2025001',
+        firstName: 'Akhil',
+        lastName: 'Rao',
+        dateOfBirth: '2015-01-01',
+        gender: 'MALE',
+        admissionDate: '2025-06-01',
+        className: 'Class 5',
+        sectionName: 'A',
+        rollNumber: '1',
+        status: 'ACTIVE',
+        isActive: true,
+        address: {},
+        medicalInformation: {},
+        settings: {},
+        aiMetrics: const {},
+        version: 1,
+        createdAt: '2025-06-01T00:00:00Z',
+        updatedAt: '2025-06-01T00:00:00Z',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(fakeApiClient),
+            selectedSchoolIdProvider.overrideWith((ref) => 'school_1'),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(
+              body: Student360Modal(
+                student: student,
+                schoolId: 'school_1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify modal opened
+      expect(find.text('Akhil Rao'), findsWidgets);
+
+      // Switch to Fees tab
+      await tester.tap(find.widgetWithText(Tab, 'Fees'), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      // Verify ledger financial breakdown is rendered
+      expect(find.text('TOTAL TUITION & DUES'), findsOneWidget);
+      expect(find.text('COLLECTED AMOUNT'), findsOneWidget);
+      expect(find.text('BALANCE OUTSTANDING'), findsOneWidget);
+      expect(find.textContaining('5,000'), findsWidgets); // Total Invoiced / Assigned
+      expect(find.textContaining('2,000'), findsWidgets); // Total Paid
+      expect(find.textContaining('3,000'), findsWidgets); // Balance Due
+      expect(find.text('Record Payment'), findsOneWidget);
+      expect(find.text('RCPT-2026-0001'), findsOneWidget);
     });
   });
 }

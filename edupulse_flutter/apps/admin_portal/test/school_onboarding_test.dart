@@ -561,6 +561,37 @@ class FakeOnboardingApiClient extends BaseApiClient {
         'data': list
       }));
     }
+    if (path.contains('/tenants')) {
+      final list = <Map<String, dynamic>>[
+        {
+          'id': 'existing-tenant-uuid-456',
+          'name': 'Existing Organization',
+          'code': 'TNT_EXISTING',
+          'is_active': true,
+          'status': 'ACTIVE',
+        },
+      ];
+      for (final call in postCalls) {
+        if (call['path'] == '/tenants' && call['data'] is Map) {
+          final data = call['data'] as Map;
+          list.add({
+            'id': 'resolved_mock_id',
+            'name': data['name'] ?? 'Mock Created Tenant',
+            'code': data['code'] ?? 'MOCK_TNT_CODE',
+            'is_active': true,
+            'status': 'ACTIVE',
+          });
+        }
+      }
+      final uri = Uri.parse(path);
+      final queryCode = uri.queryParameters['code'];
+      final filtered = (queryCode != null && queryCode.isNotEmpty)
+          ? list.where((t) => t['code'] == queryCode).toList()
+          : list;
+      return ApiResult.success(mapper({
+        'data': filtered
+      }));
+    }
     return ApiResult.success(mapper({'data': []}));
   }
 }

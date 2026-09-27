@@ -7,6 +7,8 @@ import 'features/auth/presentation/providers/auth_provider.dart';
 import 'core/routing/app_router.dart';
 import 'core/routing/routes.dart';
 
+import 'package:edupulse_core/edupulse_core.dart';
+
 class EduPulseAdminApp extends ConsumerWidget {
   const EduPulseAdminApp({super.key});
 
@@ -16,6 +18,13 @@ class EduPulseAdminApp extends ConsumerWidget {
 
     ref.listen<bool>(sessionExpiredProvider, (previous, expired) {
       if (expired) {
+        AuthIncidentLogger.log('SESSION_EXPIRED', {
+          'previous': previous,
+          'source': 'EduPulseAdminApp.sessionExpiredProvider',
+          'currentRoute': router.routerDelegate.currentConfiguration.uri.toString(),
+        });
+        debugPrintStack(label: '[AUTH INCIDENT] CALL STACK FOR SESSION_EXPIRED');
+        debugPrintStack(label: '[GLOBAL TENANT SELECTOR LOGOUT STACK]');
         ref.read(authStateProvider.notifier).logout();
         router.go(AppRoutes.login);
         ref.read(sessionExpiredProvider.notifier).state = false;

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -100,7 +101,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     readable_message = "Validation error: " + ("; ".join(error_msgs) if error_msgs else "Invalid input data")
     
-    # Sanitize errors to ensure they are JSON-serializable (Pydantic v2 custom validators include raw ValueError exceptions in ctx)
+    # Sanitize errors to ensure they are JSON-serializable (Pydantic v2 custom validators include raw ValueError exceptions in ctx, and Decimal constraints)
     sanitized_errors = []
     for err in errors:
         sanitized_err = err.copy()
@@ -109,6 +110,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             for k, v in sanitized_err["ctx"].items():
                 if isinstance(v, Exception):
                     ctx_clean[k] = str(v)
+                elif isinstance(v, Decimal):
+                    ctx_clean[k] = float(v)
                 else:
                     ctx_clean[k] = v
             sanitized_err["ctx"] = ctx_clean

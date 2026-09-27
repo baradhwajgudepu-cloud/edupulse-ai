@@ -25,13 +25,19 @@ class JwtInterceptor extends Interceptor {
 
     final cleanPathForCheck = cleanPath.startsWith('/') ? cleanPath : '/$cleanPath';
     if (cleanPathForCheck.contains('/auth/') ||
-        cleanPathForCheck.contains('/notifications') ||
+        cleanPathForCheck.contains('/notification') ||
         cleanPathForCheck.contains('/system/') ||
         cleanPathForCheck.contains('/health') ||
         cleanPathForCheck.contains('/tenants') ||
+        cleanPathForCheck.contains('/platform/') ||
+        cleanPathForCheck.contains('/roles') ||
+        cleanPathForCheck.contains('/permissions') ||
         cleanPathForCheck.contains('/import-jobs/parse') ||
         cleanPathForCheck.contains('/reports/ai-intelligence') ||
-        cleanPathForCheck.contains('/identity/')) {
+        cleanPathForCheck.contains('/ai-intelligence') ||
+        cleanPathForCheck.contains('/reports/tenant') ||
+        cleanPathForCheck.contains('/identity/') ||
+        cleanPathForCheck.contains('/schools/onboard')) {
       return false;
     }
 
@@ -63,7 +69,8 @@ class JwtInterceptor extends Interceptor {
     final cleanPathForCheck = cleanPath.startsWith('/') ? cleanPath : '/$cleanPath';
     if (cleanPathForCheck.contains('/auth/platform-login') ||
         cleanPathForCheck.contains('/health') ||
-        cleanPathForCheck.contains('/system/')) {
+        cleanPathForCheck.contains('/system/') ||
+        cleanPathForCheck.contains('/schools/onboard')) {
       return false;
     }
     return true;
@@ -112,51 +119,49 @@ class JwtInterceptor extends Interceptor {
       if (token != null && token.isNotEmpty) {
         options.headers['Authorization'] = 'Bearer $token';
 
-        String? schoolId = await _tokenProvider.getSchoolId();
-        if (schoolId == null || schoolId.isEmpty) {
-          schoolId = options.headers['X-School-ID']?.toString();
-        }
-        if (schoolId == null || schoolId.isEmpty) {
-          schoolId = options.queryParameters['school_id']?.toString() ??
-              options.queryParameters['schoolId']?.toString();
-        }
-        if (schoolId == null || schoolId.isEmpty) {
-          final uuidRegExp = RegExp(r'/schools/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})');
-          final match = uuidRegExp.firstMatch(options.path);
-          if (match != null) {
-            schoolId = match.group(1);
-          }
-        }
+        final cleanPathForCheck = options.path.startsWith('/') ? options.path : '/${options.path}';
+        final isPlatformOnboarding = cleanPathForCheck.contains('/schools/onboard') ||
+            ((cleanPathForCheck.endsWith('/schools') || cleanPathForCheck.endsWith('/schools/')) &&
+                options.method.toUpperCase() == 'POST');
 
-        // Diagnostic log
-        // ignore: avoid_print
-        print('[JWT_INTERCEPTOR onRequest] URI: ${options.uri} | Method: ${options.method} | Tenant: $tenantId | Token: ${token.substring(0, token.length > 10 ? 10 : token.length)}... | SchoolId in Context: $schoolId | Headers: ${options.headers}');
-
-        if (schoolId == null || schoolId.isEmpty) {
-          if (_pathRequiresSchoolContext(options.path)) {
-            // ignore: avoid_print
-            print('[JWT_INTERCEPTOR onRequest REJECTED] Path requires school context, but schoolId is null/empty. Path: ${options.path}');
-            handler.reject(
-              DioException(
-                requestOptions: options,
-                error: 'Active school context required.',
-                type: DioExceptionType.cancel,
-              ),
-            );
-            return;
-          }
+        if (isPlatformOnboarding) {
+          options.headers.remove('X-School-ID');
+          options.headers.remove('x-school-id');
+          options.headers.remove('X-Active-School-ID');
+          options.headers.remove('x-active-school-id');
         } else {
-          if (_pathRequiresSchoolContext(options.path) || options.path.contains('/reports/ai-intelligence')) {
+          String? schoolId = await _tokenProvider.getSchoolId();
+          if (schoolId == null || schoolId.isEmpty) {
+            schoolId = options.headers['X-School-ID']?.toString();
+          }
+          if (schoolId == null || schoolId.isEmpty) {
+            schoolId = options.queryParameters['school_id']?.toString() ??
+                options.queryParameters['schoolId']?.toString();
+          }
+          if (schoolId == null || schoolId.isEmpty) {
+            final uuidRegExp = RegExp(r'/schools/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})');
+            final match = uuidRegExp.firstMatch(options.path);
+            if (match != null) {
+              schoolId = match.group(1);
+            }
+          }
+
+          if (schoolId == null || schoolId.isEmpty) {
+            if (_pathRequiresSchoolContext(options.path)) {
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  error: 'Active school context required.',
+                  type: DioExceptionType.cancel,
+                ),
+              );
+              return;
+            }
+          } else {
             options.headers['X-School-ID'] = schoolId;
           }
         }
-      } else {
-        // ignore: avoid_print
-        print('[JWT_INTERCEPTOR onRequest NO_TOKEN] Path: ${options.path} | Headers: ${options.headers}');
       }
-    } else {
-      // ignore: avoid_print
-      print('[JWT_INTERCEPTOR onRequest NO_PROVIDER] Path: ${options.path} | Headers: ${options.headers}');
     }
 
     if (options.path.contains('/fees/reports/dashboard')) {

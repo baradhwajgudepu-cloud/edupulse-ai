@@ -63,6 +63,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
         if (file.bytes != null) {
           final sizeMb = file.size / (1024 * 1024);
           if (sizeMb > 10.0) {
+            if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('File size exceeds the 10MB limit.')),
             );
@@ -77,6 +78,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
         }
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking file: $e')),
       );
@@ -191,7 +193,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
                 children: [
                   // Student Selector
                   DropdownButtonFormField<StudentProfile>(
-                    value: _selectedStudent,
+                    initialValue: _selectedStudent,
                     decoration: const InputDecoration(
                       labelText: 'Select Child',
                       border: OutlineInputBorder(),
@@ -214,7 +216,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
 
                   // Recipient Selector
                   DropdownButtonFormField<String>(
-                    value: _recipientType,
+                    initialValue: _recipientType,
                     decoration: const InputDecoration(
                       labelText: 'Send Request To',
                       border: OutlineInputBorder(),
@@ -236,7 +238,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
 
                   // Category Selector
                   DropdownButtonFormField<String>(
-                    value: _category,
+                    initialValue: _category,
                     decoration: const InputDecoration(
                       labelText: 'Category',
                       border: OutlineInputBorder(),
@@ -263,7 +265,7 @@ class _CreateQueryScreenState extends ConsumerState<CreateQueryScreen> {
 
                   // Priority Selector
                   DropdownButtonFormField<String>(
-                    value: _priority,
+                    initialValue: _priority,
                     decoration: const InputDecoration(
                       labelText: 'Priority',
                       border: OutlineInputBorder(),

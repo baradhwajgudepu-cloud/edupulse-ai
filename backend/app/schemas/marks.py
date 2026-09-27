@@ -69,6 +69,8 @@ class MarksResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -114,6 +116,9 @@ class SmartMissingSummary(BaseModel):
     lowest_score: Optional[float] = None
     missing_students: List[StudentShortInfo] = []
     entries: List[MarkWizardItem] = []
+    subject_id: Optional[uuid.UUID] = None
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
 
 class PublishSummaryResponse(BaseModel):
     exam_name: str
@@ -159,6 +164,7 @@ class MarksReviewQueueItem(BaseModel):
     section_name: str
     subject_id: uuid.UUID
     subject_name: str
+    subject_code: Optional[str] = None
     teacher_id: Optional[uuid.UUID] = None
     teacher_name: Optional[str] = None
     exam_date: str
@@ -218,6 +224,7 @@ class ParentTimetableSlot(BaseModel):
     exam_type: str
     subject_id: uuid.UUID
     subject_name: str
+    subject_code: Optional[str] = None
     exam_date: str
     start_time: str
     end_time: str
@@ -279,16 +286,19 @@ class ExamWideUploadRowPreview(BaseModel):
     class_id: Optional[str] = None
     section_id: Optional[str] = None
     subject_id: Optional[str] = None
+    is_existing: bool = False
 
 class ExamWideUploadPreviewResponse(BaseModel):
     total_rows: int
     valid_rows_count: int
     invalid_rows_count: int
+    existing_marks_count: int = 0
     classes_detected: List[str]
     sections_detected: List[str]
     subjects_detected: List[str]
     students_count: int
     errors: List[str] = Field(default_factory=list)
+    classes_summary: List[Dict[str, Any]] = Field(default_factory=list)
     preview_rows: List[ExamWideUploadRowPreview] = Field(default_factory=list)
 
 class ExamWideUploadConfirmRequest(BaseModel):
@@ -296,6 +306,12 @@ class ExamWideUploadConfirmRequest(BaseModel):
     school_id: uuid.UUID
     rows: List[ExamWideUploadRowPreview]
     auto_approve: bool = False
+    duplicate_behavior: Optional[str] = "UPDATE_EXISTING"
+    class_ids: Optional[List[uuid.UUID]] = None
+    class_id: Optional[uuid.UUID] = None
+    section_ids: Optional[List[uuid.UUID]] = None
+    academic_year_id: Optional[uuid.UUID] = None
+    scope: Optional[str] = "ALL_PARTICIPATING_CLASSES"
 
 class ExamWideUploadSummary(BaseModel):
     examination_id: uuid.UUID
@@ -306,7 +322,12 @@ class ExamWideUploadSummary(BaseModel):
     subjects_count: int
     total_records: int
     saved_count: int
+    created_count: int = 0
+    updated_count: int = 0
+    skipped_count: int = 0
     failed_count: int
+    classes_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+    failure_breakdown: Dict[str, int] = Field(default_factory=dict)
 
 class ExaminationPublishSummary(BaseModel):
     examination_id: uuid.UUID
@@ -317,3 +338,39 @@ class ExaminationPublishSummary(BaseModel):
     missing_count: int
     is_fully_published: bool
     missing_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+
+class StudentResultReadinessItem(BaseModel):
+    student_id: uuid.UUID
+    student_name: str
+    roll_number: str
+    admission_number: str
+    status: str
+    total_required_papers: int
+    entered_papers: int
+    is_complete: bool
+    missing_subjects: List[str] = Field(default_factory=list)
+
+class ExaminationResultReadiness(BaseModel):
+    examination_id: uuid.UUID
+    examination_name: str
+    academic_year_id: Optional[uuid.UUID] = None
+    class_id: Optional[uuid.UUID] = None
+    class_name: Optional[str] = None
+    section_id: Optional[uuid.UUID] = None
+    section_name: Optional[str] = None
+    total_students: int
+    students_with_complete_results: int
+    students_with_incomplete_results: int
+    draft_results_count: int
+    ready_to_publish_count: int
+    published_count: int
+    is_ready_to_publish: bool
+    is_fully_published: bool
+    publication_status: str
+    last_published_date: Optional[str] = None
+    published_by_name: Optional[str] = None
+    status_message: str
+    missing_breakdown: List[Dict[str, Any]] = Field(default_factory=list)
+    student_statuses: List[StudentResultReadinessItem] = Field(default_factory=list)
+    can_unpublish: bool = True
+

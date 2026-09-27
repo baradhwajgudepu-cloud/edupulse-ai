@@ -3,7 +3,7 @@ import uuid
 import pytest
 from unittest.mock import AsyncMock, patch
 from httpx import AsyncClient
-from fastapi import status
+from fastapi import status, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -412,6 +412,130 @@ async def test_teacher_class_analysis_unauthorized(client: AsyncClient, setup_te
         assert res.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+@pytest.mark.anyio
+async def test_teacher_class_analysis_openrouter_fallback(client: AsyncClient, setup_teacher_ai_data) -> None:
+    data = setup_teacher_ai_data
+
+    # Mock primary provider (Gemini) failing with quota error
+    fake_gemini = AsyncMock()
+    fake_gemini.provider_name = "gemini"
+    fake_gemini.model = "gemini-3.6-flash"
+    fake_gemini.generate_json.side_effect = HTTPException(
+        status_code=502,
+        detail="AI_QUOTA_EXCEEDED: Gemini quota or prepayment credits depleted: Resource exhausted"
+    )
+
+    # Mock fallback provider (OpenRouter) succeeding with valid response
+    fake_openrouter = AsyncMock()
+    fake_openrouter.provider_name = "openrouter"
+    fake_openrouter.model = "anthropic/claude-3.5-haiku"
+    fake_openrouter.api_key = "fake_openrouter_key"
+    fake_openrouter.generate_json.return_value = {
+        "class_average": 91.0,
+        "grade_distribution": {"A": 1},
+        "pass_percentage": 100.0,
+        "improvement_trend": "Improving via OpenRouter fallback",
+        "students_improving": ["Priya R."],
+        "students_declining": [],
+        "strong_areas": ["Science concepts"],
+        "needs_reinforcement_areas": [],
+        "suggested_actions": ["Pedagogical intervention via fallback."]
+    }
+
+    fallback_service = AIService(provider=fake_gemini, fallback_provider=fake_openrouter)
+    app.dependency_overrides[get_ai_service] = lambda: fallback_service
+    app.dependency_overrides[get_current_user] = lambda: data["user_t1"]
+
+    try:
+        payload = {
+            "class_id": str(data["class_8"].id),
+            "section_id": str(data["section_a"].id),
+            "subject_id": str(data["subject_sci"].id)
+        }
+        res = await client.post("/api/v1/teacher-ai/class-analysis", json=payload, headers=data["auth_headers_t1"])
+        assert res.status_code == 200
+        json_res = res.json()
+        assert json_res["success"] is True
+        assert json_res["data"]["class_average"] == 91.0
+        assert "OpenRouter" in json_res["data"]["improvement_trend"]
+        fake_gemini.generate_json.assert_called_once()
+        fake_openrouter.generate_json.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.anyio
+async def test_teacher_class_analysis_openrouter_direct_and_no_pii(client: AsyncClient, setup_teacher_ai_data) -> None:
+    data = setup_teacher_ai_data
+    from app.services.ai.openrouter import OpenRouterProvider
+
+    captured_prompt = None
+    captured_schema = None
+
+    fake_openrouter = AsyncMock(spec=OpenRouterProvider)
+    fake_openrouter.provider_name = "openrouter"
+    fake_openrouter.model = "openrouter/free"
+
+    async def mock_gen_json(prompt, response_schema, **kwargs):
+        nonlocal captured_prompt, captured_schema
+        captured_prompt = prompt
+        captured_schema = response_schema
+        return {
+            "class_average": 85.0,
+            "grade_distribution": {"A": 1},
+            "pass_percentage": 100.0,
+            "improvement_trend": "Consistent progress observed.",
+            "students_improving": ["Priya R."],
+            "students_declining": [],
+            "strong_areas": ["Science experiments"],
+            "needs_reinforcement_areas": ["Terminology"],
+            "suggested_actions": ["Reinforce scientific vocabulary."]
+        }
+
+    fake_openrouter.generate_json.side_effect = mock_gen_json
+    direct_service = AIService(provider=fake_openrouter)
+
+    app.dependency_overrides[get_ai_service] = lambda: direct_service
+    app.dependency_overrides[get_current_user] = lambda: data["user_t1"]
+
+    try:
+        payload = {
+            "class_id": str(data["class_8"].id),
+            "section_id": str(data["section_a"].id),
+            "subject_id": str(data["subject_sci"].id)
+        }
+        res = await client.post("/api/v1/teacher-ai/class-analysis", json=payload, headers=data["auth_headers_t1"])
+        assert res.status_code == 200
+        json_res = res.json()
+        assert json_res["success"] is True
+        assert json_res["data"]["class_average"] == 85.0
+        assert json_res["data"]["pass_percentage"] == 100.0
+        assert "A" in json_res["data"]["grade_distribution"]
+
+        # Verify No PII was sent to OpenRouter
+        assert captured_prompt is not None
+        prompt_lower = captured_prompt.lower()
+        assert "aadhaar" not in prompt_lower
+        assert "phone" not in prompt_lower
+        assert "mobile" not in prompt_lower
+        assert "address" not in prompt_lower
+        assert "email" not in prompt_lower
+        assert str(data["student_priya"].admission_number).lower() not in prompt_lower
+        assert str(data["student_priya"].date_of_birth) not in prompt_lower
+        assert data["student_priya"].first_name.lower() not in prompt_lower
+        assert "student 1" in prompt_lower
+
+        # Verify Schema matches ClassAnalysisResponse
+        assert "class_average" in captured_schema["properties"]
+        assert "grade_distribution" in captured_schema["properties"]
+        assert "pass_percentage" in captured_schema["properties"]
+        assert "improvement_trend" in captured_schema["properties"]
+
+        fake_openrouter.generate_json.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+
 
 @pytest.mark.anyio
 async def test_teacher_generate_remark_draft(client: AsyncClient, setup_teacher_ai_data) -> None:

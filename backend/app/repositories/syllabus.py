@@ -59,6 +59,7 @@ class SyllabusRepository:
         academic_year_id: Optional[uuid.UUID] = None,
         class_id: Optional[uuid.UUID] = None,
         subject_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
         skip: int = 0,
         limit: int = 100
@@ -79,6 +80,8 @@ class SyllabusRepository:
             filters.append(Syllabus.class_id == class_id)
         if subject_id:
             filters.append(Syllabus.subject_id == subject_id)
+        if section_id:
+            filters.append(or_(Syllabus.section_id == section_id, Syllabus.section_id.is_(None)))
 
         if search:
             search_clause = or_(
@@ -117,11 +120,15 @@ class SyllabusRepository:
             topic_name=obj_in.topic_name,
             description=obj_in.description,
             sequence_order=obj_in.sequence_order,
+            estimated_periods=getattr(obj_in, "estimated_periods", 4) or 4,
+            coverage_status=getattr(obj_in, "coverage_status", "PENDING") or "PENDING",
+            lifecycle_status=getattr(obj_in, "lifecycle_status", "PLANNED") or "PLANNED",
             tenant_id=tenant_id,
             school_id=school_id,
             academic_year_id=academic_year_id,
             class_id=obj_in.class_id,
             subject_id=obj_in.subject_id,
+            section_id=getattr(obj_in, "section_id", None),
             created_by=created_by
         )
         self.db.add(db_obj)

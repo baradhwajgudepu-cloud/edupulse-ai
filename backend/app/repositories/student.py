@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 from datetime import datetime, timezone
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -139,6 +139,55 @@ class StudentRepository:
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_count(
+        self,
+        school_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
+        status: Optional[StudentStatus] = None,
+        search: Optional[str] = None,
+        class_section_pairs: Optional[List[tuple]] = None,
+    ) -> int:
+        filters = [
+            Student.school_id == school_id,
+            Student.tenant_id == tenant_id,
+            Student.deleted_at.is_(None)
+        ]
+
+        if academic_year_id:
+            filters.append(Student.academic_year_id == academic_year_id)
+        if class_id:
+            filters.append(Student.class_id == class_id)
+        if section_id:
+            filters.append(Student.section_id == section_id)
+        if status:
+            filters.append(Student.status == status)
+        if class_section_pairs:
+            pair_filters = []
+            for c_id, s_id in class_section_pairs:
+                pair_filters.append(
+                    and_(Student.class_id == c_id, Student.section_id == s_id)
+                )
+            filters.append(or_(*pair_filters))
+
+        if search:
+            search_clause = or_(
+                Student.first_name.ilike(f"%{search}%"),
+                Student.last_name.ilike(f"%{search}%"),
+                Student.email.ilike(f"%{search}%"),
+                Student.admission_number.ilike(f"%{search}%"),
+                Student.roll_number.ilike(f"%{search}%"),
+                Student.aadhaar_number.ilike(f"%{search}%"),
+                Student.mobile.ilike(f"%{search}%")
+            )
+            filters.append(search_clause)
+
+        stmt = select(func.count(Student.id)).where(and_(*filters))
+        result = await self.db.execute(stmt)
+        return result.scalar() or 0
 
     async def create(
         self,

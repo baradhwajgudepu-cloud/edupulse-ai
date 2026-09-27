@@ -148,12 +148,23 @@ class Student(Base, BaseModelMixin):
     )
 
     @property
+    def full_name(self) -> str:
+        parts = [self.first_name, self.middle_name, self.last_name]
+        return " ".join(p for p in parts if p).strip()
+
+    @property
     def class_name(self) -> Optional[str]:
-        return self.class_obj.name if self.class_obj else None
+        try:
+            return self.class_obj.name if self.class_obj else None
+        except Exception:
+            return None
 
     @property
     def section_name(self) -> Optional[str]:
-        return self.section.name if self.section else None
+        try:
+            return self.section.name if self.section else None
+        except Exception:
+            return None
 
 # Import StudentGuardian here to ensure SQLAlchemy mapper configuration resolves relationships at startup
 from app.models.guardian import StudentGuardian  # noqa: F401

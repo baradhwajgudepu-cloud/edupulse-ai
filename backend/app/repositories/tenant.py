@@ -22,39 +22,57 @@ class TenantRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_by_code(self, code: str) -> Optional[Tenant]:
+    async def get_by_code(self, code: str, include_deleted: bool = False) -> Optional[Tenant]:
         """
         Retrieves a single tenant by its unique identifier code.
         """
-        stmt = select(Tenant).where(Tenant.code == code, Tenant.deleted_at.is_(None))
+        stmt = select(Tenant).where(Tenant.code == code)
+        if not include_deleted:
+            stmt = stmt.where(Tenant.deleted_at.is_(None))
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_by_subdomain(self, subdomain: str) -> Optional[Tenant]:
+    async def get_by_subdomain(self, subdomain: str, include_deleted: bool = False) -> Optional[Tenant]:
         """
         Retrieves a single tenant by its unique subdomain.
         """
-        stmt = select(Tenant).where(Tenant.subdomain == subdomain, Tenant.deleted_at.is_(None))
+        stmt = select(Tenant).where(Tenant.subdomain == subdomain)
+        if not include_deleted:
+            stmt = stmt.where(Tenant.deleted_at.is_(None))
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_by_email(self, email: str) -> Optional[Tenant]:
+    async def get_by_email(self, email: str, include_deleted: bool = False) -> Optional[Tenant]:
         """
         Retrieves a single tenant by email address.
         """
-        stmt = select(Tenant).where(Tenant.email == email, Tenant.deleted_at.is_(None))
+        stmt = select(Tenant).where(Tenant.email == email)
+        if not include_deleted:
+            stmt = stmt.where(Tenant.deleted_at.is_(None))
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_multi(
-        self, skip: int = 0, limit: int = 100, status: Optional[str] = None
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        status: Optional[str] = None,
+        code: Optional[str] = None,
+        search: Optional[str] = None
     ) -> List[Tenant]:
         """
-        Retrieves a list of tenants with optional status filtering.
+        Retrieves a list of tenants with optional status, code, and search filtering.
         """
         stmt = select(Tenant).where(Tenant.deleted_at.is_(None))
         if status is not None:
             stmt = stmt.where(Tenant.status == status)
+        if code is not None:
+            stmt = stmt.where(Tenant.code == code)
+        if search is not None and search.strip():
+            term = f"%{search.strip()}%"
+            stmt = stmt.where(
+                (Tenant.name.ilike(term)) | (Tenant.code.ilike(term)) | (Tenant.email.ilike(term))
+            )
         stmt = stmt.offset(skip).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

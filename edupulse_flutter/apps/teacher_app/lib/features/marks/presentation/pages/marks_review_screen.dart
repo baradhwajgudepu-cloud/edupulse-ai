@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 import '../providers/marks_providers.dart';
 import '../../../../core/router/routes.dart';
@@ -131,7 +132,7 @@ class _MarksReviewScreenState extends ConsumerState<MarksReviewScreen> {
                         style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
-                      Text('Subject: ${widget.subjectName}', style: theme.textTheme.bodyMedium),
+                      Text('Subject: ${displaySubjectName(subjectName: widget.subjectName)}', style: theme.textTheme.bodyMedium),
                       Text('Class: ${widget.className}', style: theme.textTheme.bodyMedium),
                       Text('Max Marks: ${widget.maxMarks}  |  Pass Marks: ${widget.passMarks}',
                           style: theme.textTheme.bodyMedium),

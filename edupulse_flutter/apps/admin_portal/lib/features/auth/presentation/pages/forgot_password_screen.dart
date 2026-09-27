@@ -44,20 +44,20 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
 
     setState(() {
       _isLoading = false;
-      // Always treat as submitted to prevent account enumeration
-      _isSubmitted = true;
     });
 
     result.when(
-      onSuccess: (_) {},
+      onSuccess: (_) {
+        setState(() {
+          _isSubmitted = true;
+          _errorMessage = null;
+        });
+      },
       onFailure: (failure) {
-        // If it's a rate limit error (429), surface it
-        if (failure.statusCode == 429) {
-          setState(() {
-            _isSubmitted = false;
-            _errorMessage = failure.message;
-          });
-        }
+        setState(() {
+          _isSubmitted = false;
+          _errorMessage = failure.message;
+        });
       },
     );
   }
@@ -226,6 +226,42 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
               child: const Text('Return to Sign In'),
             ),
           ),
+          const SizedBox(height: 8),
+          Center(
+            child: TextButton.icon(
+              icon: const Icon(Icons.vpn_key_outlined, size: 16),
+              onPressed: () => context.push('${AppRoutes.resetPassword}?mode=manual'),
+              label: const Text('Already have a reset token? Enter Token'),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Version 1.0.0  •  ',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+              InkWell(
+                key: const Key('public_footer_privacy_policy_link_forgot'),
+                onTap: () => context.push(AppRoutes.privacyPolicy),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    'Privacy Policy',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -271,6 +307,18 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
           ),
         ),
         const SizedBox(height: 28),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.vpn_key_outlined),
+          label: const Text('Already have a reset token? Enter Token'),
+          onPressed: () => context.push('${AppRoutes.resetPassword}?mode=manual'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(radius.md),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         ElevatedButton(
           onPressed: () => context.go(AppRoutes.login),
           style: ElevatedButton.styleFrom(

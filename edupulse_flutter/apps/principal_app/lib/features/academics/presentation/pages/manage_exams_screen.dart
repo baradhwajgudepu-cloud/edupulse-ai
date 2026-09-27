@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import '../providers/academic_provider.dart';
-import '../../data/models/academic_models.dart';
 
 class ManageExamsScreen extends ConsumerStatefulWidget {
   const ManageExamsScreen({super.key});

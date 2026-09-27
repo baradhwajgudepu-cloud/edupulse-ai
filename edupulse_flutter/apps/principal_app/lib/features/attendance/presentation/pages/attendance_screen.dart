@@ -191,7 +191,19 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                               separatorBuilder: (context, index) => const Divider(),
                               itemBuilder: (context, index) {
                                 final record = filteredRecords[index];
-                                final name = studentNames[record.studentId] ?? 'Student #${record.studentId.substring(0, 6)}';
+                                final name = (record.studentName != null && record.studentName!.trim().isNotEmpty)
+                                    ? record.studentName!.trim()
+                                    : (studentNames[record.studentId]?.trim().isNotEmpty == true
+                                        ? studentNames[record.studentId]!.trim()
+                                        : 'Student name unavailable');
+
+                                String? secondaryText;
+                                if (record.admissionNumber != null && record.admissionNumber!.trim().isNotEmpty) {
+                                  secondaryText = 'Admission No: ${record.admissionNumber!.trim()}';
+                                } else if (record.rollNumber != null && record.rollNumber!.trim().isNotEmpty) {
+                                  secondaryText = 'Roll No: ${record.rollNumber!.trim()}';
+                                }
+
                                 final Color statusColor = record.status == 'PRESENT'
                                     ? Colors.green
                                     : record.status == 'ABSENT'
@@ -215,7 +227,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                                     ),
                                   ),
                                   title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  subtitle: Text('ID: ${record.studentId}'),
+                                  subtitle: secondaryText != null ? Text(secondaryText) : null,
                                   trailing: Container(
                                     padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs),
                                     decoration: BoxDecoration(

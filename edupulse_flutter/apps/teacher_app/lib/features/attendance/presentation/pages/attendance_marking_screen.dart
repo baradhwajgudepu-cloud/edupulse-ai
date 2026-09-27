@@ -2,23 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_ui/edupulse_ui.dart';
 
 import '../../domain/entities/attendance_enums.dart';
-import '../../domain/entities/attendance_session_entity.dart';
 import '../providers/attendance_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 import '../../../my_classes/domain/entities/student.dart';
 
 class AttendanceMarkingScreen extends ConsumerStatefulWidget {
-  final String timetableId;
+  final String? timetableId;
   final String dateStr;
+  final String? classId;
+  final String? sectionId;
+  final String? className;
+  final String? sectionName;
+  final String mode; // 'period' or 'daily'
 
   const AttendanceMarkingScreen({
     super.key,
-    required this.timetableId,
+    this.timetableId,
     required this.dateStr,
+    this.classId,
+    this.sectionId,
+    this.className,
+    this.sectionName,
+    this.mode = 'period',
   });
 
   @override
@@ -33,7 +42,17 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
     return DateTime.now().toIso8601String().split('T')[0];
   }
 
-  String get _providerKey => '${widget.timetableId}:$_resolvedDate';
+  bool get _isDailyMode =>
+      widget.mode == 'daily' ||
+      (widget.timetableId == null || widget.timetableId!.isEmpty);
+
+  String get _providerKey {
+    if (_isDailyMode) {
+      return 'daily:${widget.classId}:${widget.sectionId}:$_resolvedDate';
+    } else {
+      return 'period:${widget.timetableId}:$_resolvedDate';
+    }
+  }
 
   @override
   void initState() {
@@ -66,25 +85,104 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
         ? dashboardState.data
         : (dashboardState as DashboardRefreshing).data;
 
-    final timetable = dashboardData.schedule.firstWhere(
-      (entry) => entry.id == widget.timetableId,
-      orElse: () => throw Exception('Timetable entry not found'),
-    );
-
     final attendanceState = ref.watch(attendanceStateProvider(_providerKey));
+
+    dynamic timetable;
+    if (!_isDailyMode) {
+      final matching = dashboardData.schedule.where((e) => e.id == widget.timetableId);
+      if (matching.isNotEmpty) {
+        timetable = matching.first;
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mark Attendance'),
+        title: Text(_isDailyMode ? 'Daily Class Attendance' : 'Period Attendance'),
         elevation: 0,
       ),
       body: Column(
         children: [
-          _buildTimetableHeader(timetable, theme, spacing, radius),
+          if (_isDailyMode || timetable == null)
+            _buildDailyHeader(attendanceState, theme, spacing, radius)
+          else
+            _buildTimetableHeader(timetable, theme, spacing, radius),
           Expanded(
             child: _buildStateBody(attendanceState, theme, spacing, radius),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDailyHeader(AttendanceState state, ThemeData theme, AppSpacing spacing, AppRadius radius) {
+    final parsedDate = DateTime.tryParse(_resolvedDate) ?? DateTime.now();
+    final formattedDate = DateFormat('EEEE, MMMM d, y').format(parsedDate);
+
+    String displayName = 'Class Roster';
+    if (state is AttendanceSuccess && state.className != null && state.className!.isNotEmpty) {
+      displayName = '${state.className} - ${state.sectionName ?? ''}';
+    } else if (widget.className != null && widget.className!.isNotEmpty) {
+      displayName = '${widget.className} - ${widget.sectionName ?? ''}';
+    }
+
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surface,
+      padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.sm),
+      child: Card(
+        elevation: 0,
+        color: theme.colorScheme.primaryContainer.withOpacity(0.2),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radius.md),
+          side: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.all(spacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    displayName,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs / 2),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(radius.sm),
+                    ),
+                    child: Text(
+                      'Daily Attendance (Homeroom)',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: spacing.xs),
+              Row(
+                children: [
+                  Icon(Icons.calendar_today_rounded, size: 14, color: theme.colorScheme.onSurfaceVariant),
+                  SizedBox(width: spacing.xs),
+                  Text(
+                    formattedDate,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -213,20 +311,20 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
     String slotDay = '';
     String selectedDay = '';
 
-    if (dashboardState is DashboardSuccess || dashboardState is DashboardRefreshing) {
+    if (!_isDailyMode && (dashboardState is DashboardSuccess || dashboardState is DashboardRefreshing)) {
       final data = dashboardState is DashboardSuccess 
           ? dashboardState.data 
           : (dashboardState as DashboardRefreshing).data;
-      final timetable = data.schedule.firstWhere(
-        (entry) => entry.id == widget.timetableId,
-        orElse: () => throw Exception('Timetable entry not found'),
-      );
-      slotDay = timetable.dayOfWeek.toUpperCase();
-      final parsedDate = DateTime.tryParse(_resolvedDate);
-      if (parsedDate != null) {
-        selectedDay = DateFormat('EEEE').format(parsedDate).toUpperCase();
-        if (slotDay != selectedDay) {
-          isWeekdayMismatch = true;
+      final matching = data.schedule.where((entry) => entry.id == widget.timetableId);
+      if (matching.isNotEmpty) {
+        final timetable = matching.first;
+        slotDay = timetable.dayOfWeek.toUpperCase();
+        final parsedDate = DateTime.tryParse(_resolvedDate);
+        if (parsedDate != null) {
+          selectedDay = DateFormat('EEEE').format(parsedDate).toUpperCase();
+          if (slotDay != selectedDay) {
+            isWeekdayMismatch = true;
+          }
         }
       }
     }
@@ -258,10 +356,67 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
               ],
             ),
           ),
-        if (isSubmitted || isLocked)
+        // Scenario A: Admin recorded full day attendance (blocking banner)
+        if (state.scenario == AdminAttendanceScenario.scenarioA)
           Container(
             width: double.infinity,
-            color: isLocked ? theme.colorScheme.errorContainer.withOpacity(0.3) : theme.colorScheme.secondaryContainer.withOpacity(0.3),
+            color: Colors.amber.shade100,
+            padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.sm),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.admin_panel_settings_rounded,
+                  size: 20,
+                  color: Colors.amber.shade900,
+                ),
+                SizedBox(width: spacing.sm),
+                Expanded(
+                  child: Text(
+                    state.scenarioBannerMessage ??
+                        'Full-day attendance has already been recorded by school administration for this date. Further submissions are disabled.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.amber.shade900,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )
+        // Scenario B: Admin recorded full day, but teacher takes period attendance (informative banner)
+        else if (state.scenario == AdminAttendanceScenario.scenarioB)
+          Container(
+            width: double.infinity,
+            color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+            padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.sm),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 20,
+                  color: theme.colorScheme.primary,
+                ),
+                SizedBox(width: spacing.sm),
+                Expanded(
+                  child: Text(
+                    state.scenarioBannerMessage ??
+                        'Daily attendance recorded by administration. You may still record period-specific attendance for this timetable slot.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )
+        // Scenario C or Submitted/Locked: Attendance already submitted
+        else if (isSubmitted || isLocked || state.scenario == AdminAttendanceScenario.scenarioC)
+          Container(
+            width: double.infinity,
+            color: isLocked 
+                ? theme.colorScheme.errorContainer.withOpacity(0.3) 
+                : theme.colorScheme.secondaryContainer.withOpacity(0.3),
             padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.sm),
             child: Row(
               children: [
@@ -357,18 +512,47 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
   }
 
   Widget _buildCounterSummary(AttendanceSuccess state, ThemeData theme, AppSpacing spacing, AppRadius radius) {
+    final total = state.totalCount;
+    final present = state.presentCount;
+    final absent = state.absentCount;
+    final late = state.lateCount;
+    final presentPct = total > 0 ? ((present / total) * 100).round() : 0;
+
     return Container(
       color: theme.colorScheme.surface,
       padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.sm),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
         children: [
-          _buildCounterItem('Total', state.totalCount.toString(), theme.colorScheme.onSurfaceVariant, theme),
-          _buildCounterItem('Present', state.presentCount.toString(), Colors.green, theme),
-          _buildCounterItem('Absent', state.absentCount.toString(), Colors.red, theme),
-          _buildCounterItem('Late', state.lateCount.toString(), Colors.orange, theme),
-          if (state.otherCount > 0)
-            _buildCounterItem('Other', state.otherCount.toString(), theme.colorScheme.primary, theme),
+          if (total > 0) ...[
+            DonutChart(
+              title: 'Live Period Attendance Ratio',
+              data: [
+                DonutSegment(id: 'present', label: 'Present', value: present.toDouble(), color: const Color(0xFF059669)),
+                DonutSegment(id: 'absent', label: 'Absent', value: absent.toDouble(), color: const Color(0xFFE11D48)),
+                DonutSegment(id: 'late', label: 'Late', value: late.toDouble(), color: const Color(0xFFD97706)),
+                if (state.otherCount > 0)
+                  DonutSegment(id: 'other', label: 'Other', value: state.otherCount.toDouble(), color: EduPulseTheme.primaryTeal),
+              ],
+              centerLabel: '$presentPct%',
+              centerSublabel: 'Marked Present',
+              size: 130,
+              thickness: 16,
+              showLegend: false,
+              unit: '',
+            ),
+            SizedBox(height: spacing.sm),
+          ],
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildCounterItem('Total', state.totalCount.toString(), theme.colorScheme.onSurfaceVariant, theme),
+              _buildCounterItem('Present', state.presentCount.toString(), const Color(0xFF059669), theme),
+              _buildCounterItem('Absent', state.absentCount.toString(), const Color(0xFFE11D48), theme),
+              _buildCounterItem('Late', state.lateCount.toString(), const Color(0xFFD97706), theme),
+              if (state.otherCount > 0)
+                _buildCounterItem('Other', state.otherCount.toString(), theme.colorScheme.primary, theme),
+            ],
+          ),
         ],
       ),
     );
@@ -405,118 +589,212 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
     AppSpacing spacing,
     AppRadius radius,
   ) {
-    Color cardBorderColor = theme.colorScheme.outlineVariant.withOpacity(0.5);
-    Color statusBadgeColor = theme.colorScheme.onSurfaceVariant;
-    Color statusBgColor = theme.colorScheme.surfaceVariant.withOpacity(0.3);
-
-    if (status == AttendanceStatus.PRESENT) {
-      statusBadgeColor = Colors.green;
-      statusBgColor = Colors.green.shade50;
-    } else if (status == AttendanceStatus.ABSENT) {
-      statusBadgeColor = Colors.red;
-      statusBgColor = Colors.red.shade50;
-      cardBorderColor = Colors.red.shade200;
-    } else if (status == AttendanceStatus.LATE) {
-      statusBadgeColor = Colors.orange;
-      statusBgColor = Colors.orange.shade50;
-    } else {
-      statusBadgeColor = theme.colorScheme.primary;
-      statusBgColor = theme.colorScheme.primaryContainer.withOpacity(0.2);
+    final isDark = theme.brightness == Brightness.dark;
+    Color cardBorderColor = isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+    if (status == AttendanceStatus.ABSENT) {
+      cardBorderColor = const Color(0xFFFDA4AF);
     }
 
-    return InkWell(
-      onTap: isLocked
-          ? null
-          : () {
-              if (isSubmitted) {
-                // Submitted session toggle triggers correction flow
-                final newStatus = status == AttendanceStatus.PRESENT
-                    ? AttendanceStatus.ABSENT
-                    : AttendanceStatus.PRESENT;
-                _showCorrectionDialog(student, newStatus);
-              } else {
-                ref.read(attendanceStateProvider(_providerKey).notifier).toggleStatus(student.id);
-              }
-            },
-      borderRadius: BorderRadius.circular(radius.sm),
-      child: Container(
-        padding: EdgeInsets.all(spacing.sm),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(radius.sm),
-          border: Border.all(color: cardBorderColor),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Text(
-                '${student.firstName[0]}${student.lastName[0]}'.toUpperCase(),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onPrimaryContainer,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            SizedBox(width: spacing.sm),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      padding: EdgeInsets.all(spacing.sm),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0F172A) : Colors.white,
+        borderRadius: BorderRadius.circular(radius.sm),
+        border: Border.all(color: cardBorderColor),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: isLocked
+                  ? null
+                  : () {
+                      if (isSubmitted) {
+                        final newStatus = status == AttendanceStatus.PRESENT
+                            ? AttendanceStatus.ABSENT
+                            : AttendanceStatus.PRESENT;
+                        _showCorrectionDialog(student, newStatus);
+                      } else {
+                        ref.read(attendanceStateProvider(_providerKey).notifier).toggleStatus(student.id);
+                      }
+                    },
+              borderRadius: BorderRadius.circular(radius.sm),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        student.fullName,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: EduPulseTheme.primaryTeal.withOpacity(0.12),
+                    child: Text(
+                      '${student.firstName.isNotEmpty ? student.firstName[0] : ''}${student.lastName.isNotEmpty ? student.lastName[0] : ''}'
+                          .toUpperCase(),
+                      style: const TextStyle(
+                        color: EduPulseTheme.primaryTeal,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
                       ),
-                      if (hasRemarks) ...[
-                        SizedBox(width: spacing.xs),
-                        Icon(Icons.insert_comment_outlined, size: 12, color: theme.colorScheme.primary),
-                      ],
-                    ],
+                    ),
                   ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Roll No: ${student.rollNumber}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                  SizedBox(width: spacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                student.fullName,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                  color: isDark ? Colors.white : EduPulseTheme.slate900,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (hasRemarks) ...[
+                              SizedBox(width: spacing.xs),
+                              const Icon(Icons.insert_comment_outlined, size: 12, color: EduPulseTheme.primaryTeal),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Roll No: ${student.rollNumber}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs / 2),
-              decoration: BoxDecoration(
-                color: statusBgColor,
-                borderRadius: BorderRadius.circular(radius.sm),
-              ),
-              child: Text(
-                status.name,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: statusBadgeColor,
-                  fontWeight: FontWeight.bold,
-                ),
+          ),
+          const SizedBox(width: 8),
+          // Status badge showing status.name
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: spacing.sm, vertical: spacing.xs / 2),
+            decoration: BoxDecoration(
+              color: status == AttendanceStatus.PRESENT
+                  ? Colors.green.shade50
+                  : status == AttendanceStatus.ABSENT
+                      ? Colors.red.shade50
+                      : Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(radius.sm),
+            ),
+            child: Text(
+              status.name,
+              style: TextStyle(
+                color: status == AttendanceStatus.PRESENT
+                    ? Colors.green
+                    : status == AttendanceStatus.ABSENT
+                        ? Colors.red
+                        : Colors.orange,
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
               ),
             ),
-            if (!isLocked) ...[
-              SizedBox(width: spacing.xs),
-              IconButton(
-                icon: Icon(Icons.more_vert_rounded, color: theme.colorScheme.onSurfaceVariant),
-                onPressed: () => _showMoreOptionsSheet(student, status, isSubmitted, theme, spacing, radius),
+          ),
+          const SizedBox(width: 8),
+          // One-tap status switcher pills (P, A, L) matching Google AI Studio prototype
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildStatusPill(
+                label: 'P',
+                isSelected: status == AttendanceStatus.PRESENT,
+                activeColor: const Color(0xFF059669),
+                isLocked: isLocked,
+                onTap: () => _handleStatusTap(student, status, AttendanceStatus.PRESENT, isSubmitted, isLocked),
               ),
+              const SizedBox(width: 4),
+              _buildStatusPill(
+                label: 'A',
+                isSelected: status == AttendanceStatus.ABSENT,
+                activeColor: const Color(0xFFE11D48),
+                isLocked: isLocked,
+                onTap: () => _handleStatusTap(student, status, AttendanceStatus.ABSENT, isSubmitted, isLocked),
+              ),
+              const SizedBox(width: 4),
+              _buildStatusPill(
+                label: 'L',
+                isSelected: status == AttendanceStatus.LATE,
+                activeColor: const Color(0xFFD97706),
+                isLocked: isLocked,
+                onTap: () => _handleStatusTap(student, status, AttendanceStatus.LATE, isSubmitted, isLocked),
+              ),
+              if (!isLocked) ...[
+                const SizedBox(width: 2),
+                IconButton(
+                  icon: Icon(
+                    Icons.more_vert_rounded,
+                    size: 18,
+                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  onPressed: () => _showMoreOptionsSheet(student, status, isSubmitted, theme, spacing, radius),
+                ),
+              ],
             ],
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusPill({
+    required String label,
+    required bool isSelected,
+    required Color activeColor,
+    required bool isLocked,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: isLocked ? null : onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? activeColor : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: isSelected ? Colors.white : const Color(0xFF475569),
+          ),
         ),
       ),
     );
   }
 
+  void _handleStatusTap(
+    StudentEntity student,
+    AttendanceStatus currentStatus,
+    AttendanceStatus targetStatus,
+    bool isSubmitted,
+    bool isLocked,
+  ) {
+    if (isLocked) return;
+    if (isSubmitted) {
+      if (currentStatus != targetStatus) {
+        _showCorrectionDialog(student, targetStatus);
+      }
+    } else {
+      ref.read(attendanceStateProvider(_providerKey).notifier).setStatus(student.id, targetStatus);
+    }
+  }
+
   Widget _buildSubmitBar(AttendanceSuccess state, ThemeData theme, AppSpacing spacing) {
     final isSaving = state.isSaving;
+    final canSubmit = state.canSubmit;
 
     return Container(
       padding: EdgeInsets.all(spacing.md),
@@ -528,10 +806,12 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
         width: double.infinity,
         height: 48,
         child: ElevatedButton(
-          onPressed: isSaving ? null : () => _showReviewConfirmation(state),
+          onPressed: (isSaving || !canSubmit) ? null : () => _showReviewConfirmation(state),
           style: ElevatedButton.styleFrom(
             backgroundColor: theme.colorScheme.primary,
             foregroundColor: theme.colorScheme.onPrimary,
+            disabledBackgroundColor: theme.colorScheme.surfaceVariant,
+            disabledForegroundColor: theme.colorScheme.onSurfaceVariant.withOpacity(0.6),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -542,9 +822,13 @@ class _AttendanceMarkingScreenState extends ConsumerState<AttendanceMarkingScree
                   width: 20,
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 )
-              : const Text(
-                  'APPROVE & SUBMIT',
-                  style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1),
+              : Text(
+                  !canSubmit
+                      ? (state.scenario == AdminAttendanceScenario.scenarioA
+                          ? 'SUBMISSION LOCKED BY ADMIN'
+                          : 'ATTENDANCE ALREADY SUBMITTED')
+                      : 'APPROVE & SUBMIT',
+                  style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1),
                 ),
         ),
       ),

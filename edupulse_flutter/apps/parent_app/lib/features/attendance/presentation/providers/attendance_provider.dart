@@ -5,6 +5,7 @@ import '../../domain/usecases/get_attendance_usecase.dart';
 import '../../data/datasource/attendance_remote_datasource.dart';
 import '../../data/repositories/attendance_repository_impl.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 
 sealed class AttendanceState {
   const AttendanceState();
@@ -57,6 +58,12 @@ class AttendanceNotifier extends Notifier<AttendanceState> {
 
   @override
   AttendanceState build() {
+    ref.listen(authStateProvider, (previous, next) {
+      if (next is! Authenticated) {
+        _cachedRecordsMap.clear();
+        state = const AttendanceInitial();
+      }
+    });
     return const AttendanceInitial();
   }
 

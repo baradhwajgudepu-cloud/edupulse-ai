@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/providers/auth_provider.dart';
 import '../../features/auth/presentation/pages/login_screen.dart';
 import '../../features/auth/presentation/pages/forgot_password_screen.dart';
+import '../../features/auth/presentation/pages/reset_password_screen.dart';
+import '../../features/auth/presentation/pages/force_change_password_screen.dart';
 import '../../features/shell/presentation/pages/home_screen.dart';
 import '../../features/shell/presentation/pages/unauthorized_screen.dart';
 import '../../features/splash/presentation/pages/splash_page.dart';
@@ -10,6 +12,7 @@ import '../../features/my_classes/presentation/pages/my_classes_screen.dart';
 import '../../features/my_classes/presentation/pages/class_detail_screen.dart';
 import '../../features/my_classes/presentation/pages/student_roster_screen.dart';
 import '../../features/my_classes/presentation/pages/student_detail_screen.dart';
+import '../../features/my_classes/presentation/pages/teacher_syllabus_screen.dart';
 import '../../features/my_classes/domain/entities/teacher_class_group.dart';
 import '../../features/my_classes/domain/entities/student.dart';
 import '../../features/attendance/presentation/pages/attendance_marking_screen.dart';
@@ -35,6 +38,8 @@ import '../../features/events/presentation/pages/events_screen.dart';
 import '../../features/events/presentation/pages/event_detail_screen.dart';
 import '../../features/profile/presentation/pages/profile_screen.dart';
 import '../../features/student_directory/presentation/pages/student_directory_screen.dart';
+import '../../features/more/presentation/pages/teacher_more_screen.dart';
+import 'app_shell.dart';
 import 'routes.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -45,6 +50,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       final goingToSplash = state.matchedLocation == AppRoutes.splash;
       final goingToLogin = state.matchedLocation == AppRoutes.login;
       final goingToForgot = state.matchedLocation == AppRoutes.forgotPassword;
+      final goingToReset = state.matchedLocation == AppRoutes.resetPassword;
+      final goingToForceChange = state.matchedLocation == AppRoutes.forceChangePassword;
       final goingToUnauthorized = state.matchedLocation == AppRoutes.unauthorized;
 
       if (authState is AuthInitial) {
@@ -52,7 +59,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
 
       if (authState is Unauthenticated || authState is AuthError) {
-        if (goingToLogin || goingToForgot) return null;
+        if (goingToLogin || goingToForgot || goingToReset) return null;
         return AppRoutes.login;
       }
 
@@ -62,7 +69,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       }
 
       if (authState is Authenticated) {
-        if (goingToLogin || goingToSplash || goingToUnauthorized) {
+        if (authState.user.mustChangePassword) {
+          if (!goingToForceChange) return AppRoutes.forceChangePassword;
+          return null;
+        }
+        if (goingToLogin || goingToSplash || goingToUnauthorized || goingToForceChange) {
           return AppRoutes.home;
         }
         return null;
@@ -84,17 +95,31 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ForgotPasswordScreen(),
       ),
       GoRoute(
-        path: AppRoutes.home,
-        builder: (context, state) => const HomeScreen(),
+        path: AppRoutes.resetPassword,
+        builder: (context, state) {
+          final token = state.uri.queryParameters['token'] ?? (state.extra as String?);
+          return ResetPasswordScreen(initialToken: token);
+        },
+      ),
+      GoRoute(
+        path: AppRoutes.forceChangePassword,
+        builder: (context, state) => const ForceChangePasswordScreen(),
       ),
       GoRoute(
         path: AppRoutes.unauthorized,
         builder: (context, state) => const UnauthorizedScreen(),
       ),
-      GoRoute(
-        path: AppRoutes.myClasses,
-        builder: (context, state) => const MyClassesScreen(),
-      ),
+      ShellRoute(
+        builder: (context, state, child) => AppShell(child: child),
+        routes: [
+          GoRoute(
+            path: AppRoutes.home,
+            builder: (context, state) => const HomeScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.myClasses,
+            builder: (context, state) => const MyClassesScreen(),
+          ),
       GoRoute(
         path: AppRoutes.classDetail,
         builder: (context, state) {
@@ -142,14 +167,44 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: AppRoutes.teacherSyllabus,
+        builder: (context, state) {
+          final queryParams = state.uri.queryParameters;
+          final classId = queryParams['classId'] ?? '';
+          final sectionId = queryParams['sectionId'] ?? '';
+          final subjectId = queryParams['subjectId'] ?? '';
+          final className = queryParams['className'] ?? '';
+          final sectionName = queryParams['sectionName'] ?? '';
+          final subjectName = queryParams['subjectName'] ?? '';
+          return TeacherSyllabusScreen(
+            classId: classId,
+            sectionId: sectionId,
+            subjectId: subjectId,
+            className: className,
+            sectionName: sectionName,
+            subjectName: subjectName,
+          );
+        },
+      ),
+      GoRoute(
         path: AppRoutes.attendance,
         builder: (context, state) {
           final queryParams = state.uri.queryParameters;
-          final timetableId = queryParams['timetableId'] ?? '';
+          final timetableId = queryParams['timetableId'];
           final dateStr = queryParams['date'] ?? '';
+          final classId = queryParams['classId'];
+          final sectionId = queryParams['sectionId'];
+          final className = queryParams['className'];
+          final sectionName = queryParams['sectionName'];
+          final mode = queryParams['mode'] ?? (timetableId != null && timetableId.isNotEmpty ? 'period' : 'daily');
           return AttendanceMarkingScreen(
             timetableId: timetableId,
             dateStr: dateStr,
+            classId: classId,
+            sectionId: sectionId,
+            className: className,
+            sectionName: sectionName,
+            mode: mode,
           );
         },
       ),
@@ -331,8 +386,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ProfileScreen(),
       ),
       GoRoute(
+        path: AppRoutes.more,
+        builder: (context, state) => const TeacherMoreScreen(),
+      ),
+      GoRoute(
         path: AppRoutes.studentDirectory,
         builder: (context, state) => const StudentDirectoryScreen(),
+      ),
+        ],
       ),
     ],
   );

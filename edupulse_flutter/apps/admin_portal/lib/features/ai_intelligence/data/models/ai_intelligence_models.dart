@@ -117,31 +117,85 @@ class PerformanceTrendModel {
   }
 }
 
+class MarksDistributionModel {
+  final int score90To100;
+  final int score75To89;
+  final int score60To74;
+  final int score50To59;
+  final int scoreBelow50;
+
+  const MarksDistributionModel({
+    this.score90To100 = 0,
+    this.score75To89 = 0,
+    this.score60To74 = 0,
+    this.score50To59 = 0,
+    this.scoreBelow50 = 0,
+  });
+
+  factory MarksDistributionModel.fromJson(Map<String, dynamic> json) {
+    return MarksDistributionModel(
+      score90To100: json['score_90_100'] as int? ?? 0,
+      score75To89: json['score_75_89'] as int? ?? 0,
+      score60To74: json['score_60_74'] as int? ?? 0,
+      score50To59: json['score_50_59'] as int? ?? 0,
+      scoreBelow50: json['score_below_50'] as int? ?? 0,
+    );
+  }
+}
+
 class SubjectDifficultyModel {
   final String subjectId;
   final String subjectName;
+  final int totalStudentsEvaluated;
   final double averagePercentage;
+  final double? medianPercentage;
+  final double highestPercentage;
+  final double lowestPercentage;
+  final double passPercentage;
   final double below50Percentage;
+  final int below50Count;
   final String difficultyIndex;
+  final double difficultyScore;
+  final String difficultyExplanation;
   final String remedialRecommendation;
+  final MarksDistributionModel marksDistribution;
 
   const SubjectDifficultyModel({
     required this.subjectId,
     required this.subjectName,
+    this.totalStudentsEvaluated = 0,
     required this.averagePercentage,
+    this.medianPercentage,
+    this.highestPercentage = 0.0,
+    this.lowestPercentage = 0.0,
+    this.passPercentage = 0.0,
     required this.below50Percentage,
+    this.below50Count = 0,
     required this.difficultyIndex,
+    this.difficultyScore = 0.0,
+    this.difficultyExplanation = '',
     required this.remedialRecommendation,
+    this.marksDistribution = const MarksDistributionModel(),
   });
 
   factory SubjectDifficultyModel.fromJson(Map<String, dynamic> json) {
+    final distJson = json['marks_distribution'] as Map<String, dynamic>? ?? {};
     return SubjectDifficultyModel(
       subjectId: json['subject_id'] as String? ?? '',
       subjectName: json['subject_name'] as String? ?? 'Subject',
+      totalStudentsEvaluated: json['total_students_evaluated'] as int? ?? 0,
       averagePercentage: (json['average_percentage'] as num?)?.toDouble() ?? 0.0,
+      medianPercentage: (json['median_percentage'] as num?)?.toDouble(),
+      highestPercentage: (json['highest_percentage'] as num?)?.toDouble() ?? 0.0,
+      lowestPercentage: (json['lowest_percentage'] as num?)?.toDouble() ?? 0.0,
+      passPercentage: (json['pass_percentage'] as num?)?.toDouble() ?? 0.0,
       below50Percentage: (json['below_50_percentage'] as num?)?.toDouble() ?? 0.0,
+      below50Count: json['below_50_count'] as int? ?? 0,
       difficultyIndex: json['difficulty_index'] as String? ?? 'NORMAL',
+      difficultyScore: (json['difficulty_score'] as num?)?.toDouble() ?? 0.0,
+      difficultyExplanation: json['difficulty_explanation'] as String? ?? '',
       remedialRecommendation: json['remedial_recommendation'] as String? ?? '',
+      marksDistribution: MarksDistributionModel.fromJson(distJson),
     );
   }
 }

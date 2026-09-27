@@ -5,6 +5,8 @@ class ReportCardSubjectMarkRowEntity {
   final String resultStatus;
   final String grade;
   final String? remarks;
+  final String? subjectCode;
+  final String? subjectId;
 
   const ReportCardSubjectMarkRowEntity({
     required this.subjectName,
@@ -13,6 +15,8 @@ class ReportCardSubjectMarkRowEntity {
     required this.resultStatus,
     required this.grade,
     this.remarks,
+    this.subjectCode,
+    this.subjectId,
   });
 }
 

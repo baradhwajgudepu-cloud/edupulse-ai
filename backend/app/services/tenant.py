@@ -26,12 +26,19 @@ class TenantService:
         return tenant
 
     async def list_tenants(
-        self, skip: int = 0, limit: int = 100, status_filter: Optional[str] = None
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        status_filter: Optional[str] = None,
+        code: Optional[str] = None,
+        search: Optional[str] = None
     ) -> List[Tenant]:
         """
         Lists active tenants matching page filters.
         """
-        return await self.repo.get_multi(skip=skip, limit=limit, status=status_filter)
+        return await self.repo.get_multi(
+            skip=skip, limit=limit, status=status_filter, code=code, search=search
+        )
 
     async def create_tenant(
         self, obj_in: TenantCreate, created_by: Optional[uuid.UUID] = None
@@ -40,21 +47,39 @@ class TenantService:
         Performs unique checks on code, subdomain, and email before registering a new tenant.
         """
         # Validate code uniqueness
-        if await self.repo.get_by_code(obj_in.code):
+        existing_code = await self.repo.get_by_code(obj_in.code, include_deleted=True)
+        if existing_code:
+            if existing_code.deleted_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tenant code '{obj_in.code}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this code."
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Tenant code '{obj_in.code}' is already registered."
             )
 
         # Validate subdomain uniqueness
-        if await self.repo.get_by_subdomain(obj_in.subdomain):
+        existing_subdomain = await self.repo.get_by_subdomain(obj_in.subdomain, include_deleted=True)
+        if existing_subdomain:
+            if existing_subdomain.deleted_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Subdomain '{obj_in.subdomain}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this subdomain."
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Subdomain '{obj_in.subdomain}' is already taken."
             )
 
         # Validate email uniqueness
-        if await self.repo.get_by_email(obj_in.email):
+        existing_email = await self.repo.get_by_email(obj_in.email, include_deleted=True)
+        if existing_email:
+            if existing_email.deleted_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tenant contact email '{obj_in.email}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this email."
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Tenant contact email '{obj_in.email}' is already registered."
@@ -72,7 +97,13 @@ class TenantService:
 
         # Validate code uniqueness if changing
         if obj_in.code is not None and obj_in.code != tenant.code:
-            if await self.repo.get_by_code(obj_in.code):
+            existing_code = await self.repo.get_by_code(obj_in.code, include_deleted=True)
+            if existing_code and existing_code.id != tenant_id:
+                if existing_code.deleted_at is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Tenant code '{obj_in.code}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this code."
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Tenant code '{obj_in.code}' is already registered."
@@ -80,7 +111,13 @@ class TenantService:
 
         # Validate subdomain uniqueness if changing
         if obj_in.subdomain is not None and obj_in.subdomain != tenant.subdomain:
-            if await self.repo.get_by_subdomain(obj_in.subdomain):
+            existing_subdomain = await self.repo.get_by_subdomain(obj_in.subdomain, include_deleted=True)
+            if existing_subdomain and existing_subdomain.id != tenant_id:
+                if existing_subdomain.deleted_at is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Subdomain '{obj_in.subdomain}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this subdomain."
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Subdomain '{obj_in.subdomain}' is already taken."
@@ -88,7 +125,13 @@ class TenantService:
 
         # Validate email uniqueness if changing
         if obj_in.email is not None and obj_in.email != tenant.email:
-            if await self.repo.get_by_email(obj_in.email):
+            existing_email = await self.repo.get_by_email(obj_in.email, include_deleted=True)
+            if existing_email and existing_email.id != tenant_id:
+                if existing_email.deleted_at is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Tenant contact email '{obj_in.email}' is reserved by an archived/soft-deleted tenant. Permanently delete the archived tenant to reuse this email."
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Tenant contact email '{obj_in.email}' is already registered."

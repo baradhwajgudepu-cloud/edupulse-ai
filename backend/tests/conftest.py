@@ -14,7 +14,7 @@ from app.db.session import get_db
 sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
 
 # Use a shared in-memory SQLite database for fast, self-contained unit testing
-TEST_DATABASE_URL = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared"
+TEST_DATABASE_URL = f"sqlite+aiosqlite:///file:testdb_{uuid.uuid4().hex}?mode=memory&cache=shared"
 
 @pytest.fixture(scope="session")
 def anyio_backend() -> str:
@@ -31,7 +31,7 @@ async def test_engine():
     engine = create_async_engine(
         TEST_DATABASE_URL,
         poolclass=StaticPool,
-        connect_args={"check_same_thread": False, "uri": True}
+        connect_args={"check_same_thread": False, "uri": True, "timeout": 60}
     )
     
     async with engine.begin() as conn:
@@ -218,7 +218,14 @@ async def client(db_session, request) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides[get_db] = override_get_db
     
     # Bypass auth and RBAC checks for non-auth test files by mock-seeding a superuser
-    if "test_auth" not in request.node.nodeid and "test_communication" not in request.node.nodeid and "test_identity" not in request.node.nodeid:
+    if (
+        "test_auth" not in request.node.nodeid
+        and "test_communication" not in request.node.nodeid
+        and "test_identity" not in request.node.nodeid
+        and "test_staff_salaries" not in request.node.nodeid
+        and "test_school_onboarding" not in request.node.nodeid
+        and "test_school_context" not in request.node.nodeid
+    ):
         from app.api.dependencies.auth import get_current_user
         from app.models.user import User, UserStatus
         from fastapi import Request

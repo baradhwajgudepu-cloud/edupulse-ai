@@ -29,6 +29,7 @@ extension UserResponseDtoMapper on UserResponseDto {
           if (e is Map && e['id'] != null)
             e['id'].toString(): (e['name'] ?? e['code'] ?? '').toString()
       },
+      mustChangePassword: mustChangePassword,
     );
   }
 }

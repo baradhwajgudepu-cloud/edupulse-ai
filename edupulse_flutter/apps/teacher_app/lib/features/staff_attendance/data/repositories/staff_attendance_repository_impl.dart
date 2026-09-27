@@ -1,5 +1,6 @@
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../domain/entities/staff_attendance_entity.dart';
+import '../../domain/entities/school_geofence_entity.dart';
 import '../../domain/repositories/staff_attendance_repository.dart';
 import '../datasource/staff_attendance_remote_datasource.dart';
 import '../models/staff_attendance_dto.dart';
@@ -22,12 +23,14 @@ class StaffAttendanceRepositoryImpl implements StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkIn({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) async {
     final result = await _remoteDatasource.checkIn(
       latitude: latitude,
       longitude: longitude,
+      accuracy: accuracy,
       isMocked: isMocked,
       remarks: remarks,
     );
@@ -41,17 +44,28 @@ class StaffAttendanceRepositoryImpl implements StaffAttendanceRepository {
   Future<ApiResult<StaffAttendanceEntity>> checkOut({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) async {
     final result = await _remoteDatasource.checkOut(
       latitude: latitude,
       longitude: longitude,
+      accuracy: accuracy,
       isMocked: isMocked,
       remarks: remarks,
     );
     return result.when(
       onSuccess: (dto) => ApiResult.success(dto.toEntity()),
+      onFailure: (error) => ApiResult.failure(error),
+    );
+  }
+
+  @override
+  Future<ApiResult<SchoolGeofenceEntity>> getSchoolGeofence(String schoolId) async {
+    final result = await _remoteDatasource.getSchoolGeofence(schoolId);
+    return result.when(
+      onSuccess: (json) => ApiResult.success(SchoolGeofenceEntity.fromJson(json)),
       onFailure: (error) => ApiResult.failure(error),
     );
   }

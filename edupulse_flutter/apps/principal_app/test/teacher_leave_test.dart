@@ -25,9 +25,17 @@ class FakeSessionManager implements SessionManager {
   @override
   Future<String?> getRefreshToken() async => 'fake_refresh';
   @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override

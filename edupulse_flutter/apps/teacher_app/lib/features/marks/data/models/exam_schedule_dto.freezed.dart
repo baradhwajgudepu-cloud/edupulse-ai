@@ -46,6 +46,14 @@ mixin _$ExamScheduleDto {
   @JsonKey(name: 'is_active')
   bool get isActive => throw _privateConstructorUsedError;
   int get version => throw _privateConstructorUsedError;
+  @JsonKey(name: 'subject_name')
+  String? get subjectName => throw _privateConstructorUsedError;
+  @JsonKey(name: 'subject_code')
+  String? get subjectCode => throw _privateConstructorUsedError;
+  @JsonKey(name: 'class_name')
+  String? get className => throw _privateConstructorUsedError;
+  @JsonKey(name: 'section_name')
+  String? get sectionName => throw _privateConstructorUsedError;
 
   /// Serializes this ExamScheduleDto to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -78,7 +86,11 @@ abstract class $ExamScheduleDtoCopyWith<$Res> {
       @JsonKey(name: 'pass_marks') int passMarks,
       @JsonKey(name: 'room_number') String? roomNumber,
       @JsonKey(name: 'is_active') bool isActive,
-      int version});
+      int version,
+      @JsonKey(name: 'subject_name') String? subjectName,
+      @JsonKey(name: 'subject_code') String? subjectCode,
+      @JsonKey(name: 'class_name') String? className,
+      @JsonKey(name: 'section_name') String? sectionName});
 }
 
 /// @nodoc
@@ -110,6 +122,10 @@ class _$ExamScheduleDtoCopyWithImpl<$Res, $Val extends ExamScheduleDto>
     Object? roomNumber = freezed,
     Object? isActive = null,
     Object? version = null,
+    Object? subjectName = freezed,
+    Object? subjectCode = freezed,
+    Object? className = freezed,
+    Object? sectionName = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -168,6 +184,22 @@ class _$ExamScheduleDtoCopyWithImpl<$Res, $Val extends ExamScheduleDto>
           ? _value.version
           : version // ignore: cast_nullable_to_non_nullable
               as int,
+      subjectName: freezed == subjectName
+          ? _value.subjectName
+          : subjectName // ignore: cast_nullable_to_non_nullable
+              as String?,
+      subjectCode: freezed == subjectCode
+          ? _value.subjectCode
+          : subjectCode // ignore: cast_nullable_to_non_nullable
+              as String?,
+      className: freezed == className
+          ? _value.className
+          : className // ignore: cast_nullable_to_non_nullable
+              as String?,
+      sectionName: freezed == sectionName
+          ? _value.sectionName
+          : sectionName // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -195,7 +227,11 @@ abstract class _$$ExamScheduleDtoImplCopyWith<$Res>
       @JsonKey(name: 'pass_marks') int passMarks,
       @JsonKey(name: 'room_number') String? roomNumber,
       @JsonKey(name: 'is_active') bool isActive,
-      int version});
+      int version,
+      @JsonKey(name: 'subject_name') String? subjectName,
+      @JsonKey(name: 'subject_code') String? subjectCode,
+      @JsonKey(name: 'class_name') String? className,
+      @JsonKey(name: 'section_name') String? sectionName});
 }
 
 /// @nodoc
@@ -225,6 +261,10 @@ class __$$ExamScheduleDtoImplCopyWithImpl<$Res>
     Object? roomNumber = freezed,
     Object? isActive = null,
     Object? version = null,
+    Object? subjectName = freezed,
+    Object? subjectCode = freezed,
+    Object? className = freezed,
+    Object? sectionName = freezed,
   }) {
     return _then(_$ExamScheduleDtoImpl(
       id: null == id
@@ -283,6 +323,22 @@ class __$$ExamScheduleDtoImplCopyWithImpl<$Res>
           ? _value.version
           : version // ignore: cast_nullable_to_non_nullable
               as int,
+      subjectName: freezed == subjectName
+          ? _value.subjectName
+          : subjectName // ignore: cast_nullable_to_non_nullable
+              as String?,
+      subjectCode: freezed == subjectCode
+          ? _value.subjectCode
+          : subjectCode // ignore: cast_nullable_to_non_nullable
+              as String?,
+      className: freezed == className
+          ? _value.className
+          : className // ignore: cast_nullable_to_non_nullable
+              as String?,
+      sectionName: freezed == sectionName
+          ? _value.sectionName
+          : sectionName // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }
@@ -305,7 +361,11 @@ class _$ExamScheduleDtoImpl extends _ExamScheduleDto {
       @JsonKey(name: 'pass_marks') required this.passMarks,
       @JsonKey(name: 'room_number') this.roomNumber,
       @JsonKey(name: 'is_active') required this.isActive,
-      required this.version})
+      required this.version,
+      @JsonKey(name: 'subject_name') this.subjectName,
+      @JsonKey(name: 'subject_code') this.subjectCode,
+      @JsonKey(name: 'class_name') this.className,
+      @JsonKey(name: 'section_name') this.sectionName})
       : super._();
 
   factory _$ExamScheduleDtoImpl.fromJson(Map<String, dynamic> json) =>
@@ -351,10 +411,22 @@ class _$ExamScheduleDtoImpl extends _ExamScheduleDto {
   final bool isActive;
   @override
   final int version;
+  @override
+  @JsonKey(name: 'subject_name')
+  final String? subjectName;
+  @override
+  @JsonKey(name: 'subject_code')
+  final String? subjectCode;
+  @override
+  @JsonKey(name: 'class_name')
+  final String? className;
+  @override
+  @JsonKey(name: 'section_name')
+  final String? sectionName;
 
   @override
   String toString() {
-    return 'ExamScheduleDto(id: $id, examId: $examId, classId: $classId, sectionId: $sectionId, subjectId: $subjectId, teacherSubjectAssignmentId: $teacherSubjectAssignmentId, examDate: $examDate, startTime: $startTime, endTime: $endTime, maxMarks: $maxMarks, passMarks: $passMarks, roomNumber: $roomNumber, isActive: $isActive, version: $version)';
+    return 'ExamScheduleDto(id: $id, examId: $examId, classId: $classId, sectionId: $sectionId, subjectId: $subjectId, teacherSubjectAssignmentId: $teacherSubjectAssignmentId, examDate: $examDate, startTime: $startTime, endTime: $endTime, maxMarks: $maxMarks, passMarks: $passMarks, roomNumber: $roomNumber, isActive: $isActive, version: $version, subjectName: $subjectName, subjectCode: $subjectCode, className: $className, sectionName: $sectionName)';
   }
 
   @override
@@ -386,7 +458,15 @@ class _$ExamScheduleDtoImpl extends _ExamScheduleDto {
                 other.roomNumber == roomNumber) &&
             (identical(other.isActive, isActive) ||
                 other.isActive == isActive) &&
-            (identical(other.version, version) || other.version == version));
+            (identical(other.version, version) || other.version == version) &&
+            (identical(other.subjectName, subjectName) ||
+                other.subjectName == subjectName) &&
+            (identical(other.subjectCode, subjectCode) ||
+                other.subjectCode == subjectCode) &&
+            (identical(other.className, className) ||
+                other.className == className) &&
+            (identical(other.sectionName, sectionName) ||
+                other.sectionName == sectionName));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -406,7 +486,11 @@ class _$ExamScheduleDtoImpl extends _ExamScheduleDto {
       passMarks,
       roomNumber,
       isActive,
-      version);
+      version,
+      subjectName,
+      subjectCode,
+      className,
+      sectionName);
 
   /// Create a copy of ExamScheduleDto
   /// with the given fields replaced by the non-null parameter values.
@@ -427,21 +511,26 @@ class _$ExamScheduleDtoImpl extends _ExamScheduleDto {
 
 abstract class _ExamScheduleDto extends ExamScheduleDto {
   const factory _ExamScheduleDto(
-      {required final String id,
-      @JsonKey(name: 'exam_id') required final String examId,
-      @JsonKey(name: 'class_id') required final String classId,
-      @JsonKey(name: 'section_id') required final String sectionId,
-      @JsonKey(name: 'subject_id') required final String subjectId,
-      @JsonKey(name: 'teacher_subject_assignment_id')
-      required final String teacherSubjectAssignmentId,
-      @JsonKey(name: 'exam_date') required final String examDate,
-      @JsonKey(name: 'start_time') required final String startTime,
-      @JsonKey(name: 'end_time') required final String endTime,
-      @JsonKey(name: 'max_marks') required final int maxMarks,
-      @JsonKey(name: 'pass_marks') required final int passMarks,
-      @JsonKey(name: 'room_number') final String? roomNumber,
-      @JsonKey(name: 'is_active') required final bool isActive,
-      required final int version}) = _$ExamScheduleDtoImpl;
+          {required final String id,
+          @JsonKey(name: 'exam_id') required final String examId,
+          @JsonKey(name: 'class_id') required final String classId,
+          @JsonKey(name: 'section_id') required final String sectionId,
+          @JsonKey(name: 'subject_id') required final String subjectId,
+          @JsonKey(name: 'teacher_subject_assignment_id')
+          required final String teacherSubjectAssignmentId,
+          @JsonKey(name: 'exam_date') required final String examDate,
+          @JsonKey(name: 'start_time') required final String startTime,
+          @JsonKey(name: 'end_time') required final String endTime,
+          @JsonKey(name: 'max_marks') required final int maxMarks,
+          @JsonKey(name: 'pass_marks') required final int passMarks,
+          @JsonKey(name: 'room_number') final String? roomNumber,
+          @JsonKey(name: 'is_active') required final bool isActive,
+          required final int version,
+          @JsonKey(name: 'subject_name') final String? subjectName,
+          @JsonKey(name: 'subject_code') final String? subjectCode,
+          @JsonKey(name: 'class_name') final String? className,
+          @JsonKey(name: 'section_name') final String? sectionName}) =
+      _$ExamScheduleDtoImpl;
   const _ExamScheduleDto._() : super._();
 
   factory _ExamScheduleDto.fromJson(Map<String, dynamic> json) =
@@ -487,6 +576,18 @@ abstract class _ExamScheduleDto extends ExamScheduleDto {
   bool get isActive;
   @override
   int get version;
+  @override
+  @JsonKey(name: 'subject_name')
+  String? get subjectName;
+  @override
+  @JsonKey(name: 'subject_code')
+  String? get subjectCode;
+  @override
+  @JsonKey(name: 'class_name')
+  String? get className;
+  @override
+  @JsonKey(name: 'section_name')
+  String? get sectionName;
 
   /// Create a copy of ExamScheduleDto
   /// with the given fields replaced by the non-null parameter values.

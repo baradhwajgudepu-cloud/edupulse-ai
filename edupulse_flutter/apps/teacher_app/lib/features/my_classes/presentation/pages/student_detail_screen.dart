@@ -8,6 +8,7 @@ import '../../../teacher_ai/presentation/widgets/student_ai_insight_widget.dart'
 import '../../domain/entities/student.dart';
 import '../providers/my_classes_provider.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 // Simple provider to load single student if extra is null (e.g. on direct deep links)
 final studentDetailProvider = FutureProvider.family<StudentEntity, String>((ref, id) async {
@@ -16,7 +17,7 @@ final studentDetailProvider = FutureProvider.family<StudentEntity, String>((ref,
     throw Exception('User is not authenticated');
   }
 
-  final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+  final schoolId = ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
   if (schoolId == null) {
     throw Exception('No school associated with this account');
   }

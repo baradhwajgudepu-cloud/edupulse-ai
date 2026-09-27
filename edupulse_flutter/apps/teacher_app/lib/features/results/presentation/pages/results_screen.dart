@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 import '../../domain/entities/result_summary_entity.dart';
 import '../../domain/entities/report_card_entity.dart';
@@ -17,6 +18,7 @@ import '../../../my_classes/domain/entities/teacher_class_group.dart';
 import '../../../my_classes/domain/entities/student.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 import '../widgets/result_summary_card.dart';
 import '../widgets/result_status_badge.dart';
 import '../../../../core/router/routes.dart';
@@ -66,7 +68,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> with SingleTicker
     final authState = ref.watch(authStateProvider);
 
     String? academicYearId;
-    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull : null;
+    final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull : null);
     if (dashboardState is DashboardSuccess) {
       academicYearId = dashboardState.data.academicYear.id;
     } else if (dashboardState is DashboardRefreshing) {
@@ -147,9 +149,17 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> with SingleTicker
                   prefixIcon: Icon(Icons.menu_book_rounded),
                 ),
                 items: _selectedExamTab1!.schedules.map((s) {
+                  final subjName = displaySubjectName(
+                    subjectName: s.subjectName,
+                    subjectCode: s.subjectCode,
+                    subjectId: s.subjectId,
+                  );
+                  final gradeInfo = (s.className != null && s.className!.isNotEmpty)
+                      ? (s.sectionName != null && s.sectionName!.isNotEmpty ? '${s.className} (${s.sectionName})' : s.className!)
+                      : 'Grade ${s.classId}';
                   return DropdownMenuItem(
                     value: s,
-                    child: Text('${s.subjectId} - Grade ${s.classId}'),
+                    child: Text('$subjName - $gradeInfo'),
                   );
                 }).toList(),
                 onChanged: (val) {

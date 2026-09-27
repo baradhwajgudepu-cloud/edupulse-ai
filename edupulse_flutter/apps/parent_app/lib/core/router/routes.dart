@@ -2,6 +2,8 @@ class AppRoutes {
   static const String splash = '/';
   static const String login = '/login';
   static const String forgotPassword = '/forgot-password';
+  static const String resetPassword = '/reset-password';
+  static const String forceChangePassword = '/force-change-password';
   static const String dashboard = '/dashboard';
   static const String attendance = '/attendance';
   static const String homework = '/homework';
@@ -13,4 +15,6 @@ class AppRoutes {
   static const String communication = '/communication';
   static const String createCommunication = '/communication/new';
   static const String communicationDetails = '/communication/details/:id';
+  static const String profile = '/profile';
+  static const String childSyllabus = '/academics/syllabus';
 }

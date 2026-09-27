@@ -1,6 +1,6 @@
 import uuid
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, UploadFile, File, Response
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,8 @@ from app.schemas.marks import (
     ParentReportCardItem, MarksExcelUploadSummary,
     ExamWideUploadPreviewResponse, ExamWideUploadConfirmRequest,
     ExamWideUploadSummary, ExaminationPublishSummary,
-    ClassAllSubjectsUploadSummary
+    ClassAllSubjectsUploadSummary,
+    ExaminationResultReadiness, StudentResultReadinessItem
 )
 from app.models.user import User
 from app.schemas.response import APIResponse
@@ -181,6 +182,27 @@ async def upload_marks_excel(
     )
 
 
+def parse_uuid_list(items: Optional[List[str]], single_item: Optional[str] = None) -> Optional[List[uuid.UUID]]:
+    res: List[uuid.UUID] = []
+    if items:
+        for it in items:
+            for part in str(it).split(","):
+                part = part.strip()
+                if part:
+                    try:
+                        res.append(uuid.UUID(part))
+                    except Exception:
+                        pass
+    if single_item:
+        for part in str(single_item).split(","):
+            part = part.strip()
+            if part:
+                try:
+                    res.append(uuid.UUID(part))
+                except Exception:
+                    pass
+    return res if res else None
+
 # ==================================================
 # Exam-Wide Bulk Marks Upload & Publishing
 # ==================================================
@@ -194,22 +216,36 @@ async def preview_exam_wide_upload(
     exam_id: uuid.UUID,
     file: UploadFile = File(...),
     school_id: uuid.UUID = Query(...),
+    class_ids: Optional[List[str]] = Query(None),
+    class_id: Optional[str] = Query(None),
+    section_ids: Optional[List[str]] = Query(None),
+    section_id: Optional[str] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    scope: Optional[str] = Query("ALL_PARTICIPATING_CLASSES"),
+    duplicate_behavior: Optional[str] = Query("UPDATE_EXISTING"),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("marks.create")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[ExamWideUploadPreviewResponse]:
     file_bytes = await file.read()
+    effective_class_ids = parse_uuid_list(class_ids, class_id)
+    effective_section_ids = parse_uuid_list(section_ids, section_id)
     preview = await service.preview_exam_wide_marks_file(
         tenant_id=tenant_id,
         school_id=school_id,
         exam_id=exam_id,
         file_bytes=file_bytes,
         filename=file.filename or "upload.xlsx",
-        current_user=current_user
+        current_user=current_user,
+        class_ids=effective_class_ids,
+        section_ids=effective_section_ids,
+        academic_year_id=academic_year_id,
+        scope=scope,
+        duplicate_behavior=duplicate_behavior or "UPDATE_EXISTING"
     )
     return APIResponse[ExamWideUploadPreviewResponse](
         success=True,
-        message=f"File parsed: {preview.valid_rows_count} valid rows, {preview.invalid_rows_count} invalid rows.",
+        message=f"File parsed: {preview.valid_rows_count} valid rows, {preview.invalid_rows_count} invalid rows ({preview.existing_marks_count} existing marks detected).",
         data=preview
     )
 
@@ -229,6 +265,8 @@ async def confirm_exam_wide_upload(
 ) -> APIResponse[ExamWideUploadSummary]:
     req.exam_id = exam_id
     req.school_id = school_id
+    if req.class_id and not req.class_ids:
+        req.class_ids = [req.class_id]
     summary = await service.confirm_exam_wide_marks(
         tenant_id=tenant_id,
         school_id=school_id,
@@ -237,8 +275,39 @@ async def confirm_exam_wide_upload(
     )
     return APIResponse[ExamWideUploadSummary](
         success=True,
-        message=f"Exam-wide marks imported: {summary.saved_count} saved for {summary.students_processed} students.",
+        message=f"Exam-wide marks imported: {summary.saved_count} saved for {summary.students_processed} students ({summary.skipped_count} skipped).",
         data=summary
+    )
+
+@router.get(
+    "/examinations/{exam_id}/result-readiness",
+    response_model=APIResponse[ExaminationResultReadiness],
+    status_code=status.HTTP_200_OK,
+    summary="Get result readiness and completeness status for an examination cycle"
+)
+async def get_examination_result_readiness(
+    exam_id: uuid.UUID,
+    school_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("marks.read")),
+    service: MarksService = Depends(get_marks_service)
+) -> APIResponse[ExaminationResultReadiness]:
+    readiness = await service.get_examination_result_readiness(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        section_id=section_id,
+        current_user=current_user
+    )
+    return APIResponse[ExaminationResultReadiness](
+        success=True,
+        message=readiness.status_message,
+        data=readiness
     )
 
 @router.post(
@@ -250,6 +319,8 @@ async def confirm_exam_wide_upload(
 async def publish_examination_marks(
     exam_id: uuid.UUID,
     school_id: uuid.UUID = Query(...),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("marks.publish")),
     service: MarksService = Depends(get_marks_service)
@@ -258,12 +329,43 @@ async def publish_examination_marks(
         tenant_id=tenant_id,
         school_id=school_id,
         exam_id=exam_id,
-        current_user=current_user
+        current_user=current_user,
+        class_id=class_id,
+        section_id=section_id
     )
     return APIResponse[ExaminationPublishSummary](
         success=True,
         message=f"Examination marks published ({summary.published_count} records). Missing: {summary.missing_count}.",
         data=summary
+    )
+
+@router.post(
+    "/examinations/{exam_id}/unpublish",
+    response_model=APIResponse[Dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+    summary="Unpublish and reopen marks for an examination cycle"
+)
+async def unpublish_examination_marks(
+    exam_id: uuid.UUID,
+    school_id: uuid.UUID = Query(...),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("marks.publish")),
+    service: MarksService = Depends(get_marks_service)
+) -> APIResponse[Dict[str, Any]]:
+    result = await service.unpublish_examination_marks(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        current_user=current_user,
+        class_id=class_id,
+        section_id=section_id
+    )
+    return APIResponse[Dict[str, Any]](
+        success=True,
+        message=result["message"],
+        data=result
     )
 
 @router.get(
@@ -274,11 +376,23 @@ async def publish_examination_marks(
 async def download_exam_wide_template(
     exam_id: uuid.UUID,
     school_id: uuid.UUID = Query(...),
+    class_ids: Optional[List[str]] = Query(None),
+    class_id: Optional[str] = Query(None),
+    section_ids: Optional[List[str]] = Query(None),
+    section_id: Optional[str] = Query(None),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ):
-    template_bytes = await service.generate_exam_wide_template(tenant_id, school_id, exam_id)
+    effective_class_ids = parse_uuid_list(class_ids, class_id)
+    effective_section_ids = parse_uuid_list(section_ids, section_id)
+    template_bytes = await service.generate_exam_wide_template(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        exam_id=exam_id,
+        class_ids=effective_class_ids,
+        section_ids=effective_section_ids
+    )
     return Response(
         content=template_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -726,7 +840,9 @@ async def get_parent_marks(
     current_user: User = Depends(require_permission("marks.read")),
     service: MarksService = Depends(get_marks_service)
 ) -> APIResponse[List[MarksResponse]]:
-    db_objs = await service.marks_repo.get_parent_marks(current_user.email, school_id, tenant_id)
+    db_objs = await service.marks_repo.get_parent_marks(
+        current_user.email, school_id, tenant_id, parent_user_id=current_user.id
+    )
     return APIResponse[List[MarksResponse]](
         success=True,
         message="Student published marks loaded.",

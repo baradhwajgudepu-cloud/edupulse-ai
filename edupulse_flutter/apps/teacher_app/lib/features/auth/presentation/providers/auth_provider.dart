@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:edupulse_core/edupulse_core.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 sealed class AuthState {
   const AuthState();
@@ -48,6 +49,26 @@ class AuthStateNotifier extends Notifier<AuthState> {
     state = Unauthorized(message);
   }
 
+  void clearMustChangePassword() {
+    if (state is Authenticated) {
+      final cur = (state as Authenticated).user;
+      state = Authenticated(
+        UserEntity(
+          id: cur.id,
+          email: cur.email,
+          firstName: cur.firstName,
+          lastName: cur.lastName,
+          tenantId: cur.tenantId,
+          isSuperuser: cur.isSuperuser,
+          roles: cur.roles,
+          schools: cur.schools,
+          schoolNames: cur.schoolNames,
+          mustChangePassword: false,
+        ),
+      );
+    }
+  }
+
   Future<void> checkAuth() async {
     final sessionManager = ref.read(sessionManagerProvider);
     final hasSession = await sessionManager.hasSession();
@@ -80,7 +101,14 @@ class AuthStateNotifier extends Notifier<AuthState> {
         }
 
         if (user.schools.isNotEmpty) {
-          await sessionManager.saveSchoolId(user.schools.first);
+          final cachedSchoolId = await sessionManager.getSchoolId();
+          final targetSchoolId = (cachedSchoolId != null && user.schools.contains(cachedSchoolId))
+              ? cachedSchoolId
+              : user.schools.first;
+          await sessionManager.saveSchoolId(targetSchoolId);
+          final schoolName = user.schoolNames[targetSchoolId] ?? 'School: $targetSchoolId';
+          await sessionManager.saveSchoolName(schoolName);
+          ref.read(activeSchoolIdProvider.notifier).state = targetSchoolId;
         }
         if (user.tenantId != null) {
           await sessionManager.saveTenantId(user.tenantId!);
@@ -137,7 +165,14 @@ class AuthStateNotifier extends Notifier<AuthState> {
 
             final sessionManager = ref.read(sessionManagerProvider);
             if (user.schools.isNotEmpty) {
-              await sessionManager.saveSchoolId(user.schools.first);
+              final cachedSchoolId = await sessionManager.getSchoolId();
+              final targetSchoolId = (cachedSchoolId != null && user.schools.contains(cachedSchoolId))
+                  ? cachedSchoolId
+                  : user.schools.first;
+              await sessionManager.saveSchoolId(targetSchoolId);
+              final schoolName = user.schoolNames[targetSchoolId] ?? 'School: $targetSchoolId';
+              await sessionManager.saveSchoolName(schoolName);
+              ref.read(activeSchoolIdProvider.notifier).state = targetSchoolId;
             }
             if (user.tenantId != null) {
               await sessionManager.saveTenantId(user.tenantId!);
@@ -167,8 +202,8 @@ class AuthStateNotifier extends Notifier<AuthState> {
     try {
       final dio = Dio(
         BaseOptions(
-          connectTimeout: const Duration(seconds: 3),
-          receiveTimeout: const Duration(seconds: 3),
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
         ),
       );
 
@@ -176,7 +211,7 @@ class AuthStateNotifier extends Notifier<AuthState> {
           ? apiBaseUrl.substring(0, apiBaseUrl.length - 1)
           : apiBaseUrl;
 
-      // 1. Try system health endpoint
+      // 1. Try system health endpoint (/api/v1/system/health)
       try {
         final response = await dio.get('$normalizedBase/system/health');
         if (response.statusCode == 200) {
@@ -189,7 +224,20 @@ class AuthStateNotifier extends Notifier<AuthState> {
         }
       }
 
-      // 2. Fallback to openapi.json connectivity verification
+      // 2. Try standard health endpoint (/api/v1/health)
+      try {
+        final response = await dio.get('$normalizedBase/health');
+        if (response.statusCode == 200) {
+          return true;
+        }
+      } on DioException catch (e) {
+        if (e.response != null) {
+          // If we received any response, server is active and reachable
+          return true;
+        }
+      }
+
+      // 3. Fallback to openapi.json connectivity verification
       try {
         final response = await dio.get('$normalizedBase/openapi.json');
         if (response.statusCode == 200) {

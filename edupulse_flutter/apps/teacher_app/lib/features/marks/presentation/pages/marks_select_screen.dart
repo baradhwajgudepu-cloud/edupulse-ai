@@ -1,18 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:edupulse_ui/edupulse_ui.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
-import 'package:edupulse_auth/edupulse_auth.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 import '../../domain/entities/examination_entity.dart';
-import '../../domain/entities/exam_schedule_entity.dart';
 import '../providers/marks_providers.dart';
 import '../../../my_classes/presentation/providers/my_classes_provider.dart';
 import '../../../my_classes/domain/entities/teacher_class_group.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 import '../../../../core/router/routes.dart';
 
 class MarksSelectScreen extends ConsumerStatefulWidget {
@@ -46,7 +45,6 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
     final authState = ref.watch(authStateProvider);
 
     String? academicYearId;
-    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull : null;
     if (dashboardState is DashboardSuccess) {
       academicYearId = dashboardState.data.academicYear.id;
     } else if (dashboardState is DashboardRefreshing) {
@@ -185,7 +183,7 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
           items: assignments.map((a) {
             return DropdownMenuItem<TeacherSubjectAssignmentEntity>(
               value: a,
-              child: Text(a.subjectName),
+              child: Text(displaySubjectName(subjectName: a.subjectName, subjectCode: a.subjectCode)),
             );
           }).toList(),
           onChanged: (value) {
@@ -250,7 +248,7 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
     AppRadius radius,
   ) {
     final authState = ref.watch(authStateProvider);
-    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull : '';
+    final schoolId = ref.watch(activeSchoolIdProvider) ?? (authState is Authenticated ? authState.user.schools.firstOrNull : '');
 
     return FutureBuilder<ApiResult<ExaminationEntity>>(
       future: ref.read(marksRepositoryProvider).getExaminationById(id: exam.id, schoolId: schoolId ?? ''),
@@ -319,7 +317,7 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
           ),
           child: ListTile(
             title: Text(
-              '${group.className} - ${assignment.subjectName}',
+              '${group.className} - ${displaySubjectName(subjectName: assignment.subjectName, subjectCode: assignment.subjectCode)}',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             subtitle: Column(
@@ -348,8 +346,9 @@ class _MarksSelectScreenState extends ConsumerState<MarksSelectScreen> {
             trailing: isAuthorized ? const Icon(Icons.arrow_forward_ios, size: 16) : null,
             onTap: isAuthorized
                 ? () {
+                    final resolvedSubj = displaySubjectName(subjectName: assignment.subjectName, subjectCode: assignment.subjectCode);
                     context.push(
-                      '${AppRoutes.marksEntry}?examScheduleId=${schedule.id}&examName=${Uri.encodeComponent(detailedExam.examName)}&subjectName=${Uri.encodeComponent(assignment.subjectName)}&className=${Uri.encodeComponent('${group.className} - ${group.sectionName}')}&maxMarks=${schedule.maxMarks}&passMarks=${schedule.passMarks}&teacherSubjectAssignmentId=${schedule.teacherSubjectAssignmentId}',
+                      '${AppRoutes.marksEntry}?examScheduleId=${schedule.id}&examName=${Uri.encodeComponent(detailedExam.examName)}&subjectName=${Uri.encodeComponent(resolvedSubj)}&className=${Uri.encodeComponent('${group.className} - ${group.sectionName}')}&maxMarks=${schedule.maxMarks}&passMarks=${schedule.passMarks}&teacherSubjectAssignmentId=${schedule.teacherSubjectAssignmentId}',
                     );
                   }
                 : null,

@@ -1,7 +1,10 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/student_providers.dart';
+import '../widgets/student_avatar.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../data/models/student_models.dart';
 
@@ -49,6 +52,86 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
   String? _selectedAyId;
   String? _selectedClassId;
   String? _selectedSectionId;
+  StudentDto? _initialStudent;
+
+  // Photo management state
+  Uint8List? _pickedPhotoBytes;
+  String? _pickedPhotoName;
+  bool _photoRemoved = false;
+
+  Future<void> _pickPhoto() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+        withData: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        if (file.bytes == null) return;
+        if (file.size > 5 * 1024 * 1024) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Selected photo exceeds 5MB limit. Please choose a smaller photo.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        setState(() {
+          _pickedPhotoBytes = file.bytes;
+          _pickedPhotoName = file.name;
+          _photoRemoved = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error selecting photo: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _pickedPhotoBytes = null;
+      _pickedPhotoName = null;
+      _photoRemoved = true;
+      _photoUrlController.clear();
+    });
+  }
+
+  bool _hasPhoto() {
+    if (_photoRemoved) return false;
+    if (_pickedPhotoBytes != null) return true;
+    return _isEditMode && _photoUrlController.text.trim().isNotEmpty;
+  }
+
+  Widget _buildPhotoPreview(ThemeData theme) {
+    if (_pickedPhotoBytes != null) {
+      return StudentAvatar(
+        radius: 36,
+        previewBytes: _pickedPhotoBytes,
+      );
+    }
+    if (_isEditMode && !_photoRemoved && _photoUrlController.text.trim().isNotEmpty) {
+      return StudentAvatar(
+        studentId: widget.studentId,
+        schoolId: widget.schoolId,
+        photoUrl: _photoUrlController.text.trim(),
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        version: '$_entityVersion',
+        radius: 36,
+      );
+    }
+    return StudentAvatar(
+      firstName: _firstNameController.text,
+      lastName: _lastNameController.text,
+      radius: 36,
+    );
+  }
 
   @override
   void initState() {
@@ -88,6 +171,7 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
       _selectedClassId = s.classId;
       _selectedSectionId = s.sectionId;
       _entityVersion = s.version;
+      _initialStudent = s;
     });
 
     // Populate dependent dropdowns
@@ -126,7 +210,166 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
       return;
     }
 
-    final data = {
+    final actionNotifier = ref.read(studentActionProvider.notifier);
+
+    // If in Edit Mode: check what actually changed
+    if (_isEditMode) {
+      final hasPhotoToUpload = _pickedPhotoBytes != null;
+      final hasPhotoToRemove = _photoRemoved && (_initialStudent?.photoUrl != null && _initialStudent!.photoUrl!.isNotEmpty);
+      final photoChanged = hasPhotoToUpload || hasPhotoToRemove;
+
+      final placementChanged = _initialStudent != null && (
+        _selectedAyId != _initialStudent!.academicYearId ||
+        _selectedClassId != _initialStudent!.classId ||
+        _selectedSectionId != _initialStudent!.sectionId
+      );
+
+      final attributesChanged = _initialStudent == null || (
+        _firstNameController.text != _initialStudent!.firstName ||
+        _middleNameController.text != (_initialStudent!.middleName ?? '') ||
+        _lastNameController.text != _initialStudent!.lastName ||
+        _selectedGender != _initialStudent!.gender ||
+        _dobController.text != _initialStudent!.dateOfBirth ||
+        _bloodGroupController.text != (_initialStudent!.bloodGroup ?? '') ||
+        _aadhaarController.text != (_initialStudent!.aadhaarNumber ?? '') ||
+        _emisController.text != (_initialStudent!.emisNumber ?? '') ||
+        _mobileController.text != (_initialStudent!.mobile ?? '') ||
+        _emailController.text != (_initialStudent!.email ?? '') ||
+        _photoUrlController.text != (_initialStudent!.photoUrl ?? '') ||
+        _addressLineController.text != (_initialStudent!.address['line']?.toString() ?? '') ||
+        _cityController.text != (_initialStudent!.address['city']?.toString() ?? '') ||
+        _stateController.text != (_initialStudent!.address['state']?.toString() ?? '') ||
+        _medicalController.text != (_initialStudent!.medicalInformation['allergies']?.toString() ?? '') ||
+        _admissionNumberController.text != _initialStudent!.admissionNumber ||
+        _rollNumberController.text != _initialStudent!.rollNumber ||
+        _admissionDateController.text != _initialStudent!.admissionDate ||
+        _selectedStatus != _initialStudent!.status
+      );
+
+      // Operation A: Only photo changed -> do NOT send student update or academic placement
+      if (photoChanged && !placementChanged && !attributesChanged) {
+        bool photoSuccess = false;
+        if (hasPhotoToUpload) {
+          photoSuccess = await actionNotifier.uploadStudentPhoto(
+            schoolId: widget.schoolId,
+            studentId: widget.studentId,
+            fileBytes: _pickedPhotoBytes!,
+            fileName: _pickedPhotoName ?? 'photo.jpg',
+          );
+        } else if (hasPhotoToRemove) {
+          photoSuccess = await actionNotifier.deleteStudentPhoto(
+            schoolId: widget.schoolId,
+            studentId: widget.studentId,
+          );
+        }
+
+        if (photoSuccess) {
+          ref.invalidate(studentListProvider);
+          ref.invalidate(studentDetailProvider(widget.studentId));
+          ref.invalidate(studentAvatarBytesProvider);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(hasPhotoToUpload ? 'Student photo updated successfully' : 'Student photo removed successfully'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            context.pop(true);
+          }
+        } else {
+          final actionState = ref.read(studentActionProvider);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(actionState.errorMessage ?? 'Photo operation failed'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+        return;
+      }
+
+      // Operation B & C: Profile attributes and/or Placement changed
+      final updateData = <String, dynamic>{
+        'first_name': _firstNameController.text,
+        'middle_name': _middleNameController.text.isEmpty ? null : _middleNameController.text,
+        'last_name': _lastNameController.text,
+        'gender': _selectedGender,
+        'date_of_birth': _dobController.text,
+        'blood_group': _bloodGroupController.text.isEmpty ? null : _bloodGroupController.text,
+        'aadhaar_number': _aadhaarController.text.isEmpty ? null : _aadhaarController.text,
+        'emis_number': _emisController.text.isEmpty ? null : _emisController.text,
+        'mobile': _mobileController.text.isEmpty ? null : _mobileController.text,
+        'email': _emailController.text.isEmpty ? null : _emailController.text,
+        'photo_url': _photoUrlController.text.isEmpty ? null : _photoUrlController.text,
+        'address': {
+          'line': _addressLineController.text,
+          'city': _cityController.text,
+          'state': _stateController.text,
+        },
+        'medical_information': {
+          'allergies': _medicalController.text,
+        },
+        'admission_number': _admissionNumberController.text,
+        'roll_number': _rollNumberController.text,
+        'admission_date': _admissionDateController.text,
+        'school_id': widget.schoolId,
+        'status': _selectedStatus,
+        'version': _entityVersion,
+        // Only include academic placement if it was genuinely modified by user!
+        if (placementChanged) ...{
+          'academic_year_id': _selectedAyId,
+          'class_id': _selectedClassId,
+          'section_id': _selectedSectionId,
+        },
+      };
+
+      final success = await actionNotifier.execute(
+        method: 'PUT',
+        path: '/students/${widget.studentId}?school_id=${widget.schoolId}',
+        data: updateData,
+        successMsg: 'Student profile updated',
+      );
+
+      if (success) {
+        if (hasPhotoToUpload) {
+          await actionNotifier.uploadStudentPhoto(
+            schoolId: widget.schoolId,
+            studentId: widget.studentId,
+            fileBytes: _pickedPhotoBytes!,
+            fileName: _pickedPhotoName ?? 'photo.jpg',
+          );
+        } else if (hasPhotoToRemove) {
+          await actionNotifier.deleteStudentPhoto(
+            schoolId: widget.schoolId,
+            studentId: widget.studentId,
+          );
+        }
+
+        ref.invalidate(studentListProvider);
+        ref.invalidate(studentDetailProvider(widget.studentId));
+        ref.invalidate(studentAvatarBytesProvider);
+        if (mounted) context.pop(true);
+      } else {
+        final actionState = ref.read(studentActionProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(actionState.errorMessage ?? 'Operation failed'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          if (actionState.isConflict) {
+            _loadStudentDetails();
+          }
+        }
+      }
+      return;
+    }
+
+    // Operation D: Create Mode (Admit New Student)
+    final createData = {
       'first_name': _firstNameController.text,
       'middle_name': _middleNameController.text.isEmpty ? null : _middleNameController.text,
       'last_name': _lastNameController.text,
@@ -154,35 +397,43 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
       'class_id': _selectedClassId,
       'section_id': _selectedSectionId,
       'status': _selectedStatus,
-      if (_isEditMode) 'version': _entityVersion,
     };
 
-    final path = _isEditMode ? '/students/${widget.studentId}?school_id=${widget.schoolId}' : '/students';
-    final method = _isEditMode ? 'PUT' : 'POST';
-
-    final success = await ref.read(studentActionProvider.notifier).execute(
-          method: method,
-          path: path,
-          data: data,
-          successMsg: _isEditMode ? 'Student profile updated' : 'Student admitted successfully',
-        );
+    final success = await actionNotifier.execute(
+      method: 'POST',
+      path: '/students',
+      data: createData,
+      successMsg: 'Student admitted successfully',
+    );
 
     if (success) {
-      ref.invalidate(studentListProvider);
-      if (_isEditMode) {
-        ref.invalidate(studentDetailProvider(widget.studentId));
+      final targetStudentId = ref.read(studentActionProvider).createdStudent?.id ??
+          (ref.read(studentActionProvider).lastData is Map &&
+                  ref.read(studentActionProvider).lastData['data'] is Map
+              ? ref.read(studentActionProvider).lastData['data']['id']?.toString()
+              : null) ??
+          '';
+
+      if (targetStudentId.isNotEmpty && _pickedPhotoBytes != null) {
+        await actionNotifier.uploadStudentPhoto(
+          schoolId: widget.schoolId,
+          studentId: targetStudentId,
+          fileBytes: _pickedPhotoBytes!,
+          fileName: _pickedPhotoName ?? 'photo.jpg',
+        );
       }
-      context.pop();
+
+      ref.invalidate(studentListProvider);
+      if (mounted) context.pop(true);
     } else {
       final actionState = ref.read(studentActionProvider);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(actionState.errorMessage ?? 'Operation failed'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      if (actionState.isConflict) {
-        _loadStudentDetails();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(actionState.errorMessage ?? 'Operation failed'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -216,7 +467,7 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
 
     if (success) {
       ref.invalidate(studentListProvider);
-      context.pop();
+      if (mounted) context.pop();
     }
   }
 
@@ -250,6 +501,48 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
               onPressed: _deleteStudent,
             ),
         ],
+      ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border(
+            top: BorderSide(color: theme.colorScheme.outlineVariant, width: 1),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              offset: const Offset(0, -2),
+              blurRadius: 6,
+            ),
+          ],
+        ),
+        child: SafeArea(
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 16,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                key: const Key('cancel_student_button'),
+                onPressed: () => context.pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                key: const Key('save_student_button'),
+                onPressed: actionState.isLoading ? null : _saveForm,
+                icon: actionState.isLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Save Details'),
+              ),
+            ],
+          ),
+        ),
       ),
       body: actionState.isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -327,6 +620,57 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                               }).toList(),
                               validator: (v) => v == null ? 'Required' : null,
                               onChanged: (val) => setState(() => _selectedSectionId = val),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Profile Photo (DP) Card
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 24),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Student Profile Photo (DP)', style: theme.textTheme.titleMedium),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Upload a JPG, PNG, or WEBP photo (Max 5MB). Photo is optional.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                _buildPhotoPreview(theme),
+                                const SizedBox(width: 20),
+                                Expanded(
+                                  child: Wrap(
+                                    spacing: 12,
+                                    runSpacing: 8,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    children: [
+                                      ElevatedButton.icon(
+                                        key: const Key('upload_student_photo_button'),
+                                        onPressed: _pickPhoto,
+                                        icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                                        label: Text(_hasPhoto() ? 'Change Photo' : 'Upload Photo'),
+                                      ),
+                                      if (_hasPhoto())
+                                        OutlinedButton.icon(
+                                          key: const Key('remove_student_photo_button'),
+                                          onPressed: _removePhoto,
+                                          icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                          label: const Text('Remove Photo', style: TextStyle(color: Colors.red)),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -502,15 +846,18 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                     if (_isEditMode) _buildGuardianSection(theme),
 
                     const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         OutlinedButton(
-                          onPressed: () => context.pop(),
+                          key: const Key('edit_student_cancel_button'),
+                          onPressed: () => context.pop(false),
                           child: const Text('Cancel'),
                         ),
-                        const SizedBox(width: 12),
                         ElevatedButton(
+                          key: const Key('edit_student_save_button'),
                           onPressed: _saveForm,
                           child: const Text('Save Details'),
                         ),
@@ -791,86 +1138,26 @@ class GuardianAssociationTile extends ConsumerWidget {
         ),
         title: Text('Loading guardian profile...'),
       ),
-      error: (error, stack) => ListTile(
-        title: Text(
-          'Guardian profile unavailable (${mapping.relationship})',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('ID: ${mapping.guardianId}'),
-            Text(
-              'Primary: ${mapping.isPrimary ? "YES" : "NO"} • Pickup: ${mapping.canPickupStudent ? "Allowed" : "Blocked"} • Notifications: ${mapping.receivesNotifications ? "Yes" : "No"}',
-            ),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit_outlined),
-              onPressed: onEdit,
-            ),
-            IconButton(
-              icon: const Icon(Icons.link_off, color: Colors.red),
-              onPressed: onUnlink,
-            ),
-          ],
-        ),
-      ),
-      data: (guardian) {
-        return ListTile(
-          title: Text(
-            '${guardian.firstName} ${guardian.lastName} (${mapping.relationship})',
+      error: (error, stack) => LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 600;
+          final titleWidget = Text(
+            'Guardian profile unavailable (${mapping.relationship})',
             style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          subtitle: Column(
+          );
+          final subtitleWidget = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Email: ${guardian.email ?? "N/A"} • Phone: ${guardian.mobile}'),
+              Text('ID: ${mapping.guardianId}'),
               Text(
                 'Primary: ${mapping.isPrimary ? "YES" : "NO"} • Pickup: ${mapping.canPickupStudent ? "Allowed" : "Blocked"} • Notifications: ${mapping.receivesNotifications ? "Yes" : "No"}',
               ),
             ],
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
+          );
+          final actionsWidget = Wrap(
+            spacing: 8,
+            runSpacing: 4,
             children: [
-              TextButton.icon(
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: const Text('View Parent'),
-                onPressed: () async {
-                  final scaffoldMessenger = ScaffoldMessenger.of(context);
-                  try {
-                    final status = await ref.read(
-                      guardianUserStatusProvider(mapping.guardianId).future,
-                    );
-                    if (status['is_provisioned'] == true && status['user_id'] != null) {
-                      final userId = status['user_id'].toString();
-                      if (context.mounted) {
-                        context.push('/users/$userId');
-                      }
-                    } else {
-                      scaffoldMessenger.showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'No User Account has been provisioned for this guardian yet.',
-                          ),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    scaffoldMessenger.showSnackBar(
-                      SnackBar(
-                        content: Text('Error checking user status: $e'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                },
-              ),
               IconButton(
                 icon: const Icon(Icons.edit_outlined),
                 onPressed: onEdit,
@@ -880,7 +1167,148 @@ class GuardianAssociationTile extends ConsumerWidget {
                 onPressed: onUnlink,
               ),
             ],
-          ),
+          );
+
+          if (isNarrow) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  titleWidget,
+                  const SizedBox(height: 4),
+                  subtitleWidget,
+                  const SizedBox(height: 8),
+                  actionsWidget,
+                ],
+              ),
+            );
+          }
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      titleWidget,
+                      const SizedBox(height: 4),
+                      subtitleWidget,
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                actionsWidget,
+              ],
+            ),
+          );
+        },
+      ),
+      data: (guardian) {
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 680;
+            final titleWidget = Text(
+              '${guardian.firstName} ${guardian.lastName} (${mapping.relationship})',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            );
+            final subtitleWidget = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Email: ${guardian.email ?? "N/A"} • Phone: ${guardian.mobile}'),
+                Text(
+                  'Primary: ${mapping.isPrimary ? "YES" : "NO"} • Pickup: ${mapping.canPickupStudent ? "Allowed" : "Blocked"} • Notifications: ${mapping.receivesNotifications ? "Yes" : "No"}',
+                ),
+              ],
+            );
+            final actionsWidget = Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('View Parent'),
+                  onPressed: () async {
+                    final scaffoldMessenger = ScaffoldMessenger.of(context);
+                    try {
+                      final status = await ref.read(
+                        guardianUserStatusProvider(mapping.guardianId).future,
+                      );
+                      if (status['is_provisioned'] == true && status['user_id'] != null) {
+                        final userId = status['user_id'].toString();
+                        if (context.mounted) {
+                          context.push('/users/$userId');
+                        }
+                      } else {
+                        scaffoldMessenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No User Account has been provisioned for this guardian yet.',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      scaffoldMessenger.showSnackBar(
+                        SnackBar(
+                          content: Text('Error checking user status: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: onEdit,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.link_off, color: Colors.red),
+                  onPressed: onUnlink,
+                ),
+              ],
+            );
+
+            if (isNarrow) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    titleWidget,
+                    const SizedBox(height: 4),
+                    subtitleWidget,
+                    const SizedBox(height: 8),
+                    actionsWidget,
+                  ],
+                ),
+              );
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        titleWidget,
+                        const SizedBox(height: 4),
+                        subtitleWidget,
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  actionsWidget,
+                ],
+              ),
+            );
+          },
         );
       },
     );

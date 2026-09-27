@@ -163,6 +163,8 @@ class Examination(Base, BaseModelMixin):
     academic_year = relationship("AcademicYear", back_populates="examinations")
     schedules = relationship("ExamSchedule", back_populates="examination", cascade="all, delete-orphan")
     participating_classes = relationship("ExaminationClass", back_populates="examination", cascade="all, delete-orphan")
+    papers = relationship("ExamPaper", back_populates="examination", cascade="all, delete-orphan", order_by="ExamPaper.order_index")
+    paper_classes = relationship("ExamPaperClass", back_populates="examination", cascade="all, delete-orphan")
 
     __mapper_args__ = {
         "version_id_col": version
@@ -200,6 +202,98 @@ class ExaminationClass(Base, BaseModelMixin):
         UniqueConstraint("examination_id", "class_id", name="uq_examination_participating_class"),
     )
 
+
+class ExamPaper(Base, BaseModelMixin):
+    """
+    SQLAlchemy model representing an Exam Paper under an Examination Cycle.
+    Each exam cycle has papers (e.g. Mathematics, English, Physics) which can be
+    taken by multiple participating classes.
+    """
+    __tablename__ = "exam_papers"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    academic_year_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    examination_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    paper_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    paper_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    default_max_marks: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    default_pass_marks: Mapped[int] = mapped_column(Integer, default=35, nullable=False)
+    default_duration_minutes: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
+    order_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    examination = relationship("Examination", back_populates="papers")
+    subject = relationship("Subject")
+    class_configs = relationship("ExamPaperClass", back_populates="paper", cascade="all, delete-orphan")
+    schedules = relationship("ExamSchedule", back_populates="paper")
+
+    __mapper_args__ = {
+        "version_id_col": version
+    }
+
+    __table_args__ = (
+        Index("ix_exam_papers_exam_subject", "examination_id", "subject_id"),
+        Index("ix_exam_papers_tenant_school", "tenant_id", "school_id"),
+    )
+
+
+class ExamPaperClass(Base, BaseModelMixin):
+    """
+    SQLAlchemy model representing class-specific overrides for an Exam Paper.
+    For example: Mathematics Paper has default 100 marks, but for Class 5 it is 50 marks.
+    """
+    __tablename__ = "exam_paper_classes"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    examination_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("exam_papers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    maximum_marks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pass_marks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    examination = relationship("Examination", back_populates="paper_classes")
+    paper = relationship("ExamPaper", back_populates="class_configs")
+    class_obj = relationship("Class")
+
+    __mapper_args__ = {
+        "version_id_col": version
+    }
+
+    __table_args__ = (
+        UniqueConstraint("paper_id", "class_id", name="uq_exam_paper_class"),
+        Index("ix_exam_paper_classes_exam_class", "examination_id", "class_id"),
+    )
+
+
 class ExamSchedule(Base, BaseModelMixin):
     """
     SQLAlchemy model representing a specific Exam Schedule slot.
@@ -228,6 +322,9 @@ class ExamSchedule(Base, BaseModelMixin):
     exam_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("examinations.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    paper_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("exam_papers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     class_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("classes.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -237,14 +334,15 @@ class ExamSchedule(Base, BaseModelMixin):
     subject_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    teacher_subject_assignment_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("teacher_subject_assignments.id", ondelete="CASCADE"), nullable=False, index=True
+    teacher_subject_assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("teacher_subject_assignments.id", ondelete="CASCADE"), nullable=True, index=True
     )
 
     tenant = relationship("Tenant", back_populates="exam_schedules")
     school = relationship("School", back_populates="exam_schedules")
     academic_year = relationship("AcademicYear", back_populates="exam_schedules")
     examination = relationship("Examination", back_populates="schedules")
+    paper = relationship("ExamPaper", back_populates="schedules")
     class_obj = relationship("Class")
     section = relationship("Section")
     subject = relationship("Subject")
@@ -257,6 +355,12 @@ class ExamSchedule(Base, BaseModelMixin):
     @property
     def subject_code(self) -> Optional[str]:
         return self.subject.subject_code if self.subject else None
+
+    @property
+    def paper_name(self) -> Optional[str]:
+        if self.paper and self.paper.paper_name:
+            return self.paper.paper_name
+        return self.subject.subject_name if self.subject else None
 
     @property
     def class_name(self) -> Optional[str]:
@@ -275,9 +379,7 @@ class ExamSchedule(Base, BaseModelMixin):
     }
 
     __table_args__ = (
-        UniqueConstraint(
-            "exam_id", "teacher_subject_assignment_id",
-            name="uq_exam_schedules_tsa_slot"
-        ),
         Index("ix_exam_schedules_exam_date", "exam_date"),
+        Index("ix_exam_schedules_exam_class_sec", "exam_id", "class_id", "section_id"),
     )
+

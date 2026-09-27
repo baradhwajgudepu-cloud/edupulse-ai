@@ -7,6 +7,7 @@ import '../widgets/teacher_form_dialog.dart';
 import '../widgets/assignment_form_dialog.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
+import '../../../../core/routing/routes.dart';
 
 class TeacherDetailsScreen extends ConsumerStatefulWidget {
   final String teacherId;
@@ -209,6 +210,17 @@ class _TeacherDetailsScreenState extends ConsumerState<TeacherDetailsScreen> wit
     return Scaffold(
       appBar: AppBar(
         title: const Text('Teacher Profile & Setup'),
+        actions: [
+          IconButton(
+            key: const Key('appbar_edit_teacher_button'),
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit Profile',
+            onPressed: detailAsync.valueOrNull == null || detailAsync.valueOrNull!.status == 'RETIRED'
+                ? null
+                : () => _showFormDialog(context, detailAsync.valueOrNull!),
+          ),
+          const SizedBox(width: 8),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -463,15 +475,30 @@ class _TeacherDetailsScreenState extends ConsumerState<TeacherDetailsScreen> wit
           const SizedBox(height: 24),
 
           // Title & Assign Button Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text('Academic Assignments Catalog', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-              ElevatedButton.icon(
-                key: const Key('assign_subject_button'),
-                icon: const Icon(Icons.add_link),
-                label: const Text('Assign Subject'),
-                onPressed: isRetired ? null : () => _showAssignmentDialog(context),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const Key('view_teacher_timetable_button'),
+                    icon: const Icon(Icons.table_chart_outlined, size: 18),
+                    label: const Text('View Timetable'),
+                    onPressed: () => context.push('${AppRoutes.timetables}?teacher_id=${widget.teacherId}'),
+                  ),
+                  ElevatedButton.icon(
+                    key: const Key('assign_subject_button'),
+                    icon: const Icon(Icons.add_link, size: 18),
+                    label: const Text('Assign Subject'),
+                    onPressed: isRetired ? null : () => _showAssignmentDialog(context),
+                  ),
+                ],
               ),
             ],
           ),
@@ -537,6 +564,12 @@ class _TeacherDetailsScreenState extends ConsumerState<TeacherDetailsScreen> wit
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
+                                    key: Key('view_section_timetable_${a.id}'),
+                                    icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                                    tooltip: 'View Section Timetable',
+                                    onPressed: () => context.push('${AppRoutes.timetables}?section_id=${a.sectionId}'),
+                                  ),
+                                  IconButton(
                                     key: Key('edit_assignment_${a.id}'),
                                     icon: const Icon(Icons.edit_outlined, size: 18),
                                     tooltip: 'Edit Assignment',
@@ -576,33 +609,43 @@ class _TeacherDetailsScreenState extends ConsumerState<TeacherDetailsScreen> wit
         side: BorderSide(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Container(
-        width: width,
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
-            const Divider(height: 24),
-            ...details.entries.map((e) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12.0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 130,
-                      child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.grey)),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final screenWidth = MediaQuery.of(context).size.width;
+          final effectiveWidth = screenWidth < 450 ? double.infinity : width;
+
+          return Container(
+            width: effectiveWidth,
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: theme.colorScheme.primary)),
+                const Divider(height: 24),
+                ...details.entries.map((e) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 130,
+                          child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.grey, fontSize: 13)),
+                        ),
+                        Expanded(
+                          child: SelectableText(
+                            e.value,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                      ],
                     ),
-                    Expanded(
-                      child: Text(e.value, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
+                  );
+                }),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

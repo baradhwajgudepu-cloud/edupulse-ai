@@ -1,6 +1,8 @@
+import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../data/models/student_models.dart';
+import '../../data/models/student_360_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
 
@@ -20,6 +22,7 @@ class StudentListState {
   final String? classId;
   final String? sectionId;
   final String? status;
+  final String? attention;
   final String search;
   final int skip;
   final int limit;
@@ -38,6 +41,7 @@ class StudentListState {
     this.classId,
     this.sectionId,
     this.status,
+    this.attention,
     required this.search,
     required this.skip,
     required this.limit,
@@ -57,6 +61,13 @@ class StudentListState {
     String? classId,
     String? sectionId,
     String? status,
+    String? attention,
+    bool clearAttention = false,
+    bool clearAcademicYear = false,
+    bool clearClass = false,
+    bool clearSection = false,
+    bool clearStatus = false,
+    bool clearAllFilters = false,
     String? search,
     int? skip,
     int? limit,
@@ -71,11 +82,12 @@ class StudentListState {
       isLoading: isLoading ?? this.isLoading,
       error: error,
       schoolId: schoolId ?? this.schoolId,
-      academicYearId: academicYearId ?? this.academicYearId,
-      classId: classId ?? this.classId,
-      sectionId: sectionId ?? this.sectionId,
-      status: status ?? this.status,
-      search: search ?? this.search,
+      academicYearId: (clearAllFilters || clearAcademicYear) ? null : (academicYearId ?? this.academicYearId),
+      classId: (clearAllFilters || clearClass) ? null : (classId ?? this.classId),
+      sectionId: (clearAllFilters || clearSection) ? null : (sectionId ?? this.sectionId),
+      status: (clearAllFilters || clearStatus) ? null : (status ?? this.status),
+      attention: (clearAllFilters || clearAttention) ? null : (attention ?? this.attention),
+      search: clearAllFilters ? '' : (search ?? this.search),
       skip: skip ?? this.skip,
       limit: limit ?? this.limit,
       hasMore: hasMore ?? this.hasMore,
@@ -107,9 +119,7 @@ class StudentListNotifier extends StateNotifier<StudentListState> {
       if (next != null) {
         state = state.copyWith(
           schoolId: next,
-          academicYearId: null,
-          classId: null,
-          sectionId: null,
+          clearAllFilters: true,
           skip: 0,
           students: [],
         );
@@ -117,9 +127,7 @@ class StudentListNotifier extends StateNotifier<StudentListState> {
       } else {
         state = state.copyWith(
           schoolId: null,
-          academicYearId: null,
-          classId: null,
-          sectionId: null,
+          clearAllFilters: true,
           students: [],
         );
       }
@@ -162,6 +170,9 @@ class StudentListNotifier extends StateNotifier<StudentListState> {
     }
     if (state.status != null) {
       queryParams['status'] = state.status!;
+    }
+    if (state.attention != null && state.attention!.isNotEmpty) {
+      queryParams['attention'] = state.attention!;
     }
     if (state.search.isNotEmpty) {
       queryParams['search'] = state.search;
@@ -208,6 +219,13 @@ class StudentListNotifier extends StateNotifier<StudentListState> {
     String? sectionId,
     String? status,
     String? search,
+    String? attention,
+    bool clearAttention = false,
+    bool clearAcademicYear = false,
+    bool clearClass = false,
+    bool clearSection = false,
+    bool clearStatus = false,
+    bool clearAllFilters = false,
   }) {
     state = state.copyWith(
       academicYearId: academicYearId,
@@ -215,10 +233,35 @@ class StudentListNotifier extends StateNotifier<StudentListState> {
       sectionId: sectionId,
       status: status,
       search: search,
+      attention: attention,
+      clearAttention: clearAttention,
+      clearAcademicYear: clearAcademicYear,
+      clearClass: clearClass,
+      clearSection: clearSection,
+      clearStatus: clearStatus,
+      clearAllFilters: clearAllFilters,
       skip: 0,
     );
     fetchStudents();
   }
+
+  void clearAllFilters() {
+    state = state.copyWith(
+      clearAllFilters: true,
+      skip: 0,
+    );
+    fetchStudents();
+  }
+
+  void setAttentionFilter(String? attention) {
+    state = state.copyWith(
+      attention: attention,
+      clearAttention: attention == null,
+      skip: 0,
+    );
+    fetchStudents();
+  }
+
 
   void nextPage() {
     if (!state.hasMore || state.isLoading) return;
@@ -552,6 +595,7 @@ final studentDetailProvider =
 final studentGuardianProvider =
     FutureProvider.family<List<StudentGuardianDto>, String>((ref, studentId) async {
   final apiClient = ref.watch(apiClientProvider);
+  final schoolId = ref.watch(selectedSchoolIdProvider);
   final result = await apiClient.get(
     '/student-guardians?student_id=$studentId',
     mapper: (json) {
@@ -564,7 +608,30 @@ final studentGuardianProvider =
   );
 
   return result.when(
-    onSuccess: (mappings) => mappings,
+    onSuccess: (mappings) async {
+      final enriched = await Future.wait(
+        mappings.map((m) async {
+          if (m.guardian != null) return m;
+          try {
+            final q = schoolId != null ? '?school_id=$schoolId' : '';
+            final gRes = await apiClient.get(
+              '/guardians/${m.guardianId}$q',
+              mapper: (json) {
+                final payload = json as Map<String, dynamic>;
+                return GuardianDto.fromJson(Map<String, dynamic>.from(payload['data'] as Map));
+              },
+            );
+            return gRes.when(
+              onSuccess: (guardian) => m.copyWith(guardian: guardian),
+              onFailure: (_) => m,
+            );
+          } catch (_) {
+            return m;
+          }
+        }),
+      );
+      return enriched;
+    },
     onFailure: (failure) => throw Exception(failure.message),
   );
 });
@@ -574,12 +641,16 @@ class StudentActionState {
   final String? successMessage;
   final String? errorMessage;
   final bool isConflict;
+  final dynamic lastData;
+  final StudentDto? createdStudent;
 
   const StudentActionState({
     required this.isLoading,
     this.successMessage,
     this.errorMessage,
     this.isConflict = false,
+    this.lastData,
+    this.createdStudent,
   });
 }
 
@@ -609,10 +680,18 @@ class StudentActionNotifier extends StateNotifier<StudentActionState> {
     }
 
     return result.when(
-      onSuccess: (_) {
+      onSuccess: (resData) {
+        StudentDto? student;
+        if (resData is Map<String, dynamic> && resData['data'] is Map<String, dynamic>) {
+          try {
+            student = StudentDto.fromJson(Map<String, dynamic>.from(resData['data'] as Map));
+          } catch (_) {}
+        }
         state = StudentActionState(
           isLoading: false,
           successMessage: successMsg ?? 'Action completed successfully.',
+          lastData: resData,
+          createdStudent: student,
         );
         return true;
       },
@@ -627,6 +706,121 @@ class StudentActionNotifier extends StateNotifier<StudentActionState> {
               ? 'This student record has been modified by another user. Reloading the latest details...'
               : failure.message,
           isConflict: conflict,
+        );
+        return false;
+      },
+    );
+  }
+
+  Future<StudentDto?> createStudent(Map<String, dynamic> data) async {
+    state = const StudentActionState(isLoading: true);
+
+    final result = await _apiClient.post(
+      '/students',
+      data: data,
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        final studentData = payload['data'] as Map<String, dynamic>;
+        return StudentDto.fromJson(studentData);
+      },
+    );
+
+    return result.when(
+      onSuccess: (student) {
+        state = StudentActionState(
+          isLoading: false,
+          successMessage: 'Student admitted successfully',
+          createdStudent: student,
+          lastData: student,
+        );
+        return student;
+      },
+      onFailure: (failure) {
+        final conflict = failure.statusCode == 409 ||
+            failure.message.contains('conflict') ||
+            failure.message.contains('version');
+
+        state = StudentActionState(
+          isLoading: false,
+          errorMessage: failure.message,
+          isConflict: conflict,
+        );
+        return null;
+      },
+    );
+  }
+
+  Future<bool> uploadStudentPhoto({
+    required String schoolId,
+    required String studentId,
+    required Uint8List fileBytes,
+    required String fileName,
+  }) async {
+    state = const StudentActionState(isLoading: true);
+
+    try {
+      final multipart = MultipartFile.fromBytes(
+        fileBytes,
+        filename: fileName,
+      );
+      final formData = FormData.fromMap({
+        'file': multipart,
+      });
+
+      final result = await _apiClient.post(
+        '/students/$studentId/photo?school_id=$schoolId',
+        data: formData,
+        mapper: (json) => json,
+      );
+
+      return result.when(
+        onSuccess: (res) {
+          state = const StudentActionState(
+            isLoading: false,
+            successMessage: 'Profile photo updated successfully',
+          );
+          return true;
+        },
+        onFailure: (failure) {
+          state = StudentActionState(
+            isLoading: false,
+            errorMessage: failure.message,
+          );
+          return false;
+        },
+      );
+    } catch (e) {
+      state = StudentActionState(
+        isLoading: false,
+        errorMessage: 'Failed to upload photo: $e',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> deleteStudentPhoto({
+    required String schoolId,
+    required String studentId,
+  }) async {
+    state = const StudentActionState(isLoading: true);
+
+    final result = await _apiClient.delete(
+      '/students/$studentId/photo?school_id=$schoolId',
+      mapper: (json) => json,
+    );
+
+    return result.when(
+      onSuccess: (_) {
+        state = const StudentActionState(
+          isLoading: false,
+          successMessage: 'Profile photo removed',
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = StudentActionState(
+          isLoading: false,
+          errorMessage: failure.message,
         );
         return false;
       },
@@ -742,3 +936,98 @@ final linkedStudentsProvider =
 
   return students;
 });
+
+class Student360Key {
+  final String schoolId;
+  final String studentId;
+
+  const Student360Key({required this.schoolId, required this.studentId});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Student360Key &&
+          runtimeType == other.runtimeType &&
+          schoolId == other.schoolId &&
+          studentId == other.studentId;
+
+  @override
+  int get hashCode => schoolId.hashCode ^ studentId.hashCode;
+}
+
+final student360AnalyticsProvider =
+    FutureProvider.autoDispose.family<Student360Analytics, Student360Key>((ref, key) async {
+  final apiClient = ref.watch(apiClientProvider);
+  final activeSchoolId = key.schoolId.isNotEmpty
+      ? key.schoolId
+      : (ref.watch(selectedSchoolIdProvider) ?? '');
+
+  final result = await apiClient.get(
+    '/students/${key.studentId}/analytics?school_id=$activeSchoolId',
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      final data = payload['data'] as Map<String, dynamic>?;
+      if (data == null) {
+        return Student360Analytics.empty(key.studentId, activeSchoolId);
+      }
+      return Student360Analytics.fromJson(data);
+    },
+  );
+
+  return result.when(
+    onSuccess: (data) => data,
+    onFailure: (failure) {
+      return Student360Analytics.empty(key.studentId, activeSchoolId);
+    },
+  );
+});
+
+class StudentPhotoKey {
+  final String studentId;
+  final String schoolId;
+  final String? version;
+
+  const StudentPhotoKey({
+    required this.studentId,
+    required this.schoolId,
+    this.version,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StudentPhotoKey &&
+          runtimeType == other.runtimeType &&
+          studentId == other.studentId &&
+          schoolId == other.schoolId &&
+          version == other.version;
+
+  @override
+  int get hashCode =>
+      studentId.hashCode ^ schoolId.hashCode ^ (version?.hashCode ?? 0);
+}
+
+final studentAvatarBytesProvider =
+    FutureProvider.family<Uint8List?, StudentPhotoKey>((ref, key) async {
+  if (key.studentId.isEmpty || key.schoolId.isEmpty) return null;
+  final apiClient = ref.watch(apiClientProvider);
+
+  final versionQuery = key.version != null ? '&v=${Uri.encodeComponent(key.version!)}' : '';
+  final result = await apiClient.get<Uint8List?>(
+    '/students/${key.studentId}/photo?school_id=${key.schoolId}$versionQuery',
+    options: Options(responseType: ResponseType.bytes),
+    mapper: (data) {
+      if (data is List<int>) {
+        return Uint8List.fromList(data);
+      }
+      return null;
+    },
+  );
+
+  return result.when(
+    onSuccess: (bytes) => bytes,
+    onFailure: (_) => null,
+  );
+});
+
+

@@ -67,6 +67,8 @@ class ClassDetailScreen extends ConsumerWidget {
                   _buildHeaderCard(resolvedGroup, isClassTeacher, theme, spacing, radius),
                   SizedBox(height: spacing.md),
                   _buildRosterActionCard(context, theme, spacing, radius),
+                  SizedBox(height: spacing.sm),
+                  _buildSyllabusActionCard(context, resolvedGroup, theme, spacing, radius),
                   SizedBox(height: spacing.lg),
                   Text(
                     'Assigned Subjects',
@@ -76,7 +78,7 @@ class ClassDetailScreen extends ConsumerWidget {
                     ),
                   ),
                   SizedBox(height: spacing.sm),
-                  _buildSubjectsList(resolvedGroup.assignments, theme, spacing, radius),
+                  _buildSubjectsList(context, resolvedGroup.assignments, theme, spacing, radius),
                 ],
               ),
             ),
@@ -226,7 +228,78 @@ class ClassDetailScreen extends ConsumerWidget {
     );
   }
 
+  Widget _buildSyllabusActionCard(
+    BuildContext context,
+    TeacherClassGroupEntity group,
+    ThemeData theme,
+    AppSpacing spacing,
+    AppRadius radius,
+  ) {
+    final firstSubject = group.assignments.isNotEmpty ? group.assignments.first : null;
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius.md),
+        side: BorderSide(
+          color: theme.colorScheme.outlineVariant,
+          width: 1,
+        ),
+      ),
+      child: InkWell(
+        onTap: () {
+          if (firstSubject != null) {
+            context.push(
+              '${AppRoutes.teacherSyllabus}?classId=$classId&sectionId=$sectionId&subjectId=${firstSubject.subjectId}&className=${Uri.encodeComponent(className)}&sectionName=${Uri.encodeComponent(sectionName)}&subjectName=${Uri.encodeComponent(firstSubject.subjectName)}',
+            );
+          }
+        },
+        borderRadius: BorderRadius.circular(radius.md),
+        child: Padding(
+          padding: EdgeInsets.all(spacing.lg),
+          child: Row(
+            children: [
+              Icon(
+                Icons.auto_stories_rounded,
+                color: const Color(0xFF0F766E),
+                size: 24,
+              ),
+              SizedBox(width: spacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Syllabus & Teaching Progress',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    SizedBox(height: spacing.xs / 2),
+                    Text(
+                      'Log covered topics, monitor pace & exam countdowns',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSubjectsList(
+    BuildContext context,
     List<TeacherSubjectAssignmentEntity> assignments,
     ThemeData theme,
     AppSpacing spacing,
@@ -248,64 +321,92 @@ class ClassDetailScreen extends ConsumerWidget {
           } catch (_) {}
         }
 
-        return Container(
-          padding: EdgeInsets.all(spacing.md),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
+        return Card(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          color: theme.colorScheme.surface,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(radius.md),
-            border: Border.all(
+            side: BorderSide(
               color: theme.colorScheme.outlineVariant,
               width: 1,
             ),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 6,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: accentColor,
-                  borderRadius: BorderRadius.circular(radius.xs),
-                ),
-              ),
-              SizedBox(width: spacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      subject.subjectName,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onSurface,
+          child: InkWell(
+            onTap: () {
+              context.push(
+                '${AppRoutes.teacherSyllabus}?classId=$classId&sectionId=$sectionId&subjectId=${subject.subjectId}&className=${Uri.encodeComponent(className)}&sectionName=${Uri.encodeComponent(sectionName)}&subjectName=${Uri.encodeComponent(subject.subjectName)}',
+              );
+            },
+            borderRadius: BorderRadius.circular(radius.md),
+            child: Padding(
+              padding: EdgeInsets.all(spacing.md),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: accentColor,
+                      borderRadius: BorderRadius.circular(radius.xs),
+                    ),
+                  ),
+                  SizedBox(width: spacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          subject.subjectName,
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                        if (subject.subjectCode.isNotEmpty) ...[
+                          SizedBox(height: spacing.xs / 2),
+                          Text(
+                            subject.subjectCode,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (subject.isClassTeacher)
+                    Padding(
+                      padding: EdgeInsets.only(right: spacing.sm),
+                      child: Chip(
+                        label: const Text('Class Teacher'),
+                        labelStyle: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+                        side: BorderSide.none,
+                        padding: EdgeInsets.zero,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                     ),
-                    if (subject.subjectCode.isNotEmpty) ...[
-                      SizedBox(height: spacing.xs / 2),
-                      Text(
-                        subject.subjectCode,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (subject.isClassTeacher)
-                Chip(
-                  label: const Text('Class Teacher'),
-                  labelStyle: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.bold,
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.menu_book_rounded, size: 14),
+                    label: const Text('Syllabus', style: TextStyle(fontSize: 12)),
+                    onPressed: () {
+                      context.push(
+                        '${AppRoutes.teacherSyllabus}?classId=$classId&sectionId=$sectionId&subjectId=${subject.subjectId}&className=${Uri.encodeComponent(className)}&sectionName=${Uri.encodeComponent(sectionName)}&subjectName=${Uri.encodeComponent(subject.subjectName)}',
+                      );
+                    },
                   ),
-                  backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
-                  side: BorderSide.none,
-                  padding: EdgeInsets.zero,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
         );
       },

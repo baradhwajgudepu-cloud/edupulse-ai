@@ -20,6 +20,12 @@ class TimetableEntryEntity extends Equatable {
   final String subjectName;
   final String subjectCode;
   final String? displayColor;
+  final String? plannedTopic;
+  final bool isRecovery;
+  final String? recoveryType;
+  final String? recoveryLabel;
+  final String? primaryTeacherName;
+  final String? supportTeacherName;
 
   const TimetableEntryEntity({
     required this.id,
@@ -38,6 +44,12 @@ class TimetableEntryEntity extends Equatable {
     required this.subjectName,
     required this.subjectCode,
     this.displayColor,
+    this.plannedTopic,
+    this.isRecovery = false,
+    this.recoveryType,
+    this.recoveryLabel,
+    this.primaryTeacherName,
+    this.supportTeacherName,
   });
 
   @override
@@ -58,5 +70,11 @@ class TimetableEntryEntity extends Equatable {
         subjectName,
         subjectCode,
         displayColor,
+        plannedTopic,
+        isRecovery,
+        recoveryType,
+        recoveryLabel,
+        primaryTeacherName,
+        supportTeacherName,
       ];
 }

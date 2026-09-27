@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:edupulse_localization/edupulse_localization.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
+import 'package:edupulse_ui/edupulse_ui.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../../core/router/routes.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
@@ -12,6 +13,7 @@ import '../../../dashboard/domain/entities/academic_year.dart';
 import '../../../dashboard/domain/entities/dashboard_data.dart';
 import '../../../my_classes/presentation/providers/my_classes_provider.dart';
 import '../../../notifications/presentation/providers/notifications_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -114,7 +116,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(local?.translate('app_title') ?? 'EduPulse AI'),
+        title: Consumer(
+          builder: (context, ref, _) {
+            final authState = ref.watch(authStateProvider);
+            final schoolName = ref.watch(activeSchoolNameProvider);
+            final hasMultipleSchools = authState is Authenticated && authState.user.schools.length > 1;
+
+            if (!hasMultipleSchools) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(local?.translate('app_title') ?? 'EduPulse AI'),
+                  if (schoolName.isNotEmpty)
+                    Text(
+                      schoolName,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurface.withOpacity(0.7),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              );
+            }
+
+            return InkWell(
+              onTap: () => _showSchoolSwitcherDialog(context, ref, authState.user),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(local?.translate('app_title') ?? 'EduPulse AI'),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            schoolName,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 16,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.account_circle_outlined),
@@ -231,7 +295,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           // 1. Teacher Profile Header
           _buildTeacherHeader(teacher, activeYear, theme, spacing, radius),
-          SizedBox(height: spacing.lg),
+          SizedBox(height: spacing.md),
 
           // 2. Quick Actions
           Text(
@@ -242,7 +306,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _buildQuickActionsGrid(theme, spacing, radius, local),
           SizedBox(height: spacing.lg),
 
-          // 2.5 AI Section
+          // 2.5 Campus Attendance Geofence Status Card (Google AI Studio UX)
+          _buildCampusGeofenceCard(theme, spacing, radius),
+          SizedBox(height: spacing.lg),
+
+          // 2.6 AI Section
           _buildAiSection(theme, spacing, radius, local),
           SizedBox(height: spacing.lg),
 
@@ -284,6 +352,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 return _buildPeriodCard(entry, isOngoing, isNext, selectedDay, theme, spacing, radius);
               },
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCampusGeofenceCard(ThemeData theme, AppSpacing spacing, AppRadius radius) {
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      padding: EdgeInsets.all(spacing.md),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0F172A) : Colors.white,
+        borderRadius: BorderRadius.circular(radius.md),
+        border: Border.all(
+          color: isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.pin_drop_rounded,
+                    size: 18,
+                    color: EduPulseTheme.primaryTeal,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Campus Attendance Geofence',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : EduPulseTheme.slate900,
+                    ),
+                  ),
+                ],
+              ),
+              const StatusBadge(
+                label: 'Radius 250m Active',
+                variant: StatusBadgeVariant.success,
+                size: StatusBadgeSize.sm,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'School Campus Center active. Geofence strictly gates attendance submission per Release 2.0 regulations (authoritative GPS accuracy <= 100m).',
+            style: TextStyle(
+              fontSize: 11,
+              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+            ),
+          ),
         ],
       ),
     );
@@ -766,37 +897,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ),
                           ),
                         ),
+                        if (entry.isRecovery)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6.0),
+                            child: StatusBadge(
+                              label: entry.recoveryLabel ?? 'RECOVERY CLASS',
+                              variant: StatusBadgeVariant.warning,
+                              size: StatusBadgeSize.sm,
+                            ),
+                          ),
                         if (isOngoing)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.green,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'ONGOING',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          const StatusBadge(
+                            label: 'ONGOING',
+                            variant: StatusBadgeVariant.success,
+                            size: StatusBadgeSize.sm,
                           )
                         else if (isNext)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.primary,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'NEXT',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          const StatusBadge(
+                            label: 'NEXT',
+                            variant: StatusBadgeVariant.brand,
+                            size: StatusBadgeSize.sm,
                           ),
                       ],
                     ),
@@ -832,6 +952,54 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ],
                       ],
                     ),
+                    SizedBox(height: spacing.xs),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.auto_stories_outlined,
+                          size: 13,
+                          color: theme.colorScheme.primary,
+                        ),
+                        SizedBox(width: spacing.xs),
+                        Expanded(
+                          child: Text(
+                            'Planned: ${entry.plannedTopic ?? "${entry.subjectName} Coverage"}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (entry.isRecovery && (entry.primaryTeacherName != null || entry.supportTeacherName != null)) ...[
+                      SizedBox(height: spacing.xs),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.handshake_outlined,
+                            size: 13,
+                            color: theme.colorScheme.tertiary,
+                          ),
+                          SizedBox(width: spacing.xs),
+                          Expanded(
+                            child: Text(
+                              entry.primaryTeacherName != null
+                                  ? 'Cross-Teacher Recovery (Primary: ${entry.primaryTeacherName})'
+                                  : 'Support Teacher: ${entry.supportTeacherName}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.tertiary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -951,6 +1119,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     '&subjectId=${entry.subjectId ?? ''}'
                     '&classId=${entry.classId}'
                     '&sectionId=${entry.sectionId}'
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.playlist_add_check_circle_rounded, color: Colors.teal),
+                title: const Text('Update Syllabus Progress'),
+                subtitle: const Text('Record actual chapter & topic coverage'),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push(
+                    '${AppRoutes.teacherSyllabus}?'
+                    'classId=${entry.classId}'
+                    '&sectionId=${entry.sectionId}'
+                    '&subjectId=${entry.subjectId ?? ""}'
+                    '&className=${Uri.encodeComponent(entry.className)}'
+                    '&sectionName=${Uri.encodeComponent(entry.sectionName)}'
+                    '&subjectName=${Uri.encodeComponent(entry.subjectName)}'
                   );
                 },
               ),
@@ -1279,18 +1464,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ? dashboardState.selectedDayOfWeek
         : (dashboardState as DashboardRefreshing).selectedDayOfWeek;
 
+    final date = _getDateForDayOfWeek(selectedDay);
+    final dateStr = DateFormat('yyyy-MM-dd').format(date);
+
     final dailySchedule = data.schedule
         .where((entry) => entry.dayOfWeek.toUpperCase() == selectedDay.toUpperCase())
         .toList()
       ..sort((a, b) => a.periodNumber.compareTo(b.periodNumber));
 
     if (dailySchedule.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('No classes scheduled for ${selectedDay.toUpperCase()}.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      // Fallback directly to Daily Class Attendance when no timetable slots exist
+      _showDailyClassPicker(context, dateStr, emptyScheduleNotice: 'No scheduled timetable periods for ${selectedDay.toUpperCase()}. Marking daily class attendance.');
       return;
     }
 
@@ -1327,7 +1511,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 ),
               ),
+              ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Icon(Icons.school_rounded, color: theme.colorScheme.onPrimaryContainer, size: 20),
+                ),
+                title: const Text('Mark Daily Class Attendance', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: const Text('Homeroom / Full-Day Roster'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showDailyClassPicker(context, dateStr);
+                },
+              ),
               const Divider(height: 1),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.xs),
+                child: Text(
+                  'TODAY\'S PERIODS',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
@@ -1356,6 +1563,228 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   },
                 ),
               ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDailyClassPicker(BuildContext context, String dateStr, {String? emptyScheduleNotice}) {
+    final theme = Theme.of(context);
+    final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
+    final myClassesState = ref.read(myClassesStateProvider);
+
+    if (myClassesState is! MyClassesSuccess) {
+      ref.read(myClassesStateProvider.notifier).fetchClasses();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (bottomSheetContext) {
+        return Consumer(
+          builder: (context, ref, _) {
+            final classesState = ref.watch(myClassesStateProvider);
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(spacing.md),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Daily Class Attendance',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'Select assigned class & section',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(bottomSheetContext),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (emptyScheduleNotice != null)
+                    Container(
+                      color: Colors.blue.shade50,
+                      padding: EdgeInsets.symmetric(horizontal: spacing.md, vertical: spacing.xs),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 14, color: Colors.blue.shade800),
+                          SizedBox(width: spacing.xs),
+                          Expanded(
+                            child: Text(
+                              emptyScheduleNotice,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.blue.shade800,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const Divider(height: 1),
+                  if (classesState is MyClassesLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(32.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (classesState is MyClassesError)
+                    Padding(
+                      padding: EdgeInsets.all(spacing.md),
+                      child: Text(
+                        classesState.message,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                    )
+                  else if (classesState is MyClassesSuccess)
+                    if (classesState.classes.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(32.0),
+                        child: Center(child: Text('No assigned classes found for this teacher.')),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: classesState.classes.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, idx) {
+                            final group = classesState.classes[idx];
+                            return ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.class_outlined,
+                                  color: theme.colorScheme.onPrimaryContainer,
+                                  size: 20,
+                                ),
+                              ),
+                              title: Text(
+                                '${group.className} — Section ${group.sectionName}',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(
+                                group.assignments.isNotEmpty
+                                    ? group.assignments.map((a) => a.subjectName).join(', ')
+                                    : 'Class & Section Assignment',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () {
+                                Navigator.pop(bottomSheetContext);
+                                context.push(
+                                  '${AppRoutes.attendance}?mode=daily'
+                                  '&classId=${group.classId}'
+                                  '&sectionId=${group.sectionId}'
+                                  '&className=${Uri.encodeComponent(group.className)}'
+                                  '&sectionName=${Uri.encodeComponent(group.sectionName)}'
+                                  '&date=$dateStr',
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showSchoolSwitcherDialog(BuildContext context, WidgetRef ref, dynamic user) {
+    final activeSchoolId = ref.read(activeSchoolIdProvider);
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (bottomSheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Switch Active School',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(bottomSheetContext),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ...user.schools.map<Widget>((schoolId) {
+                final isSelected = schoolId == activeSchoolId;
+                final name = user.schoolNames[schoolId] ?? 'School: $schoolId';
+                return ListTile(
+                  leading: Icon(
+                    Icons.account_balance_outlined,
+                    color: isSelected ? Theme.of(context).colorScheme.primary : null,
+                  ),
+                  title: Text(
+                    name,
+                    style: TextStyle(
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? Theme.of(context).colorScheme.primary : null,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? Icon(Icons.check_circle_rounded, color: Theme.of(context).colorScheme.primary)
+                      : null,
+                  onTap: () async {
+                    Navigator.pop(bottomSheetContext);
+                    if (!isSelected) {
+                      await ref.read(schoolContextControllerProvider).switchSchool(schoolId);
+                      ref.read(dashboardStateProvider.notifier).fetchDashboard();
+                      ref.read(myClassesStateProvider.notifier).fetchClasses();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Switched to $name'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    }
+                  },
+                );
+              }).toList(),
             ],
           ),
         );

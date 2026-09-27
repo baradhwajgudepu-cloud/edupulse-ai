@@ -7,7 +7,13 @@ from sqlalchemy.orm import selectinload
 
 from app.models.guardian import Guardian, GuardianStatus, StudentGuardian, StudentGuardianRelationship
 from app.models.user import User
-from app.schemas.guardian import GuardianCreate, GuardianUpdate, StudentGuardianCreate, StudentGuardianUpdate
+from app.models.student import Student
+from app.models.teacher import Teacher
+from app.models.teacher_subject_assignment import TeacherSubjectAssignment
+from app.schemas.guardian import (
+    GuardianCreate, GuardianUpdate, StudentGuardianCreate, StudentGuardianUpdate,
+    LinkedStudentSummary, GuardianResponse
+)
 
 class GuardianRepository:
     """
@@ -275,7 +281,8 @@ class StudentGuardianRepository:
         self, student_id: uuid.UUID, tenant_id: uuid.UUID
     ) -> List[StudentGuardian]:
         """
-        Lists active guardian mappings for a student.
+        Lists active guardian mappings for a student, enriched with guardian profile details
+        and student summary.
         """
         stmt = (
             select(StudentGuardian)
@@ -284,16 +291,46 @@ class StudentGuardianRepository:
                 StudentGuardian.tenant_id == tenant_id,
                 StudentGuardian.deleted_at.is_(None)
             )
-            .options(selectinload(StudentGuardian.guardian))
+            .options(
+                selectinload(StudentGuardian.guardian).selectinload(Guardian.user),
+                selectinload(StudentGuardian.student).selectinload(Student.class_obj),
+                selectinload(StudentGuardian.student).selectinload(Student.section),
+                selectinload(StudentGuardian.student).selectinload(Student.academic_year),
+            )
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        mappings = list(result.scalars().all())
+        for m in mappings:
+            if m.guardian and not m.guardian.deleted_at:
+                m.guardian_summary = GuardianResponse.model_validate(m.guardian)
+            if m.student and not m.student.deleted_at:
+                student = m.student
+                status_str = student.status.value if hasattr(student.status, 'value') else str(student.status)
+                m.student_summary = LinkedStudentSummary(
+                    id=student.id,
+                    first_name=student.first_name,
+                    middle_name=student.middle_name,
+                    last_name=student.last_name,
+                    admission_number=student.admission_number,
+                    roll_number=student.roll_number,
+                    status=status_str,
+                    photo_url=student.photo_url,
+                    academic_year_id=student.academic_year_id,
+                    academic_year_name=student.academic_year.name if student.academic_year else None,
+                    class_id=student.class_id,
+                    class_name=student.class_obj.name if student.class_obj else None,
+                    section_id=student.section_id,
+                    section_name=student.section.name if student.section else None,
+                    admission_date=student.admission_date,
+                )
+        return mappings
 
     async def get_guardian_students(
-        self, guardian_id: uuid.UUID, tenant_id: uuid.UUID
+        self, guardian_id: uuid.UUID, tenant_id: uuid.UUID, academic_year_id: Optional[uuid.UUID] = None
     ) -> List[StudentGuardian]:
         """
-        Lists active student mappings for a guardian.
+        Lists active student mappings for a guardian, enriched with human-readable student profile data
+        and resolved current Class Teacher for the active academic year.
         """
         stmt = (
             select(StudentGuardian)
@@ -302,10 +339,75 @@ class StudentGuardianRepository:
                 StudentGuardian.tenant_id == tenant_id,
                 StudentGuardian.deleted_at.is_(None)
             )
-            .options(selectinload(StudentGuardian.student))
+            .options(
+                selectinload(StudentGuardian.student).selectinload(Student.class_obj),
+                selectinload(StudentGuardian.student).selectinload(Student.section),
+                selectinload(StudentGuardian.student).selectinload(Student.academic_year),
+                selectinload(StudentGuardian.guardian).selectinload(Guardian.user),
+            )
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        mappings = list(result.scalars().all())
+
+        for m in mappings:
+            if m.guardian and not m.guardian.deleted_at:
+                m.guardian_summary = GuardianResponse.model_validate(m.guardian)
+
+            student = m.student
+            if not student or student.deleted_at:
+                continue
+
+            target_ay_id = academic_year_id or student.academic_year_id
+
+            # Resolve Class Teacher for this class, section, and academic year
+            ct_stmt = (
+                select(Teacher)
+                .join(TeacherSubjectAssignment, TeacherSubjectAssignment.teacher_id == Teacher.id)
+                .where(
+                    TeacherSubjectAssignment.class_id == student.class_id,
+                    TeacherSubjectAssignment.section_id == student.section_id,
+                    TeacherSubjectAssignment.academic_year_id == target_ay_id,
+                    TeacherSubjectAssignment.is_class_teacher == True,
+                    TeacherSubjectAssignment.tenant_id == tenant_id,
+                    TeacherSubjectAssignment.deleted_at.is_(None),
+                    Teacher.deleted_at.is_(None)
+                )
+            )
+            ct_res = await self.db.execute(ct_stmt)
+            class_teacher = ct_res.scalars().first()
+
+            class_teacher_name = None
+            class_teacher_id = None
+            class_teacher_photo = None
+            if class_teacher:
+                class_teacher_id = class_teacher.id
+                class_teacher_name = f"{class_teacher.first_name} {class_teacher.last_name}".strip()
+                class_teacher_photo = class_teacher.photo_url
+
+            status_str = student.status.value if hasattr(student.status, 'value') else str(student.status)
+
+            m.student_summary = LinkedStudentSummary(
+                id=student.id,
+                first_name=student.first_name,
+                middle_name=student.middle_name,
+                last_name=student.last_name,
+                admission_number=student.admission_number,
+                roll_number=student.roll_number,
+                status=status_str,
+                photo_url=student.photo_url,
+                academic_year_id=student.academic_year_id,
+                academic_year_name=student.academic_year.name if student.academic_year else None,
+                class_id=student.class_id,
+                class_name=student.class_obj.name if student.class_obj else None,
+                section_id=student.section_id,
+                section_name=student.section.name if student.section else None,
+                class_teacher_id=class_teacher_id,
+                class_teacher_name=class_teacher_name,
+                class_teacher_photo_url=class_teacher_photo,
+                admission_date=student.admission_date,
+            )
+
+        return mappings
 
     async def create(
         self,

@@ -7,6 +7,7 @@ import '../../../school_setup/presentation/providers/school_setup_providers.dart
 import '../../../students/data/models/student_models.dart';
 import '../../data/models/fee_models.dart';
 import '../providers/fees_provider.dart';
+import '../widgets/record_fee_payment_dialog.dart';
 import '../../../../core/routing/routes.dart';
 
 class OutstandingDuesPage extends ConsumerWidget {
@@ -252,19 +253,42 @@ class OutstandingDuesPage extends ConsumerWidget {
                                     ),
                                   ),
                                   DataCell(
-                                    TextButton.icon(
-                                      icon: const Icon(Icons.arrow_forward, size: 16),
-                                      label: const Text('View Ledger'),
-                                      onPressed: () {
-                                        // Construct lightweight StudentDto for ledger navigation
-                                        final studentDto = StudentDto.forLedger(
-                                          id: item.studentId,
-                                          firstName: item.studentName.split(' ').first,
-                                          lastName: item.studentName.split(' ').skip(1).join(' '),
-                                          admissionNumber: item.admissionNumber,
-                                        );
-                                        context.push(AppRoutes.feesLedger, extra: studentDto);
-                                      },
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        FilledButton.tonalIcon(
+                                          key: Key('record_payment_${item.admissionNumber}'),
+                                          icon: const Icon(Icons.payment, size: 16),
+                                          label: const Text('Record Payment'),
+                                          style: FilledButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                            visualDensity: VisualDensity.compact,
+                                          ),
+                                          onPressed: () => _showRecordPaymentDialog(
+                                            context,
+                                            ref,
+                                            item,
+                                            schoolId,
+                                            params,
+                                            currencyFormatter,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        TextButton.icon(
+                                          icon: const Icon(Icons.arrow_forward, size: 16),
+                                          label: const Text('View Ledger'),
+                                          onPressed: () {
+                                            // Construct lightweight StudentDto for ledger navigation
+                                            final studentDto = StudentDto.forLedger(
+                                              id: item.studentId,
+                                              firstName: item.studentName.split(' ').first,
+                                              lastName: item.studentName.split(' ').skip(1).join(' '),
+                                              admissionNumber: item.admissionNumber,
+                                            );
+                                            context.push(AppRoutes.feesLedger, extra: studentDto);
+                                          },
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
@@ -281,6 +305,29 @@ class OutstandingDuesPage extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _showRecordPaymentDialog(
+    BuildContext context,
+    WidgetRef ref,
+    OutstandingFeeReportItem item,
+    String schoolId,
+    OutstandingReportParams params,
+    NumberFormat currencyFormatter,
+  ) async {
+    await showRecordFeePaymentDialog(
+      context: context,
+      studentId: item.studentId,
+      studentName: item.studentName,
+      admissionNumber: item.admissionNumber,
+      schoolId: schoolId,
+      initialAcademicYearId: item.academicYearId,
+      preselectedAssignmentId: item.assignmentId,
+      onPaymentSuccess: () {
+        ref.invalidate(outstandingReportProvider(params));
+        ref.invalidate(studentLedgerProvider(item.studentId));
+      },
     );
   }
 

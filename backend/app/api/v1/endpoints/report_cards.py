@@ -6,13 +6,14 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.api.dependencies.common import get_tenant_id
+from app.api.dependencies.common import get_tenant_id, verify_school_access
 from app.api.dependencies.report_card import get_report_card_service
 from app.api.dependencies.auth import require_permission, get_current_user
 from app.services.report_card import ReportCardService
 from app.services.storage import get_storage_service, StorageService
 from app.schemas.report_card import (
     ReportCardGenerateRequest, ReportCardClassGenerateRequest,
+    ReportCardRejectRequest, ReportCardUnpublishRequest,
     ReportCardResponse, ReportCardPreviewResponse,
     BulkClassGenerateResponse, BulkReportCardActionRequest,
     BulkReportCardActionResponse, VerificationResponse,
@@ -27,79 +28,66 @@ router = APIRouter()
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-async def verify_school_access(user: User, school_id: uuid.UUID, db: AsyncSession) -> None:
-    from app.models.school import School
-
-    school_stmt = select(School).where(School.id == school_id)
-    school_res = await db.execute(school_stmt)
-    school = school_res.scalar_one_or_none()
-    if not school:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found."
-        )
-
-    if not user.is_superuser and school.tenant_id != user.tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. School belongs to a different tenant."
-        )
-
-    if not school.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="School is inactive."
-        )
-
-    if user.is_superuser:
-        return
-
-    # Parents are not registered in the school_users table (reserved for staff/teachers)
-    # but are authorized to access school resources scoped to their children.
-    user_role_codes = [role.code for role in user.roles]
-    if "PARENT" in user_role_codes:
-        return
-
-    from app.models.role import school_users
-    stmt = select(1).select_from(school_users).where(
-        school_users.c.user_id == user.id,
-        school_users.c.school_id == school_id
-    )
-    res = await db.execute(stmt)
-    if not res.fetchone():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. You do not have permissions for this school."
-        )
-
-
 # ==================================================
-# Parent/Student Checks
+# Parent/Student/Principal Access Checks
 # ==================================================
 async def verify_student_access(current_user: User, student_id: uuid.UUID, section_id: uuid.UUID, db: AsyncSession) -> None:
     # 1. Bypass check for Super Admins
     if current_user.is_superuser:
         return
 
-    # Check if the user is a teacher assigned to the student's section or a parent linked to the student
     user_roles = [role.code for role in current_user.roles]
-    
+
+    # 2. Platform / Tenant Admins: verify student belongs to active tenant
+    if any(code in ["SUPER_ADMIN", "SYSTEM_ADMIN", "TENANT_ADMIN", "CHAIRMAN"] for code in user_roles):
+        from app.models.student import Student
+        stmt = select(1).select_from(Student).where(
+            Student.id == student_id,
+            Student.tenant_id == current_user.tenant_id
+        )
+        if (await db.execute(stmt)).scalar():
+            return
+
+    # 3. School Admins & Principals: verify student belongs to user's assigned school(s) and tenant
+    if any(code in ["ADMIN", "PRINCIPAL", "SCHOOL_ADMIN"] for code in user_roles):
+        from app.models.student import Student
+        from app.models.role import school_users
+        user_school_ids = [s.id for s in current_user.schools] if current_user.schools else []
+        
+        # Build school check conditions
+        school_conditions = []
+        if user_school_ids:
+            school_conditions.append(Student.school_id.in_(user_school_ids))
+        
+        school_user_subq = select(school_users.c.school_id).where(school_users.c.user_id == current_user.id)
+        school_conditions.append(Student.school_id.in_(school_user_subq))
+
+        from sqlalchemy import or_
+        stmt = select(1).select_from(Student).where(
+            Student.id == student_id,
+            Student.tenant_id == current_user.tenant_id,
+            or_(*school_conditions)
+        )
+        if (await db.execute(stmt)).scalar():
+            return
+
+    # 4. Parents: Check parent-child linkage via student_guardians table
     if "PARENT" in user_roles:
-        # Check parent-child linkage via student_guardians table
         from app.models.guardian import Guardian, StudentGuardian
         
+        from sqlalchemy import or_
         stmt = select(1).select_from(StudentGuardian).join(
             Guardian, StudentGuardian.guardian_id == Guardian.id
         ).where(
             StudentGuardian.student_id == student_id,
-            Guardian.user_id == current_user.id
+            or_(Guardian.user_id == current_user.id, Guardian.email == current_user.email)
         )
         res = await db.execute(stmt)
         if res.scalar():
             return
-            
+
+    # 5. Teachers: Check if teacher has active subject assignment in student's section
     if "TEACHER" in user_roles:
-        # Check if the teacher has any subject assignment in the student's section
         from app.models.teacher import Teacher
         from app.models.teacher_subject_assignment import TeacherSubjectAssignment
         
@@ -198,6 +186,53 @@ async def preview_report_card(
     )
 
 
+@router.get(
+    "/student/{student_id}",
+    response_model=APIResponse[ReportCardResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get published report card for student in academic year"
+)
+async def get_student_report_card(
+    student_id: uuid.UUID,
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    school_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("report_card.read")),
+    service: ReportCardService = Depends(get_report_card_service)
+) -> APIResponse[ReportCardResponse]:
+    from app.models.student import Student
+    stmt_st = select(Student).where(
+        Student.id == student_id,
+        Student.tenant_id == tenant_id,
+        Student.deleted_at.is_(None)
+    )
+    res_st = await service.report_repo.db.execute(stmt_st)
+    student = res_st.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    target_school_id = school_id or student.school_id
+    await verify_school_access(current_user, target_school_id, service.report_repo.db)
+    await verify_student_access(current_user, student_id, student.section_id, service.report_repo.db)
+
+    target_ay_id = academic_year_id or student.academic_year_id
+    db_obj = await service.report_repo.get_by_student_and_year(student_id, target_ay_id, tenant_id)
+    if not db_obj and not academic_year_id:
+        db_obj = await service.report_repo.get_latest_published(student_id, tenant_id)
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="No report card found for student.")
+
+    role_codes = {r.code for r in current_user.roles}
+    if "PARENT" in role_codes and not current_user.is_superuser and db_obj.status != ReportCardStatus.PUBLISHED:
+        raise HTTPException(status_code=404, detail="Report card is not published.")
+
+    return APIResponse[ReportCardResponse](
+        success=True,
+        message="Report card retrieved successfully.",
+        data=ReportCardResponse.model_validate(db_obj)
+    )
+
+
 # ==================================================
 # Workflow Approvals
 # ==================================================
@@ -240,6 +275,50 @@ async def approve_report_card(
     return APIResponse[ReportCardResponse](
         success=True,
         message="Report card approved successfully.",
+        data=ReportCardResponse.model_validate(db_obj)
+    )
+
+@router.post(
+    "/{id}/reject",
+    response_model=APIResponse[ReportCardResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Reject a report card under review with a required reason"
+)
+async def reject_report_card(
+    id: uuid.UUID,
+    obj_in: ReportCardRejectRequest,
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("report_card.publish")),
+    service: ReportCardService = Depends(get_report_card_service)
+) -> APIResponse[ReportCardResponse]:
+    await verify_school_access(current_user, school_id, service.report_repo.db)
+    db_obj = await service.reject_report_card(tenant_id, school_id, id, obj_in, current_user)
+    return APIResponse[ReportCardResponse](
+        success=True,
+        message="Report card rejected and returned to draft for corrections.",
+        data=ReportCardResponse.model_validate(db_obj)
+    )
+
+@router.post(
+    "/{id}/unpublish",
+    response_model=APIResponse[ReportCardResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Unpublish a published report card for correction"
+)
+async def unpublish_report_card(
+    id: uuid.UUID,
+    obj_in: ReportCardUnpublishRequest,
+    school_id: uuid.UUID = Query(...),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("report_card.publish")),
+    service: ReportCardService = Depends(get_report_card_service)
+) -> APIResponse[ReportCardResponse]:
+    await verify_school_access(current_user, school_id, service.report_repo.db)
+    db_obj = await service.unpublish_report_card(tenant_id, school_id, id, obj_in, current_user)
+    return APIResponse[ReportCardResponse](
+        success=True,
+        message="Report card unpublished successfully.",
         data=ReportCardResponse.model_validate(db_obj)
     )
 
@@ -397,35 +476,6 @@ async def get_remarks_templates() -> APIResponse[List[str]]:
     )
 
 @router.get(
-    "/student/{student_id}",
-    response_model=APIResponse[ReportCardResponse],
-    status_code=status.HTTP_200_OK,
-    summary="Query active student report card publication for parent view"
-)
-async def get_student_publication(
-    student_id: uuid.UUID,
-    academic_year_id: uuid.UUID = Query(...),
-    tenant_id: uuid.UUID = Depends(get_tenant_id),
-    current_user: User = Depends(require_permission("report_card.read")),
-    service: ReportCardService = Depends(get_report_card_service)
-) -> APIResponse[ReportCardResponse]:
-    db_obj = await service.report_repo.get_parent_publication(student_id, academic_year_id, tenant_id)
-    if not db_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Published report card not found for the student in this academic year."
-        )
-    student = await service.student_repo.get_by_id(student_id, db_obj.school_id, tenant_id)
-    if student:
-        await verify_school_access(current_user, db_obj.school_id, service.report_repo.db)
-        await verify_student_access(current_user, student_id, student.section_id, service.report_repo.db)
-    return APIResponse[ReportCardResponse](
-        success=True,
-        message="Student report card loaded.",
-        data=ReportCardResponse.model_validate(db_obj)
-    )
-
-@router.get(
     "/history/{student_id}",
     response_model=APIResponse[StudentAcademicHistoryResponse],
     status_code=status.HTTP_200_OK,
@@ -458,36 +508,64 @@ async def get_student_academic_history(
 )
 async def download_report_card(
     student_id: uuid.UUID,
-    school_id: uuid.UUID = Query(...),
+    school_id: Optional[uuid.UUID] = Query(None),
     tenant_id: uuid.UUID = Depends(get_tenant_id),
     current_user: User = Depends(require_permission("report_card.download")),
     service: ReportCardService = Depends(get_report_card_service),
     storage_service: StorageService = Depends(get_storage_service)
 ) -> StreamingResponse:
+    if not school_id:
+        from app.models.student import Student
+        stmt = select(Student).where(
+            Student.id == student_id,
+            Student.tenant_id == tenant_id,
+            Student.deleted_at.is_(None)
+        )
+        res = await service.report_repo.db.execute(stmt)
+        student = res.scalars().first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found.")
+        school_id = student.school_id
+    else:
+        student = await service.student_repo.get_by_id(student_id, school_id, tenant_id)
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found.")
+
     await verify_school_access(current_user, school_id, service.report_repo.db)
-    student = await service.student_repo.get_by_id(student_id, school_id, tenant_id)
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found.")
     await verify_student_access(current_user, student_id, student.section_id, service.report_repo.db)
 
     db_obj = await service.report_repo.get_by_student_and_year(student_id, student.academic_year_id, tenant_id)
-    if not db_obj or not db_obj.pdf_url:
-        raise HTTPException(status_code=404, detail="Report card PDF file has not been compiled yet.")
 
     gcs_path = f"report_cards/{tenant_id}/{school_id}/{student_id}_report.pdf"
     
     needs_generation = True
     pdf_data = None
-    try:
-        pdf_data = await storage_service.download(gcs_path)
-        if b"%PDF-" in pdf_data[:100] and b"Mock" not in pdf_data and b"ReportLab" in pdf_data and len(pdf_data) > 300:
-            needs_generation = False
-    except Exception:
-        pass
+    if db_obj and db_obj.pdf_url:
+        try:
+            pdf_data = await storage_service.download(gcs_path)
+            if b"%PDF-" in pdf_data[:100] and b"Mock" not in pdf_data and b"ReportLab" in pdf_data and len(pdf_data) > 300:
+                needs_generation = False
+        except Exception:
+            pass
 
     if needs_generation:
         # Load or create dynamic preview details
-        preview = await service.compile_live_data(tenant_id, school_id, student_id, "Generated on download")
+        r_type = db_obj.settings.get("report_card_type", "CONSOLIDATED") if (db_obj and db_obj.settings) else "CONSOLIDATED"
+        teacher_remarks = db_obj.settings.get("teacher_remarks") if (db_obj and db_obj.settings) else None
+        exam_id = None
+        if db_obj and db_obj.settings and db_obj.settings.get("examination_id"):
+            try:
+                exam_id = uuid.UUID(str(db_obj.settings["examination_id"]))
+            except Exception:
+                exam_id = None
+        preview = await service.compile_live_data(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student_id,
+            teacher_remarks=teacher_remarks or "Generated on download",
+            examination_id=exam_id,
+            report_card_type=r_type,
+        )
         
         # Load student academic history and generate ReportLab PDF
         history = await service.get_student_academic_history(tenant_id, school_id, student_id)

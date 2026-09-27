@@ -4,6 +4,7 @@ import '../../../results/data/models/examination_models.dart';
 import '../../../results/presentation/providers/examination_providers.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 import '../../../school_setup/data/models/school_setup_models.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 
 class PlannerExamsScreen extends ConsumerStatefulWidget {
   const PlannerExamsScreen({super.key});
@@ -79,11 +80,11 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top Bar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
+            // Top Bar (Responsive LayoutBuilder + Expanded/Wrap)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 950;
+                final headerTitle = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -100,8 +101,13 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                       ),
                     ),
                   ],
-                ),
-                Row(
+                );
+
+                final actionButtons = Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  alignment: isCompact ? WrapAlignment.start : WrapAlignment.end,
                   children: [
                     OutlinedButton.icon(
                       onPressed: () {
@@ -111,27 +117,44 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                       icon: const Icon(Icons.refresh),
                       label: const Text('Refresh'),
                     ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: selectedExam != null ? () => _openAIScheduleOptimizerModal(context, selectedExam, currentSchedules) : null,
                       icon: const Icon(Icons.psychology_outlined, color: Colors.purple),
                       label: const Text('AI Optimizer'),
                     ),
-                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: selectedExam != null ? () => _openBulkGenerateModal(context, selectedExam) : null,
                       icon: const Icon(Icons.auto_awesome),
                       label: const Text('Auto-Generate Timetable'),
                     ),
-                    const SizedBox(width: 12),
                     FilledButton.icon(
                       onPressed: selectedExam != null ? () => _openAddScheduleDialog(context, selectedExam) : null,
                       icon: const Icon(Icons.add),
                       label: const Text('Add Paper Slot'),
                     ),
                   ],
-                ),
-              ],
+                );
+
+                if (isCompact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      headerTitle,
+                      const SizedBox(height: 16),
+                      actionButtons,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: headerTitle),
+                    const SizedBox(width: 16),
+                    Flexible(child: actionButtons),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 24),
 
@@ -169,89 +192,187 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    // Exam Selector
-                    Expanded(
-                      flex: 3,
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedExamId,
-                        decoration: const InputDecoration(
-                          labelText: 'Select Examination *',
-                          prefixIcon: Icon(Icons.assignment),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        items: examsState.examinations.map((e) {
-                          return DropdownMenuItem(
-                            value: e.id,
-                            child: Text('${e.examName} (${e.status.label})'),
+                child: Builder(
+                  builder: (context) {
+                    final classIdToName = classesState != null
+                        ? <String, String>{for (final c in classesState.classes) c.id: c.name}
+                        : const <String, String>{};
+
+                    final effectiveClassIds = selectedExam?.effectiveClassIds ?? const <String>{};
+                    final availableClasses = (classesState?.classes ?? []).where((c) {
+                      if (selectedExam != null && effectiveClassIds.isNotEmpty) {
+                        return effectiveClassIds.contains(c.id);
+                      }
+                      return true;
+                    }).toList();
+
+                    if (_selectedClassId != null && !availableClasses.any((c) => c.id == _selectedClassId)) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        setState(() {
+                          _selectedClassId = null;
+                        });
+                        ref.read(examSchedulesProvider.notifier).setClassFilter(null);
+                      });
+                    }
+
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isNarrow = constraints.maxWidth < 750;
+                        if (isNarrow) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              DropdownButtonFormField<String>(
+                                value: _selectedExamId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Select Examination *',
+                                  prefixIcon: Icon(Icons.assignment),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                                items: examsState.examinations.map((e) {
+                                  final title = e.getDisambiguatedTitle(classIdToName: classIdToName);
+                                  return DropdownMenuItem(
+                                    value: e.id,
+                                    child: Text('$title (${e.status.label})', overflow: TextOverflow.ellipsis),
+                                  );
+                                }).toList(),
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedExamId = val;
+                                  });
+                                  ref.read(examSchedulesProvider.notifier).setExamFilter(val);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String?>(
+                                value: _selectedClassId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Class Filter',
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                                items: [
+                                  const DropdownMenuItem(value: null, child: Text('All Classes')),
+                                  ...availableClasses.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedClassId = val;
+                                  });
+                                  ref.read(examSchedulesProvider.notifier).setClassFilter(val);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[50],
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  'Total Scheduled: ${currentSchedules.length} Papers',
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[900]),
+                                ),
+                              ),
+                            ],
                           );
-                        }).toList(),
-                        onChanged: (val) {
-                          setState(() {
-                            _selectedExamId = val;
-                          });
-                          ref.read(examSchedulesProvider.notifier).setExamFilter(val);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 16),
+                        }
 
-                    // Class Filter
-                    Expanded(
-                      flex: 2,
-                      child: DropdownButtonFormField<String?>(
-                        value: _selectedClassId,
-                        decoration: const InputDecoration(
-                          labelText: 'Class Filter',
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        items: [
-                          const DropdownMenuItem(value: null, child: Text('All Classes')),
-                          if (classesState != null)
-                            ...classesState.classes.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name))),
-                        ],
-                        onChanged: (val) {
-                          setState(() {
-                            _selectedClassId = val;
-                          });
-                          ref.read(examSchedulesProvider.notifier).setClassFilter(val);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 16),
+                        return Row(
+                          children: [
+                            // Exam Selector
+                            Expanded(
+                              flex: 3,
+                              child: DropdownButtonFormField<String>(
+                                value: _selectedExamId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Select Examination *',
+                                  prefixIcon: Icon(Icons.assignment),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                                items: examsState.examinations.map((e) {
+                                  final title = e.getDisambiguatedTitle(classIdToName: classIdToName);
+                                  return DropdownMenuItem(
+                                    value: e.id,
+                                    child: Text('$title (${e.status.label})', overflow: TextOverflow.ellipsis),
+                                  );
+                                }).toList(),
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedExamId = val;
+                                  });
+                                  ref.read(examSchedulesProvider.notifier).setExamFilter(val);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 16),
 
-                    // Total slots count
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Total Scheduled: ${currentSchedules.length} Papers',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[900]),
-                      ),
-                    ),
-                  ],
+                            // Class Filter
+                            Expanded(
+                              flex: 2,
+                              child: DropdownButtonFormField<String?>(
+                                value: _selectedClassId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Class Filter',
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                ),
+                                items: [
+                                  const DropdownMenuItem(value: null, child: Text('All Classes')),
+                                  ...availableClasses.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis))),
+                                ],
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedClassId = val;
+                                  });
+                                  ref.read(examSchedulesProvider.notifier).setClassFilter(val);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+
+                            // Total slots count
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.blue[50],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Total Scheduled: ${currentSchedules.length} Papers',
+                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[900]),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
                 ),
               ),
             ),
             const SizedBox(height: 16),
 
             // Tab Navigation (Table View, Calendar View, Class Timetable View)
-            TabBar(
-              controller: _tabController,
-              isScrollable: false,
-              labelColor: theme.colorScheme.primary,
-              unselectedLabelColor: Colors.grey[600],
-              indicatorColor: theme.colorScheme.primary,
-              tabs: const [
-                Tab(icon: Icon(Icons.table_chart_outlined), text: 'Table View'),
-                Tab(icon: Icon(Icons.calendar_month_outlined), text: 'Calendar View'),
-                Tab(icon: Icon(Icons.view_quilt_outlined), text: 'Class Timetable Matrix'),
-              ],
+            LayoutBuilder(
+              builder: (context, constraints) {
+                return TabBar(
+                  controller: _tabController,
+                  isScrollable: constraints.maxWidth < 650,
+                  labelColor: theme.colorScheme.primary,
+                  unselectedLabelColor: Colors.grey[600],
+                  indicatorColor: theme.colorScheme.primary,
+                  tabs: const [
+                    Tab(icon: Icon(Icons.table_chart_outlined), text: 'Table View'),
+                    Tab(icon: Icon(Icons.calendar_month_outlined), text: 'Calendar View'),
+                    Tab(icon: Icon(Icons.view_quilt_outlined), text: 'Class Timetable Matrix'),
+                  ],
+                );
+              },
             ),
+
             const SizedBox(height: 16),
 
             // Tab Content
@@ -333,7 +454,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                   DataCell(Text('${s.className ?? "Class"} - ${s.sectionName ?? "Sec"}')),
                   DataCell(
                     Chip(
-                      label: Text(s.subjectName ?? 'Subject', style: const TextStyle(fontSize: 11)),
+                      label: Text(displaySubjectName(subjectName: s.subjectName, subjectCode: s.subjectCode, subjectId: s.subjectId), style: const TextStyle(fontSize: 11)),
                       visualDensity: VisualDensity.compact,
                     ),
                   ),
@@ -449,7 +570,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                                     const SizedBox(width: 4),
                                   ],
                                   Text(
-                                    '${s.subjectName ?? "Subject"} (${s.className ?? "Class"} - ${s.sectionName ?? "Sec"})',
+                                    '${displaySubjectName(subjectName: s.subjectName, subjectCode: s.subjectCode, subjectId: s.subjectId)} (${s.className ?? "Class"} - ${s.sectionName ?? "Sec"})',
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: isConflict ? Colors.red : Colors.black87,
@@ -540,7 +661,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                                   ],
                                 ),
                                 const SizedBox(height: 4),
-                                Text(s.subjectName ?? 'Subject', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                Text(displaySubjectName(subjectName: s.subjectName, subjectCode: s.subjectCode, subjectId: s.subjectId), style: const TextStyle(fontWeight: FontWeight.w600)),
                                 const SizedBox(height: 2),
                                 Text('${s.startTime} - ${s.endTime}', style: const TextStyle(fontSize: 11)),
                                 Text('Max Marks: ${s.maxMarks}', style: const TextStyle(fontSize: 11)),
@@ -585,7 +706,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      schedule.subjectName ?? 'Examination Paper',
+                      displaySubjectName(subjectName: schedule.subjectName, subjectCode: schedule.subjectCode, subjectId: schedule.subjectId),
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     Text(
@@ -619,7 +740,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
                         const Divider(height: 16),
                         _buildDetailRow(Icons.class_outlined, 'Class & Section', '${schedule.className ?? "Class"} - ${schedule.sectionName ?? "Section"}'),
                         const Divider(height: 16),
-                        _buildDetailRow(Icons.menu_book_outlined, 'Subject', schedule.subjectName ?? '—'),
+                        _buildDetailRow(Icons.menu_book_outlined, 'Subject', displaySubjectName(subjectName: schedule.subjectName, subjectCode: schedule.subjectCode, subjectId: schedule.subjectId)),
                         const Divider(height: 16),
                         _buildDetailRow(Icons.meeting_room_outlined, 'Room Number', schedule.roomNumber ?? 'Unassigned'),
                         const Divider(height: 16),
@@ -1056,7 +1177,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
       context: context,
       builder: (dialogCtx) {
         return AlertDialog(
-          title: Text('Edit Schedule: ${schedule.subjectName ?? "Paper"}'),
+          title: Text('Edit Schedule: ${displaySubjectName(subjectName: schedule.subjectName, subjectCode: schedule.subjectCode, subjectId: schedule.subjectId)}'),
           content: SizedBox(
             width: 450,
             child: Column(
@@ -1159,7 +1280,7 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
         return AlertDialog(
           title: const Text('Delete Schedule Slot?'),
           content: Text(
-            'Delete ${schedule.subjectName ?? "Paper"} for ${schedule.className ?? "Class"} on ${schedule.examDate}?',
+            'Delete ${displaySubjectName(subjectName: schedule.subjectName, subjectCode: schedule.subjectCode, subjectId: schedule.subjectId)} for ${schedule.className ?? "Class"} on ${schedule.examDate}?',
           ),
           actions: [
             TextButton(
@@ -1190,211 +1311,613 @@ class _PlannerExamsScreenState extends ConsumerState<PlannerExamsScreen> with Si
     final classesState = schoolId.isNotEmpty ? ref.read(classesProvider(schoolId)) : null;
 
     final startDateController = TextEditingController(text: exam.startDate);
+    final endDateController = TextEditingController(text: exam.endDate);
     final gapDaysController = TextEditingController(text: '1');
     final startTimeController = TextEditingController(text: '09:00:00');
     final durationController = TextEditingController(text: '180');
+    final morningStartController = TextEditingController(text: '09:00:00');
+    final morningDurationController = TextEditingController(text: '180');
+    final afternoonStartController = TextEditingController(text: '14:00:00');
+    final afternoonDurationController = TextEditingController(text: '180');
+
+    var isMultiSession = false;
     var excludeWeekends = true;
-    final selectedClassIds = <String>[];
+    var schedulingStrategy = 'ONE_PAPER_PER_DAY';
+    var currentStep = 0;
 
     ref.read(bulkTimetableGeneratorProvider.notifier).clear();
 
+    final availableClasses = classesState != null
+        ? (exam.effectiveClassIds.isNotEmpty
+            ? classesState.classes.where((c) => exam.effectiveClassIds.contains(c.id)).toList()
+            : classesState.classes)
+        : <ClassDto>[];
+
+    final selectedClassIds = availableClasses.map((c) => c.id).toList();
+
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (ctx, setBulkState) {
             final genState = ref.watch(bulkTimetableGeneratorProvider);
 
+            final stepNames = [
+              '1. Cycle',
+              '2. Classes',
+              '3. Dates',
+              '4. Sessions',
+              '5. Gap Days',
+              '6. Weekends',
+              '7. Strategy',
+              '8. Preview & Save',
+            ];
+
             return AlertDialog(
-              title: Text('Auto-Generate Timetable: ${exam.examName}'),
+              title: Row(
+                children: [
+                  const Icon(Icons.auto_awesome, color: Colors.indigo),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Institutional Schedule Builder: ${exam.examName}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (!genState.isLoading)
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => Navigator.of(dialogCtx).pop(),
+                    ),
+                ],
+              ),
               content: SizedBox(
-                width: 700,
+                width: 750,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Deterministic generation uses teacher subject assignments to sequentially map exam papers across available days.',
-                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      // Step Progress Indicator
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: List.generate(stepNames.length, (idx) {
+                            final isCurr = idx == currentStep;
+                            final isDone = idx < currentStep;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 6.0),
+                              child: Chip(
+                                avatar: CircleAvatar(
+                                  radius: 10,
+                                  backgroundColor: isCurr
+                                      ? Colors.white
+                                      : isDone
+                                          ? Colors.green
+                                          : Colors.grey.shade400,
+                                  child: isDone
+                                      ? const Icon(Icons.check, size: 12, color: Colors.white)
+                                      : Text(
+                                          '${idx + 1}',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: isCurr ? Colors.indigo : Colors.white,
+                                          ),
+                                        ),
+                                ),
+                                label: Text(
+                                  stepNames[idx],
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: isCurr ? FontWeight.bold : FontWeight.normal,
+                                    color: isCurr ? Colors.white : Colors.grey.shade800,
+                                  ),
+                                ),
+                                backgroundColor: isCurr ? Colors.indigo : (isDone ? Colors.green.shade50 : Colors.grey.shade100),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            );
+                          }),
+                        ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 20),
 
-                      // Configuration Form
-                      if (genState.preview == null) ...[
-                        if (classesState != null)
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Select Classes to Schedule *', style: TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: classesState.classes.map((c) {
-                                  final isSel = selectedClassIds.contains(c.id);
-                                  return FilterChip(
-                                    label: Text(c.name),
-                                    selected: isSel,
-                                    onSelected: (selected) {
-                                      setBulkState(() {
-                                        if (selected) {
-                                          selectedClassIds.add(c.id);
-                                        } else {
-                                          selectedClassIds.remove(c.id);
-                                        }
-                                      });
-                                    },
-                                  );
-                                }).toList(),
-                              ),
-                            ],
-                          ),
-                        const SizedBox(height: 16),
-
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: startDateController,
-                                decoration: const InputDecoration(labelText: 'Start Date (YYYY-MM-DD)'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextField(
-                                controller: gapDaysController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Gap Days Between Exams',
-                                  hintText: '1',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: startTimeController,
-                                decoration: const InputDecoration(labelText: 'Exam Start Time'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextField(
-                                controller: durationController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Duration (Minutes)',
-                                  hintText: '180',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        SwitchListTile(
-                          title: const Text('Exclude Weekends'),
-                          subtitle: const Text('Automatically skips Saturdays and Sundays'),
-                          value: excludeWeekends,
-                          onChanged: (val) {
-                            setBulkState(() {
-                              excludeWeekends = val;
-                            });
-                          },
-                        ),
-                      ] else ...[
-                        // Preview Table
+                      // Error Banner
+                      if (genState.errorMessage != null) ...[
                         Container(
                           padding: const EdgeInsets.all(12),
+                          margin: const EdgeInsets.only(bottom: 16),
                           decoration: BoxDecoration(
-                            color: Colors.green[50],
+                            color: Colors.red.shade50,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.green[200]!),
+                            border: Border.all(color: Colors.red.shade300),
                           ),
                           child: Row(
                             children: [
-                              const Icon(Icons.check_circle_outline, color: Colors.green),
-                              const SizedBox(width: 12),
-                              Text(
-                                'Preview Generated: ${genState.preview!.totalSlots} Examination Paper Slots Ready.',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                              const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  genState.errorMessage!,
+                                  style: const TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.w600),
+                                ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 300,
-                          child: ListView.separated(
-                            itemCount: genState.preview!.schedules.length,
-                            separatorBuilder: (_, __) => const Divider(),
-                            itemBuilder: (ctx, i) {
-                              final item = genState.preview!.schedules[i];
-                              return ListTile(
-                                leading: CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: Colors.blue[100],
-                                  child: Text('${i + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      ],
+
+                      // Loading Indicator
+                      if (genState.isLoading) ...[
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 36.0),
+                          child: Center(
+                            child: Column(
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 14),
+                                Text(
+                                  'Generating deterministic timetable schedule...',
+                                  style: TextStyle(color: Colors.indigo, fontSize: 14, fontWeight: FontWeight.w500),
                                 ),
-                                title: Text('${item.subjectName} (${item.className} - ${item.sectionName})'),
-                                subtitle: Text('${item.examDate} | ${item.startTime} - ${item.endTime}'),
-                              );
-                            },
+                              ],
+                            ),
                           ),
                         ),
+                      ] else ...[
+                        // Step 0: Cycle Overview
+                        if (currentStep == 0) ...[
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.indigo.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.indigo.shade200),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Cycle: ${exam.examName}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                const SizedBox(height: 6),
+                                Text('Type: ${exam.examType} • Canonical Window: ${exam.startDate} to ${exam.endDate}'),
+                                const SizedBox(height: 6),
+                                Text('Participating Scope: ${exam.classesRangeFormatted ?? "${exam.effectiveClassIds.length} Classes"}'),
+                                const SizedBox(height: 6),
+                                Text('Configured Papers: ${exam.papers.isNotEmpty ? exam.papers.length : exam.totalPapersCount} Papers'),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'This wizard will construct deterministic, conflict-free timetable slots across participating grade cohorts.',
+                            style: TextStyle(fontSize: 13, color: Colors.grey),
+                          ),
+                        ],
+
+                        // Step 1: Participating Classes
+                        if (currentStep == 1) ...[
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Select Participating Classes *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                              Row(
+                                children: [
+                                  TextButton(
+                                    onPressed: () {
+                                      setBulkState(() {
+                                        selectedClassIds.clear();
+                                        selectedClassIds.addAll(availableClasses.map((c) => c.id));
+                                      });
+                                    },
+                                    child: const Text('Select All'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      setBulkState(() {
+                                        selectedClassIds.clear();
+                                      });
+                                    },
+                                    child: const Text('Deselect All'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: availableClasses.map((c) {
+                              final isSel = selectedClassIds.contains(c.id);
+                              return FilterChip(
+                                label: Text(c.name),
+                                selected: isSel,
+                                onSelected: (selected) {
+                                  setBulkState(() {
+                                    if (selected) {
+                                      selectedClassIds.add(c.id);
+                                    } else {
+                                      selectedClassIds.remove(c.id);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ],
+
+                        // Step 2: Date Window
+                        if (currentStep == 2) ...[
+                          const Text('Timetable Examination Window', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: startDateController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Start Date (YYYY-MM-DD) *',
+                                    border: OutlineInputBorder(),
+                                    prefixIcon: Icon(Icons.date_range),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextField(
+                                  controller: endDateController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'End Date (YYYY-MM-DD)',
+                                    border: OutlineInputBorder(),
+                                    prefixIcon: Icon(Icons.event),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+
+                        // Step 3: Multi-Session Slots
+                        if (currentStep == 3) ...[
+                          const Text('Session Configuration', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            title: const Text('Enable Multi-Session Scheduling'),
+                            subtitle: const Text('Schedule two paper sessions daily (Morning and Afternoon)'),
+                            value: isMultiSession,
+                            onChanged: (val) => setBulkState(() => isMultiSession = val),
+                          ),
+                          const SizedBox(height: 12),
+                          if (!isMultiSession) ...[
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: startTimeController,
+                                    decoration: const InputDecoration(labelText: 'Exam Start Time', border: OutlineInputBorder()),
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: TextField(
+                                    controller: durationController,
+                                    keyboardType: TextInputType.number,
+                                    decoration: const InputDecoration(labelText: 'Duration (Minutes)', border: OutlineInputBorder()),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            Card(
+                              color: Colors.grey.shade50,
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('Session 1 (Morning)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextField(
+                                            controller: morningStartController,
+                                            decoration: const InputDecoration(labelText: 'Start Time', border: OutlineInputBorder(), isDense: true),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: TextField(
+                                            controller: morningDurationController,
+                                            decoration: const InputDecoration(labelText: 'Duration (Mins)', border: OutlineInputBorder(), isDense: true),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Text('Session 2 (Afternoon)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextField(
+                                            controller: afternoonStartController,
+                                            decoration: const InputDecoration(labelText: 'Start Time', border: OutlineInputBorder(), isDense: true),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: TextField(
+                                            controller: afternoonDurationController,
+                                            decoration: const InputDecoration(labelText: 'Duration (Mins)', border: OutlineInputBorder(), isDense: true),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+
+                        // Step 4: Gap Days
+                        if (currentStep == 4) ...[
+                          const Text('Inter-Exam Gap Days', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: gapDaysController,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Gap Days Between Exam Dates',
+                              hintText: '1',
+                              border: OutlineInputBorder(),
+                              helperText: '0 = consecutive days, 1 = one study day between exams, etc.',
+                            ),
+                          ),
+                        ],
+
+                        // Step 5: Weekends
+                        if (currentStep == 5) ...[
+                          const Text('Weekend Configuration', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            title: const Text('Exclude Weekends'),
+                            subtitle: const Text('Automatically skip Saturdays and Sundays when advancing dates'),
+                            value: excludeWeekends,
+                            onChanged: (val) => setBulkState(() => excludeWeekends = val),
+                          ),
+                        ],
+
+                        // Step 6: Strategy
+                        if (currentStep == 6) ...[
+                          const Text('Scheduling Strategy', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 8),
+                          RadioListTile<String>(
+                            title: const Text('One Paper Per Day'),
+                            subtitle: const Text('Standard examination flow: 1 paper slot daily per class'),
+                            value: 'ONE_PAPER_PER_DAY',
+                            groupValue: schedulingStrategy,
+                            onChanged: (val) => setBulkState(() => schedulingStrategy = val!),
+                          ),
+                          RadioListTile<String>(
+                            title: const Text('Multi-Session Simultaneous'),
+                            subtitle: const Text('Utilize Morning & Afternoon session slots to accelerate exam period'),
+                            value: 'MULTI_SESSION',
+                            groupValue: schedulingStrategy,
+                            onChanged: (val) => setBulkState(() => schedulingStrategy = val!),
+                          ),
+                          RadioListTile<String>(
+                            title: const Text('Staggered Cohorts'),
+                            subtitle: const Text('Alternate mornings and afternoons across grade cohorts to balance invigilation'),
+                            value: 'STAGGERED',
+                            groupValue: schedulingStrategy,
+                            onChanged: (val) => setBulkState(() => schedulingStrategy = val!),
+                          ),
+                        ],
+
+                        // Step 7: Preview & Save
+                        if (currentStep == 7) ...[
+                          if (genState.preview == null) ...[
+                            const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(24.0),
+                                child: Text('Click "Generate Preview" below to simulate the deterministic timetable.'),
+                              ),
+                            ),
+                          ] else ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: genState.preview!.hasConflicts ? Colors.amber.shade50 : Colors.green.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: genState.preview!.hasConflicts ? Colors.amber.shade300 : Colors.green.shade200),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        genState.preview!.hasConflicts ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+                                        color: genState.preview!.hasConflicts ? Colors.amber.shade800 : Colors.green,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          genState.preview!.hasConflicts
+                                              ? 'Preview Generated with Advisory Notices: ${genState.preview!.totalSlots} Slots Scheduled'
+                                              : 'Deterministic Preview: ${genState.preview!.totalSlots} Examination Slots Verified. Clash-Free.',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: genState.preview!.hasConflicts ? Colors.amber.shade900 : Colors.green.shade800,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (genState.preview!.warnings.isNotEmpty) ...[
+                                    const SizedBox(height: 8),
+                                    for (final warn in genState.preview!.warnings)
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 36.0, top: 2.0),
+                                        child: Text(
+                                          '• $warn',
+                                          style: TextStyle(fontSize: 12, color: Colors.amber.shade900, fontWeight: FontWeight.w500),
+                                        ),
+                                      ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              height: 320,
+                              child: ListView.separated(
+                                itemCount: genState.preview!.schedules.length,
+                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                itemBuilder: (ctx, i) {
+                                  final item = genState.preview!.schedules[i];
+                                  final hasConflict = item.conflictStatus != null && item.conflictStatus != 'OK';
+                                  final dayStr = item.dayName != null && item.dayName!.isNotEmpty ? ' | ${item.dayName}' : '';
+                                  final sessStr = item.sessionName != null && item.sessionName!.isNotEmpty ? ' | ${item.sessionName}' : '';
+                                  final durStr = item.durationMinutes != null ? ' (${item.durationMinutes} mins)' : '';
+                                  final roomStr = item.roomNumber != null ? ' • Room: ${item.roomNumber}' : '';
+                                  final startClean = item.startTime.length >= 5 ? item.startTime.substring(0, 5) : item.startTime;
+                                  final endClean = item.endTime.length >= 5 ? item.endTime.substring(0, 5) : item.endTime;
+
+                                  return ListTile(
+                                    leading: CircleAvatar(
+                                      radius: 12,
+                                      backgroundColor: hasConflict ? Colors.amber.shade100 : Colors.indigo.shade100,
+                                      child: Text(
+                                        '${i + 1}',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: hasConflict ? Colors.amber.shade900 : Colors.indigo.shade900,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            '${displaySubjectName(subjectName: item.subjectName, subjectCode: item.subjectCode, subjectId: item.subjectId)} (${item.className} - ${item.sectionName})',
+                                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                          ),
+                                        ),
+                                        if (hasConflict)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.amber.shade100,
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              item.conflictStatus!,
+                                              style: TextStyle(fontSize: 10, color: Colors.amber.shade900, fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    subtitle: Text(
+                                      '${item.examDate}$dayStr$sessStr | $startClean - $endClean$durStr$roomStr • Max: ${item.maxMarks}M (Pass: ${item.passMarks}M)',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ],
                       ],
                     ],
                   ),
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogCtx).pop(),
-                  child: const Text('Cancel'),
-                ),
-                if (genState.preview == null)
+                if (!genState.isLoading)
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogCtx).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                if (currentStep > 0 && !genState.isLoading)
+                  TextButton(
+                    onPressed: () => setBulkState(() => currentStep--),
+                    child: const Text('Back'),
+                  ),
+                if (currentStep < 7 && !genState.isLoading)
+                  FilledButton(
+                    onPressed: () {
+                      if (currentStep == 1 && selectedClassIds.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please select at least one participating class.')),
+                        );
+                        return;
+                      }
+                      setBulkState(() => currentStep++);
+                    },
+                    child: const Text('Next'),
+                  ),
+                if (currentStep == 7 && genState.preview == null && !genState.isLoading)
                   FilledButton.icon(
                     icon: const Icon(Icons.preview),
                     onPressed: () async {
-                      if (selectedClassIds.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please select at least one class.')),
-                        );
-                        return;
+                      List<Map<String, dynamic>>? sessionsPayload;
+                      if (isMultiSession) {
+                        sessionsPayload = [
+                          {
+                            'name': 'Morning Slot',
+                            'start_time': morningStartController.text.trim(),
+                            'duration_minutes': int.tryParse(morningDurationController.text.trim()) ?? 180,
+                          },
+                          {
+                            'name': 'Afternoon Slot',
+                            'start_time': afternoonStartController.text.trim(),
+                            'duration_minutes': int.tryParse(afternoonDurationController.text.trim()) ?? 180,
+                          },
+                        ];
                       }
 
                       await ref.read(bulkTimetableGeneratorProvider.notifier).generatePreview(
                             examinationId: exam.id,
                             classIds: selectedClassIds,
                             startDate: startDateController.text.trim(),
+                            endDate: endDateController.text.trim().isNotEmpty ? endDateController.text.trim() : null,
                             gapDays: int.tryParse(gapDaysController.text.trim()) ?? 1,
                             startTime: startTimeController.text.trim(),
                             durationMinutes: int.tryParse(durationController.text.trim()) ?? 180,
+                            sessions: sessionsPayload,
+                            schedulingStrategy: schedulingStrategy,
                             excludeWeekends: excludeWeekends,
                           );
                     },
                     label: const Text('Generate Deterministic Preview'),
-                  )
-                else
+                  ),
+                if (currentStep == 7 && genState.preview != null && !genState.isLoading)
                   FilledButton.icon(
                     icon: const Icon(Icons.check),
                     onPressed: () async {
-                      Navigator.of(dialogCtx).pop();
                       final payload = genState.preview!.schedules.map((s) => s.toSchedulePayload()).toList();
                       final ok = await ref.read(bulkTimetableGeneratorProvider.notifier).confirmSchedules(
                             examinationId: exam.id,
                             schedules: payload,
                           );
-                      if (context.mounted && ok) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Timetable generated and saved successfully!')),
-                        );
+                      if (ok) {
+                        if (dialogCtx.mounted) {
+                          Navigator.of(dialogCtx).pop();
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Timetable generated and saved successfully!'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        }
                       }
                     },
                     label: const Text('Confirm & Save Timetable'),

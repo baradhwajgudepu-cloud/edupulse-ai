@@ -1,6 +1,6 @@
 from datetime import datetime
 import uuid
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.models.tenant import TenantStatus
 
@@ -26,7 +26,7 @@ class TenantBase(BaseModel):
         description="Unique subdomain prefix (lowercase, numbers, dashes)"
     )
     email: EmailStr = Field(..., description="Organization primary email contact")
-    
+
     # Indian mobile number validation (optional +91/0 prefix and 10 digits starting with 6-9)
     phone: Optional[str] = Field(
         None,
@@ -35,23 +35,23 @@ class TenantBase(BaseModel):
     )
     website: Optional[str] = Field(None, max_length=255)
     logo_url: Optional[str] = Field(None, max_length=1024)
-    
+
     # Defaults configured for Indian settings
     timezone: str = Field("Asia/Kolkata", max_length=50)
     currency: str = Field("INR", max_length=10)
-    
+
     address: Optional[str] = Field(None, max_length=255)
     city: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100, description="Indian State/UT name (e.g. Telangana)")
     country: Optional[str] = Field("India", max_length=100)
-    
+
     # 6-digit Indian PIN code validation (starts with 1-9 followed by 5 digits)
     postal_code: Optional[str] = Field(
         None,
         pattern=r"^[1-9][0-9]{5}$",
         description="6-digit Indian PIN Code (e.g. 500081)"
     )
-    
+
     # Indian Tax Registration fields
     pan: Optional[str] = Field(
         None,
@@ -63,14 +63,14 @@ class TenantBase(BaseModel):
         pattern=r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$",
         description="15-character alphanumeric Indian GST Identification Number"
     )
-    
+
     # Toggle and Enum flags
     is_active: bool = Field(True, description="Quick enable/disable switch for the tenant")
     status: TenantStatus = Field(TenantStatus.ACTIVE, description="Current operational status of the tenant")
-    
+
     # Custom configurations
     settings: Dict[str, Any] = Field(default_factory=dict, description="Custom JSON configurations")
-    
+
     # SaaS subscription parameters
     plan: Optional[str] = Field(None, max_length=50, description="Subscription plan name")
     subscription_start: Optional[datetime] = Field(None, description="Subscription start timestamp")
@@ -91,27 +91,27 @@ class TenantUpdate(BaseModel):
     code: Optional[str] = Field(None, min_length=2, max_length=100, pattern=r"^[a-z0-9\-]+$")
     subdomain: Optional[str] = Field(None, min_length=2, max_length=100, pattern=r"^[a-z0-9\-]+$")
     email: Optional[EmailStr] = None
-    
+
     phone: Optional[str] = Field(None, pattern=r"^(?:\+91|0)?[6-9]\d{9}$")
     website: Optional[str] = Field(None, max_length=255)
     logo_url: Optional[str] = Field(None, max_length=1024)
-    
+
     timezone: Optional[str] = Field(None, max_length=50)
     currency: Optional[str] = Field(None, max_length=10)
-    
+
     address: Optional[str] = Field(None, max_length=255)
     city: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
     postal_code: Optional[str] = Field(None, pattern=r"^[1-9][0-9]{5}$")
-    
+
     pan: Optional[str] = Field(None, pattern=r"^[A-Z]{5}[0-9]{4}[A-Z]$")
     gstin: Optional[str] = Field(None, pattern=r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$")
-    
+
     is_active: Optional[bool] = None
     status: Optional[TenantStatus] = None
     settings: Optional[Dict[str, Any]] = None
-    
+
     plan: Optional[str] = Field(None, max_length=50)
     subscription_start: Optional[datetime] = None
     subscription_end: Optional[datetime] = None
@@ -122,6 +122,7 @@ class TenantResponse(TenantBase):
     """
     code: str = Field(..., description="Unique alphanumeric code")
     subdomain: Optional[str] = Field(None, description="Subdomain prefix")
+    email: str = Field(..., description="Organization primary email contact")
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -171,3 +172,18 @@ class TenantResponse(TenantBase):
             }
         }
     )
+
+class TenantDeletionSummary(BaseModel):
+    """
+    Schema representing the structured result of a permanent tenant deletion or dry-run.
+    """
+    tenant_id: uuid.UUID
+    tenant_name: str
+    tenant_code: str
+    dry_run: bool
+    deleted_counts: Dict[str, int]
+    total_records_deleted: int
+    storage_cleanup: Dict[str, Any]
+    warnings: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)

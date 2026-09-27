@@ -1,10 +1,11 @@
 import os
 import uuid
+import json
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.report_card import ReportCardPublication, ReportCardStatus
@@ -20,6 +21,7 @@ from app.repositories.student import StudentRepository
 from app.repositories.school import SchoolRepository
 from app.schemas.report_card import (
     ReportCardGenerateRequest, ReportCardClassGenerateRequest,
+    ReportCardRejectRequest, ReportCardUnpublishRequest,
     ReportCardPreviewResponse, ReportCardSubjectMarkRow,
     BulkClassGenerateResponse, StudentFailureDetail,
     VerificationResponse, ReportCardResponse,
@@ -64,11 +66,12 @@ class NumberedCanvas(canvas.Canvas):
         if self._pageNumber > 1:
             self.setFont("Helvetica-Bold", 8)
             self.setFillColor(primary_color)
-            self.drawString(40, 800, getattr(self, "school_name", "EduPulse School").upper())
+            school_ay = f"{getattr(self, 'school_name', 'EduPulse School').upper()} — Academic Year {getattr(self, 'academic_year', '2026-27')}"
+            self.drawString(40, 800, school_ay)
             
             self.setFont("Helvetica", 8)
             self.setFillColor(text_color)
-            self.drawRightString(555, 800, f"Academic Year: {getattr(self, 'academic_year', '2025-26')}")
+            self.drawRightString(555, 800, "Consolidated Multi-Exam Performance Matrix")
             
             # Header double accent lines
             self.setStrokeColor(primary_color)
@@ -157,6 +160,218 @@ class ReportCardService:
         from app.services.storage import get_storage_service
         self.storage_service = storage_service or get_storage_service()
 
+    async def get_reportable_examinations(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        student_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+        class_id: Optional[uuid.UUID] = None,
+        section_id: Optional[uuid.UUID] = None,
+        as_of_date: Optional[Any] = None,
+        require_student_marks: bool = False
+    ) -> List[Any]:
+        """
+        Authoritative single source of truth for reportable examinations.
+        Rules:
+        1. Belongs to student's school.
+        2. Belongs to student's academic year.
+        3. Participates in student's class/section.
+        4. Not ARCHIVED.
+        5. Not DRAFT.
+        6. Scheduled examination date has occurred (exam.start_date <= as_of_date). Future exams are excluded.
+        7. Lifecycle status in [COMPLETED, RESULTS_READY, PUBLISHED].
+        8. Has actual marks for the class/student (or student if require_student_marks=True).
+        """
+        from datetime import date as dt_date
+        from app.models.examination import Examination, ExamStatus, ExamSchedule
+        from app.models.marks import Marks
+
+        effective_as_of = as_of_date
+        if not effective_as_of:
+            effective_as_of = datetime.now(timezone.utc).date()
+        elif isinstance(effective_as_of, datetime):
+            effective_as_of = effective_as_of.date()
+
+        # 1. Resolve student details if student_id provided
+        if student_id and (not class_id or not academic_year_id):
+            stmt_st = select(Student).where(
+                Student.id == student_id,
+                Student.school_id == school_id,
+                Student.tenant_id == tenant_id,
+                Student.deleted_at.is_(None)
+            )
+            res_st = await self.report_repo.db.execute(stmt_st)
+            st = res_st.scalar_one_or_none()
+            if st:
+                class_id = class_id or st.class_id
+                section_id = section_id or st.section_id
+                academic_year_id = academic_year_id or st.academic_year_id
+
+        # 2. Query candidate examinations
+        stmt_exams = select(Examination).where(
+            Examination.school_id == school_id,
+            Examination.tenant_id == tenant_id,
+            Examination.deleted_at.is_(None),
+            Examination.status != ExamStatus.ARCHIVED,
+            Examination.status != ExamStatus.DRAFT,
+            Examination.status.in_([
+                ExamStatus.COMPLETED,
+                ExamStatus.PUBLISHED,
+                ExamStatus.APPROVED,
+                ExamStatus.LOCKED
+            ]),
+            Examination.start_date <= effective_as_of
+        )
+        if academic_year_id:
+            stmt_exams = stmt_exams.where(Examination.academic_year_id == academic_year_id)
+
+        res_exams = await self.report_repo.db.execute(stmt_exams)
+        candidate_exams = list(res_exams.scalars().all())
+        candidate_exams.sort(key=lambda x: x.start_date)
+
+        reportable_exams = []
+        for exam in candidate_exams:
+            stmt_sch = select(ExamSchedule.id).where(
+                ExamSchedule.exam_id == exam.id,
+                ExamSchedule.deleted_at.is_(None)
+            )
+            if class_id:
+                stmt_sch = stmt_sch.where(ExamSchedule.class_id == class_id)
+            if section_id:
+                res_sec_sch = await self.report_repo.db.execute(stmt_sch.where(ExamSchedule.section_id == section_id))
+                sch_ids = [r[0] for r in res_sec_sch.fetchall()]
+                if not sch_ids:
+                    res_cls_sch = await self.report_repo.db.execute(stmt_sch)
+                    sch_ids = [r[0] for r in res_cls_sch.fetchall()]
+            else:
+                res_cls_sch = await self.report_repo.db.execute(stmt_sch)
+                sch_ids = [r[0] for r in res_cls_sch.fetchall()]
+
+            if not sch_ids:
+                continue
+
+            if require_student_marks and student_id:
+                stmt_m = select(func.count(Marks.id)).where(
+                    Marks.exam_schedule_id.in_(sch_ids),
+                    Marks.student_id == student_id,
+                    Marks.deleted_at.is_(None),
+                    Marks.marks_obtained.isnot(None)
+                )
+                res_m = await self.report_repo.db.execute(stmt_m)
+                if (res_m.scalar() or 0) == 0:
+                    continue
+
+            reportable_exams.append(exam)
+
+        return reportable_exams
+
+    async def resolve_examination_weightages(
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        examinations: List[Any]
+    ) -> Dict[str, Any]:
+        """
+        Resolves examination weightages dynamically from school/academic year policy.
+        Never hardcoded.
+        Hierarchy:
+          1. school.settings.get("result_policy", {}).get("examination_weights")
+          2. academic_year.settings.get("examination_weightages")
+          3. exam.settings.get("weightage") or exam.settings.get("weight")
+          4. exam_type_masters.default_weightage
+        Fallback: "PROPORTIONAL_MAX_MARKS"
+        """
+        if not examinations:
+            return {
+                "calculation_method": "PROPORTIONAL_MAX_MARKS",
+                "weightages": {},
+                "normalized_weights": {}
+            }
+
+        school = await self.school_repo.get_by_id(school_id, tenant_id)
+        school_weights = {}
+        if school and school.settings and isinstance(school.settings, dict):
+            school_weights = (
+                school.settings.get("result_policy", {}).get("examination_weights") or
+                school.settings.get("examination_weightages") or
+                school.settings.get("result_policy", {}).get("exam_weights") or
+                {}
+            )
+
+        ay_weights = {}
+        res_ay = await self.report_repo.db.execute(
+            select(AcademicYear).where(AcademicYear.id == academic_year_id, AcademicYear.tenant_id == tenant_id)
+        )
+        academic_year = res_ay.scalar_one_or_none()
+        if academic_year and academic_year.settings and isinstance(academic_year.settings, dict):
+            ay_weights = (
+                academic_year.settings.get("examination_weightages") or
+                academic_year.settings.get("result_policy", {}).get("examination_weights") or
+                {}
+            )
+
+        resolved_weights: Dict[str, float] = {}
+        has_any_explicit_weight = False
+
+        for exam in examinations:
+            exam_id_str = str(exam.id)
+            exam_name = exam.exam_name
+            exam_type_val = exam.exam_type.value if hasattr(exam.exam_type, "value") else str(exam.exam_type)
+
+            weight = None
+            # 1. School policy
+            if exam_id_str in school_weights:
+                weight = float(school_weights[exam_id_str])
+            elif exam_name in school_weights:
+                weight = float(school_weights[exam_name])
+            elif exam_type_val in school_weights:
+                weight = float(school_weights[exam_type_val])
+
+            # 2. Academic year policy
+            if weight is None:
+                if exam_id_str in ay_weights:
+                    weight = float(ay_weights[exam_id_str])
+                elif exam_name in ay_weights:
+                    weight = float(ay_weights[exam_name])
+                elif exam_type_val in ay_weights:
+                    weight = float(ay_weights[exam_type_val])
+
+            # 3. Individual exam settings
+            if weight is None and exam.settings and isinstance(exam.settings, dict):
+                if "weightage" in exam.settings:
+                    try:
+                        weight = float(exam.settings["weightage"])
+                    except (ValueError, TypeError):
+                        pass
+                elif "weight" in exam.settings:
+                    try:
+                        weight = float(exam.settings["weight"])
+                    except (ValueError, TypeError):
+                        pass
+
+            if weight is not None and weight > 0:
+                has_any_explicit_weight = True
+                resolved_weights[exam_id_str] = weight
+            else:
+                resolved_weights[exam_id_str] = 0.0
+
+        total_weight = sum(resolved_weights.values())
+        if has_any_explicit_weight and total_weight > 0:
+            calculation_method = "WEIGHTED_POLICY"
+            normalized_weights = {eid: w / total_weight for eid, w in resolved_weights.items()}
+        else:
+            calculation_method = "PROPORTIONAL_MAX_MARKS"
+            normalized_weights = {eid: 1.0 / len(examinations) for eid in resolved_weights}
+            resolved_weights = {str(exam.id): 1.0 for exam in examinations}
+
+        return {
+            "calculation_method": calculation_method,
+            "weightages": resolved_weights,
+            "normalized_weights": normalized_weights
+        }
+
     async def validate_report_card_data(
         self,
         tenant_id: uuid.UUID,
@@ -164,10 +379,12 @@ class ReportCardService:
         student_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID] = None,
         examination_id: Optional[uuid.UUID] = None,
-        teacher_remarks: Optional[str] = None
+        teacher_remarks: Optional[str] = None,
+        report_card_type: Optional[str] = "CONSOLIDATED"
     ) -> Dict[str, Any]:
         """
         Authoritative single validation method for determining report card completeness.
+        Supports both Consolidated Academic-Year evaluation and Single Examination evaluation.
         Used consistently by generation, preview, approval, and publication workflows.
         """
         # 1. Load student with eagerly loaded relationships
@@ -200,67 +417,15 @@ class ReportCardService:
         res_pub = await self.report_repo.db.execute(stmt_pub)
         db_rep = res_pub.scalar_one_or_none()
 
-        warnings = []
-
-        if not teacher_remarks and db_rep and db_rep.settings:
-            teacher_remarks = db_rep.settings.get("teacher_remarks")
-
-        if not teacher_remarks:
-            warnings.append("Teacher remark not entered.")
-
-        # Resolve target examination context
-        target_exam_id = examination_id
-        if not target_exam_id and db_rep and db_rep.settings and db_rep.settings.get("examination_id"):
-            try:
-                target_exam_id = uuid.UUID(str(db_rep.settings["examination_id"]))
-            except Exception:
-                target_exam_id = None
-
-        # 2. Fetch exam schedules
-        stmt_sch = select(ExamSchedule).where(
-            ExamSchedule.class_id == student.class_id,
-            ExamSchedule.section_id == student.section_id,
-            ExamSchedule.school_id == school_id,
-            ExamSchedule.tenant_id == tenant_id,
-            ExamSchedule.deleted_at.is_(None)
+        effective_teacher_remarks = teacher_remarks
+        has_explicit_teacher_remarks = bool(teacher_remarks) or (
+            db_rep and db_rep.settings and bool(db_rep.settings.get("teacher_remarks"))
         )
-        if target_exam_id:
-            stmt_sch = stmt_sch.where(ExamSchedule.exam_id == target_exam_id)
-        elif effective_ay_id:
-            # Query examinations in this AY that are completed/published/approved
-            from app.models.examination import Examination, ExamStatus
-            stmt_sch = stmt_sch.join(Examination, ExamSchedule.exam_id == Examination.id).where(
-                ExamSchedule.academic_year_id == effective_ay_id,
-                Examination.status.in_([
-                    ExamStatus.PUBLISHED, ExamStatus.APPROVED, ExamStatus.COMPLETED,
-                    "PUBLISHED", "APPROVED", "COMPLETED"
-                ])
-            )
+        if not effective_teacher_remarks and db_rep and db_rep.settings:
+            effective_teacher_remarks = db_rep.settings.get("teacher_remarks")
 
-        stmt_sch = stmt_sch.options(joinedload(ExamSchedule.subject))
-        res_sch = await self.report_repo.db.execute(stmt_sch)
-        schedules = list(res_sch.scalars().all())
-
-        # If no published/completed exams exist in the AY yet, fall back to checking all configured schedules for the AY
-        if not schedules and not target_exam_id:
-            stmt_sch_fallback = select(ExamSchedule).where(
-                ExamSchedule.class_id == student.class_id,
-                ExamSchedule.section_id == student.section_id,
-                ExamSchedule.school_id == school_id,
-                ExamSchedule.tenant_id == tenant_id,
-                ExamSchedule.academic_year_id == effective_ay_id,
-                ExamSchedule.deleted_at.is_(None)
-            ).options(joinedload(ExamSchedule.subject))
-            res_sch_fallback = await self.report_repo.db.execute(stmt_sch_fallback)
-            schedules = list(res_sch_fallback.scalars().all())
-
-        if not schedules:
-            warnings.append("No examination schedules configured for class and section.")
-
-        subject_marks_rows = []
-        total_max_marks = 0
-        total_obtained_marks = 0.0
-        failed_subjects_count = 0
+        if not effective_teacher_remarks:
+            effective_teacher_remarks = "Good academic progress and conduct."
 
         # Load school grading policy configuration
         school = await self.school_repo.get_by_id(school_id, tenant_id)
@@ -282,54 +447,15 @@ class ReportCardService:
                     return g["grade"]
             return "F"
 
-        for sched in schedules:
-            # Query published mark
-            stmt_m = select(Marks).where(
-                Marks.exam_schedule_id == sched.id,
-                Marks.student_id == student_id,
-                Marks.deleted_at.is_(None)
-            )
-            res_m = await self.report_repo.db.execute(stmt_m)
-            mark = res_m.scalar_one_or_none()
+        promotion_policy = school.settings.get("promotion_policy") if school else None
+        if not promotion_policy:
+            promotion_policy = {
+                "min_attendance_pct": 75.0,
+                "min_overall_pct": 35.0,
+                "max_failed_subjects": 0
+            }
 
-            subj_name = f"Subject {sched.subject_id}"
-            if sched.subject:
-                subj_name = sched.subject.subject_name
-
-            if not mark:
-                warnings.append(f"{subj_name} marks not entered.")
-                continue
-            
-            if mark.status not in [MarksStatus.PUBLISHED, MarksStatus.APPROVED, MarksStatus.LOCKED, "PUBLISHED", "APPROVED", "LOCKED"]:
-                warnings.append(f"{subj_name} marks not published.")
-                continue
-
-            # Marks math
-            obtained = float(mark.marks_obtained) if mark.marks_obtained is not None else None
-            max_m = sched.max_marks
-            total_max_marks += max_m
-
-            res_status = mark.result_status.value
-            grade = "F"
-            if res_status in ["PRESENT", "EXEMPTED"] and obtained is not None:
-                total_obtained_marks += obtained
-                paper_pct = (obtained / max_m) * 100
-                grade = get_grade_for_percentage(paper_pct)
-                if obtained < max_m * 0.35:
-                    failed_subjects_count += 1
-            else:
-                failed_subjects_count += 1
-
-            subject_marks_rows.append(ReportCardSubjectMarkRow(
-                subject_name=subj_name,
-                maximum_marks=max_m,
-                marks_obtained=obtained,
-                result_status=res_status,
-                grade=grade,
-                remarks=mark.remarks
-            ))
-
-        # 3. Attendance summaries
+        # Attendance summaries
         stmt_att = select(Attendance).where(
             Attendance.student_id == student_id,
             Attendance.deleted_at.is_(None)
@@ -349,51 +475,597 @@ class ReportCardService:
         present_days = sum(1 for a in att_logs if a.attendance_status in [AttendanceStatus.PRESENT, AttendanceStatus.LATE])
         attendance_pct = round((present_days / total_days) * 100, 2) if total_days > 0 else 100.0
 
-        promotion_policy = school.settings.get("promotion_policy") if school else None
-        if not promotion_policy:
-            promotion_policy = {
-                "min_attendance_pct": 75.0,
-                "min_overall_pct": 35.0,
-                "max_failed_subjects": 0
+        # ==================================================
+        # Branch 1: Single Examination Validation
+        # ==================================================
+        if report_card_type == "SINGLE_EXAM" or (examination_id is not None and report_card_type != "CONSOLIDATED"):
+            target_exam_id = examination_id
+            if not target_exam_id and db_rep and db_rep.settings and db_rep.settings.get("examination_id"):
+                try:
+                    target_exam_id = uuid.UUID(str(db_rep.settings["examination_id"]))
+                except Exception:
+                    target_exam_id = None
+
+            stmt_sch = select(ExamSchedule).where(
+                ExamSchedule.class_id == student.class_id,
+                ExamSchedule.section_id == student.section_id,
+                ExamSchedule.school_id == school_id,
+                ExamSchedule.tenant_id == tenant_id,
+                ExamSchedule.deleted_at.is_(None)
+            )
+            if target_exam_id:
+                stmt_sch = stmt_sch.where(ExamSchedule.exam_id == target_exam_id)
+
+            stmt_sch = stmt_sch.options(joinedload(ExamSchedule.subject))
+            res_sch = await self.report_repo.db.execute(stmt_sch)
+            schedules = list(res_sch.scalars().all())
+
+            warnings = []
+            if not has_explicit_teacher_remarks:
+                warnings.append("Teacher remark not entered.")
+            if not schedules:
+                warnings.append("No examination schedules configured for class and section.")
+
+            subject_marks_rows = []
+            total_max_marks = 0
+            total_obtained_marks = 0.0
+            failed_subjects_count = 0
+
+            for sched in schedules:
+                stmt_m = select(Marks).where(
+                    Marks.exam_schedule_id == sched.id,
+                    Marks.student_id == student_id,
+                    Marks.deleted_at.is_(None)
+                )
+                res_m = await self.report_repo.db.execute(stmt_m)
+                mark = res_m.scalar_one_or_none()
+
+                subj_name = sched.subject.subject_name if sched.subject else "Subject"
+                subj_code = sched.subject.subject_code if sched.subject else None
+
+                if not mark or mark.marks_obtained is None:
+                    warnings.append(f"{subj_name} marks not entered.")
+                    subject_marks_rows.append(ReportCardSubjectMarkRow(
+                        subject_id=sched.subject_id,
+                        subject_name=subj_name,
+                        subject_code=subj_code,
+                        maximum_marks=sched.max_marks,
+                        marks_obtained=None,
+                        result_status="ABSENT" if not mark else (mark.result_status.value if hasattr(mark.result_status, "value") else str(mark.result_status)),
+                        grade="N/A",
+                        remarks=mark.remarks if mark else "Marks pending entry"
+                    ))
+                    continue
+
+                obtained = float(mark.marks_obtained)
+                max_m = sched.max_marks
+                total_max_marks += max_m
+                res_status = mark.result_status.value if hasattr(mark.result_status, "value") else str(mark.result_status)
+                grade = "F"
+                if res_status in ["PRESENT", "EXEMPTED"] and obtained is not None:
+                    total_obtained_marks += obtained
+                    paper_pct = (obtained / max_m) * 100 if max_m > 0 else 0.0
+                    grade = get_grade_for_percentage(paper_pct)
+                    if obtained < max_m * 0.35:
+                        failed_subjects_count += 1
+                else:
+                    failed_subjects_count += 1
+
+                subject_marks_rows.append(ReportCardSubjectMarkRow(
+                    subject_id=sched.subject_id,
+                    subject_name=subj_name,
+                    subject_code=subj_code,
+                    maximum_marks=max_m,
+                    marks_obtained=obtained,
+                    result_status=res_status,
+                    grade=grade,
+                    remarks=mark.remarks
+                ))
+
+            section_rank = "Rank unavailable - result incomplete"
+            class_rank = "Rank unavailable - result incomplete"
+
+            if not schedules:
+                overall_pct = 0.0
+                overall_grade = "N/A"
+                prom_status = "NOT_CONFIGURED"
+                section_rank = "Rank unavailable - not configured"
+                class_rank = "Rank unavailable - not configured"
+            else:
+                overall_pct = round((total_obtained_marks / total_max_marks) * 100, 2) if total_max_marks > 0 else 0.0
+                overall_grade = get_grade_for_percentage(overall_pct)
+                prom_status = "PROMOTED"
+                if attendance_pct < promotion_policy.get("min_attendance_pct", 75.0):
+                    prom_status = "PROMOTION_UNDER_REVIEW"
+                elif overall_pct < promotion_policy.get("min_overall_pct", 35.0) or failed_subjects_count > 1:
+                    prom_status = "DETAINED"
+                elif failed_subjects_count == 1:
+                    prom_status = "CONDITIONALLY_PROMOTED"
+
+                is_complete_for_rank = (len(schedules) > 0 and len(subject_marks_rows) == len(schedules) and all(r.marks_obtained is not None for r in subject_marks_rows))
+                if is_complete_for_rank:
+                    stmt_sec_m = select(
+                        Marks.student_id,
+                        func.sum(Marks.marks_obtained).label("tot"),
+                        func.count(Marks.id).label("cnt")
+                    ).where(
+                        Marks.exam_schedule_id.in_([s.id for s in schedules]),
+                        Marks.deleted_at.is_(None),
+                        Marks.marks_obtained.isnot(None)
+                    ).group_by(Marks.student_id)
+                    res_sec_m = await self.report_repo.db.execute(stmt_sec_m)
+                    sec_rows = res_sec_m.fetchall()
+                    eligible_sec = [(r[0], float(r[1])) for r in sec_rows if r[2] == len(schedules)]
+                    my_sec_tot = next((t for s_id, t in eligible_sec if s_id == student_id), None)
+                    if my_sec_tot is not None:
+                        sec_pos = 1 + sum(1 for _, t in eligible_sec if t > my_sec_tot)
+                        section_rank = f"Rank {sec_pos} of {len(eligible_sec)}"
+
+                    target_cls_exam_id = target_exam_id or (schedules[0].exam_id if schedules else None)
+                    if target_cls_exam_id:
+                        stmt_cls_sch = select(ExamSchedule.id).where(
+                            ExamSchedule.exam_id == target_cls_exam_id,
+                            ExamSchedule.class_id == student.class_id,
+                            ExamSchedule.deleted_at.is_(None)
+                        )
+                        res_cls_sch = await self.report_repo.db.execute(stmt_cls_sch)
+                        cls_sched_ids = [r[0] for r in res_cls_sch.fetchall()]
+                        if cls_sched_ids:
+                            stmt_cls_m = select(
+                                Marks.student_id,
+                                func.sum(Marks.marks_obtained).label("tot"),
+                                func.count(Marks.id).label("cnt")
+                            ).where(
+                                Marks.exam_schedule_id.in_(cls_sched_ids),
+                                Marks.deleted_at.is_(None),
+                                Marks.marks_obtained.isnot(None)
+                            ).group_by(Marks.student_id)
+                            res_cls_m = await self.report_repo.db.execute(stmt_cls_m)
+                            cls_rows = res_cls_m.fetchall()
+                            eligible_cls = [(r[0], float(r[1])) for r in cls_rows if r[2] == len(schedules)]
+                            my_cls_tot = next((t for s_id, t in eligible_cls if s_id == student_id), None)
+                            if my_cls_tot is not None:
+                                cls_pos = 1 + sum(1 for _, t in eligible_cls if t > my_cls_tot)
+                                class_rank = f"Rank {cls_pos} of {len(eligible_cls)}"
+                            else:
+                                class_rank = section_rank
+                        else:
+                            class_rank = section_rank
+                    else:
+                        class_rank = section_rank
+
+            return {
+                "student": student,
+                "db_rep": db_rep,
+                "is_valid": len(warnings) == 0,
+                "missing_reasons": warnings,
+                "subject_marks_rows": subject_marks_rows,
+                "consolidated_subject_marks": None,
+                "total_days": total_days,
+                "present_days": present_days,
+                "attendance_pct": attendance_pct,
+                "overall_pct": overall_pct,
+                "overall_grade": overall_grade,
+                "total_obtained": total_obtained_marks,
+                "total_max": total_max_marks,
+                "prom_status": prom_status,
+                "class_rank": class_rank,
+                "section_rank": section_rank,
+                "teacher_remarks": effective_teacher_remarks,
+                "report_card_type": "SINGLE_EXAM",
+                "calculation_method": "SINGLE_EXAM",
+                "examination_weightages": None
             }
 
-        overall_pct = round((total_obtained_marks / total_max_marks) * 100, 2) if total_max_marks > 0 else 0.0
+        # ==================================================
+        # Branch 2: Consolidated Academic-Year Validation
+        # ==================================================
+        candidate_exams = await self.get_reportable_examinations(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student.id,
+            academic_year_id=effective_ay_id,
+            class_id=student.class_id,
+            section_id=student.section_id,
+            as_of_date=datetime.now(timezone.utc).date()
+        )
+
+        # Filter to examinations that have schedules for this student's class and section
+        active_exams = []
+        exam_schedules: Dict[uuid.UUID, List[ExamSchedule]] = {}
+        for exam in candidate_exams:
+            stmt_sch = select(ExamSchedule).where(
+                ExamSchedule.exam_id == exam.id,
+                ExamSchedule.class_id == student.class_id,
+                ExamSchedule.section_id == student.section_id,
+                ExamSchedule.deleted_at.is_(None)
+            ).options(joinedload(ExamSchedule.subject))
+            res_sch = await self.report_repo.db.execute(stmt_sch)
+            schs = list(res_sch.scalars().all())
+            if not schs:
+                # Fallback to schedules configured for class regardless of section
+                stmt_sch_cls = select(ExamSchedule).where(
+                    ExamSchedule.exam_id == exam.id,
+                    ExamSchedule.class_id == student.class_id,
+                    ExamSchedule.deleted_at.is_(None)
+                ).options(joinedload(ExamSchedule.subject))
+                res_sch_cls = await self.report_repo.db.execute(stmt_sch_cls)
+                schs = list(res_sch_cls.scalars().all())
+            if schs:
+                active_exams.append(exam)
+                exam_schedules[exam.id] = schs
+
+        warnings = []
+        if not has_explicit_teacher_remarks:
+            warnings.append("Teacher remark not entered.")
+        if not active_exams:
+            warnings.append("No examination schedules configured for class and section.")
+
+        # Resolve weightages dynamically
+        weight_res = await self.resolve_examination_weightages(
+            tenant_id, school_id, effective_ay_id, active_exams
+        )
+        calc_method = weight_res["calculation_method"]
+        weightages = weight_res["weightages"]
+        normalized_weights = weight_res["normalized_weights"]
+
+        # Map of subject_id -> subject metadata and exam marks
+        subjects_map: Dict[uuid.UUID, Dict[str, Any]] = {}
+        all_schedule_ids = []
+
+        for exam in active_exams:
+            for sched in exam_schedules[exam.id]:
+                all_schedule_ids.append(sched.id)
+                sub_id = sched.subject_id
+                if sub_id not in subjects_map:
+                    subj_name = sched.subject.subject_name if sched.subject else "Subject"
+                    subj_code = sched.subject.subject_code if sched.subject else None
+                    subjects_map[sub_id] = {
+                        "subject_id": sub_id,
+                        "subject_name": subj_name,
+                        "subject_code": subj_code,
+                        "exam_data": {}
+                    }
+
+                stmt_m = select(Marks).where(
+                    Marks.exam_schedule_id == sched.id,
+                    Marks.student_id == student_id,
+                    Marks.deleted_at.is_(None)
+                )
+                res_m = await self.report_repo.db.execute(stmt_m)
+                mark = res_m.scalar_one_or_none()
+                subjects_map[sub_id]["exam_data"][exam.id] = {
+                    "schedule": sched,
+                    "mark": mark
+                }
+
+                if not mark or mark.marks_obtained is None:
+                    subj_display = subjects_map[sub_id]["subject_name"]
+                    warnings.append(f"{exam.exam_name}: {subj_display} marks not entered.")
+
+        consolidated_subject_marks = []
+        subject_marks_rows = []
+        failed_subjects_count = 0
+        total_obtained_marks = 0.0
+        total_max_marks = 0
+
+        # Per-exam totals for weighted calculation
+        exam_totals: Dict[uuid.UUID, Dict[str, float]] = {
+            e.id: {"obtained": 0.0, "max": 0.0} for e in active_exams
+        }
+
+        for sub_id, s_info in subjects_map.items():
+            sub_name = s_info["subject_name"]
+            sub_code = s_info["subject_code"]
+            sub_exams_dict = {}
+
+            sub_tot_obt = 0.0
+            sub_tot_max = 0
+            sub_weighted_pct_sum = 0.0
+            sub_weight_sum = 0.0
+
+            for exam in active_exams:
+                e_data = s_info["exam_data"].get(exam.id)
+                if not e_data:
+                    continue
+                sched = e_data["schedule"]
+                mark = e_data["mark"]
+                w = normalized_weights.get(str(exam.id), 0.0)
+
+                if mark and mark.marks_obtained is not None:
+                    obt = float(mark.marks_obtained)
+                    max_m = sched.max_marks
+                    sub_tot_obt += obt
+                    sub_tot_max += max_m
+                    exam_totals[exam.id]["obtained"] += obt
+                    exam_totals[exam.id]["max"] += max_m
+
+                    pct = (obt / max_m) * 100.0 if max_m > 0 else 0.0
+                    gr = get_grade_for_percentage(pct)
+                    st = mark.result_status.value if hasattr(mark.result_status, "value") else str(mark.result_status)
+
+                    sub_exams_dict[str(exam.id)] = {
+                        "exam_name": exam.exam_name,
+                        "marks_obtained": obt,
+                        "max_marks": max_m,
+                        "percentage": round(pct, 2),
+                        "grade": gr,
+                        "status": st
+                    }
+
+                    sub_weighted_pct_sum += pct * w
+                    sub_weight_sum += w
+                else:
+                    sub_exams_dict[str(exam.id)] = {
+                        "exam_name": exam.exam_name,
+                        "marks_obtained": None,
+                        "max_marks": sched.max_marks,
+                        "percentage": None,
+                        "grade": "N/A",
+                        "status": "ABSENT" if not mark else (mark.result_status.value if hasattr(mark.result_status, "value") else str(mark.result_status))
+                    }
+
+            # Calculate final consolidated subject score
+            if calc_method == "WEIGHTED_POLICY" and sub_weight_sum > 0:
+                final_sub_pct = round(sub_weighted_pct_sum / sub_weight_sum, 2)
+                ref_max = 100
+                final_sub_obt = round((final_sub_pct / 100.0) * ref_max, 2)
+            elif sub_tot_max > 0:
+                final_sub_pct = round((sub_tot_obt / sub_tot_max) * 100.0, 2)
+                ref_max = sub_tot_max
+                final_sub_obt = round(sub_tot_obt, 2)
+            else:
+                final_sub_pct = 0.0
+                ref_max = 100
+                final_sub_obt = 0.0
+
+            final_sub_grade = get_grade_for_percentage(final_sub_pct)
+            if final_sub_pct < 35.0:
+                failed_subjects_count += 1
+
+            total_obtained_marks += final_sub_obt
+            total_max_marks += ref_max
+
+            consolidated_subject_marks.append({
+                "subject_id": str(sub_id),
+                "subject_name": sub_name,
+                "subject_code": sub_code,
+                "exams": sub_exams_dict,
+                "consolidated_marks": final_sub_obt,
+                "consolidated_percentage": final_sub_pct,
+                "maximum_marks": ref_max,
+                "grade": final_sub_grade
+            })
+
+            subject_marks_rows.append(ReportCardSubjectMarkRow(
+                subject_id=sub_id,
+                subject_name=sub_name,
+                subject_code=sub_code,
+                maximum_marks=ref_max,
+                marks_obtained=final_sub_obt if len(warnings) == 0 else None,
+                result_status="PRESENT" if len(warnings) == 0 else "PENDING",
+                grade=final_sub_grade if len(warnings) == 0 else "N/A",
+                remarks=None
+            ))
+
+        if calc_method == "WEIGHTED_POLICY":
+            weighted_overall_sum = 0.0
+            active_w_sum = 0.0
+            for exam in active_exams:
+                e_id = exam.id
+                w = normalized_weights.get(str(e_id), 0.0)
+                e_obt = exam_totals[e_id]["obtained"]
+                e_max = exam_totals[e_id]["max"]
+                if e_max > 0:
+                    e_pct = (e_obt / e_max) * 100.0
+                    weighted_overall_sum += e_pct * w
+                    active_w_sum += w
+            overall_pct = round(weighted_overall_sum / active_w_sum, 2) if active_w_sum > 0 else 0.0
+        else:
+            grand_obt = sum(exam_totals[e.id]["obtained"] for e in active_exams)
+            grand_max = sum(exam_totals[e.id]["max"] for e in active_exams)
+            overall_pct = round((grand_obt / grand_max) * 100.0, 2) if grand_max > 0 else 0.0
+
         overall_grade = get_grade_for_percentage(overall_pct)
 
-        prom_status = "PROMOTED"
-        if attendance_pct < promotion_policy.get("min_attendance_pct", 75.0):
-            prom_status = "PROMOTION_UNDER_REVIEW"
-        elif overall_pct < promotion_policy.get("min_overall_pct", 35.0) or failed_subjects_count > 1:
-            prom_status = "DETAINED"
-        elif failed_subjects_count == 1:
-            prom_status = "CONDITIONALLY_PROMOTED"
+        section_rank = "Rank unavailable - result incomplete"
+        class_rank = "Rank unavailable - result incomplete"
 
-        is_valid = len(warnings) == 0
+        if not active_exams:
+            overall_pct = 0.0
+            overall_grade = "N/A"
+            prom_status = "NOT_CONFIGURED"
+            section_rank = "Rank unavailable - not configured"
+            class_rank = "Rank unavailable - not configured"
+        elif len(warnings) > 0:
+            prom_status = "PENDING_RESULTS"
+            section_rank = "Rank unavailable - result incomplete"
+            class_rank = "Rank unavailable - result incomplete"
+        else:
+            prom_status = "PROMOTED"
+            if attendance_pct < promotion_policy.get("min_attendance_pct", 75.0):
+                prom_status = "PROMOTION_UNDER_REVIEW"
+            elif overall_pct < promotion_policy.get("min_overall_pct", 35.0) or failed_subjects_count > 1:
+                prom_status = "DETAINED"
+            elif failed_subjects_count == 1:
+                prom_status = "CONDITIONALLY_PROMOTED"
+
+            # -------------------------------------------------------------
+            # Consolidated Ranking Calculation
+            # -------------------------------------------------------------
+            if len(all_schedule_ids) > 0:
+                # 1. Section Ranking
+                stmt_sec_st = select(Student.id).where(
+                    Student.section_id == student.section_id,
+                    Student.school_id == school_id,
+                    Student.tenant_id == tenant_id,
+                    Student.is_active == True,
+                    Student.deleted_at.is_(None)
+                )
+                res_sec_st = await self.report_repo.db.execute(stmt_sec_st)
+                sec_student_ids = [r[0] for r in res_sec_st.fetchall()]
+
+                stmt_m_bulk = select(
+                    Marks.student_id,
+                    Marks.exam_schedule_id,
+                    Marks.marks_obtained
+                ).where(
+                    Marks.exam_schedule_id.in_(all_schedule_ids),
+                    Marks.student_id.in_(sec_student_ids),
+                    Marks.deleted_at.is_(None),
+                    Marks.marks_obtained.isnot(None)
+                )
+                res_m_bulk = await self.report_repo.db.execute(stmt_m_bulk)
+                sec_marks_rows = res_m_bulk.fetchall()
+
+                sec_marks_map = {}
+                for s_id, sch_id, obt in sec_marks_rows:
+                    sec_marks_map[(s_id, sch_id)] = float(obt)
+
+                sch_max_map = {s.id: s.max_marks for exam in active_exams for s in exam_schedules[exam.id]}
+
+                sec_eligible_scores = {}
+                for s_id in sec_student_ids:
+                    if all((s_id, sch_id) in sec_marks_map for sch_id in all_schedule_ids):
+                        if calc_method == "WEIGHTED_POLICY":
+                            s_wt_sum = 0.0
+                            s_w_tot = 0.0
+                            for exam in active_exams:
+                                e_id = exam.id
+                                w = normalized_weights.get(str(e_id), 0.0)
+                                e_obt = sum(sec_marks_map[(s_id, s.id)] for s in exam_schedules[e_id])
+                                e_max = sum(sch_max_map[s.id] for s in exam_schedules[e_id])
+                                if e_max > 0:
+                                    s_wt_sum += (e_obt / e_max) * 100.0 * w
+                                    s_w_tot += w
+                            s_score = round(s_wt_sum / s_w_tot, 2) if s_w_tot > 0 else 0.0
+                        else:
+                            g_obt = sum(sec_marks_map[(s_id, sch_id)] for sch_id in all_schedule_ids)
+                            g_max = sum(sch_max_map[sch_id] for sch_id in all_schedule_ids)
+                            s_score = round((g_obt / g_max) * 100.0, 2) if g_max > 0 else 0.0
+                        sec_eligible_scores[s_id] = s_score
+
+                if student_id in sec_eligible_scores:
+                    my_sec_score = sec_eligible_scores[student_id]
+                    sec_pos = 1 + sum(1 for s_id, sc in sec_eligible_scores.items() if sc > my_sec_score)
+                    section_rank = f"Rank {sec_pos} of {len(sec_eligible_scores)}"
+                else:
+                    section_rank = "Rank unavailable - result incomplete"
+
+                # 2. Class Ranking
+                stmt_cls_st = select(Student.id, Student.section_id).where(
+                    Student.class_id == student.class_id,
+                    Student.school_id == school_id,
+                    Student.tenant_id == tenant_id,
+                    Student.is_active == True,
+                    Student.deleted_at.is_(None)
+                )
+                res_cls_st = await self.report_repo.db.execute(stmt_cls_st)
+                cls_students = res_cls_st.fetchall()
+                cls_student_ids = [r[0] for r in cls_students]
+
+                stmt_cls_sch = select(ExamSchedule).where(
+                    ExamSchedule.exam_id.in_([e.id for e in active_exams]),
+                    ExamSchedule.class_id == student.class_id,
+                    ExamSchedule.deleted_at.is_(None)
+                )
+                res_cls_sch = await self.report_repo.db.execute(stmt_cls_sch)
+                cls_all_schedules = list(res_cls_sch.scalars().all())
+                cls_sch_ids = [s.id for s in cls_all_schedules]
+
+                stmt_cls_m = select(
+                    Marks.student_id,
+                    Marks.exam_schedule_id,
+                    Marks.marks_obtained
+                ).where(
+                    Marks.exam_schedule_id.in_(cls_sch_ids),
+                    Marks.student_id.in_(cls_student_ids),
+                    Marks.deleted_at.is_(None),
+                    Marks.marks_obtained.isnot(None)
+                )
+                res_cls_m = await self.report_repo.db.execute(stmt_cls_m)
+                cls_marks_rows = res_cls_m.fetchall()
+
+                cls_marks_map = {}
+                for s_id, sch_id, obt in cls_marks_rows:
+                    cls_marks_map[(s_id, sch_id)] = float(obt)
+
+                cls_sch_max_map = {s.id: s.max_marks for s in cls_all_schedules}
+
+                cls_eligible_scores = {}
+                for s_id, s_sec_id in cls_students:
+                    expected_schs = [s for s in cls_all_schedules if s.section_id == s_sec_id or s.section_id is None]
+                    if expected_schs and all((s_id, sch.id) in cls_marks_map for sch in expected_schs):
+                        if calc_method == "WEIGHTED_POLICY":
+                            s_wt_sum = 0.0
+                            s_w_tot = 0.0
+                            for exam in active_exams:
+                                e_id = exam.id
+                                w = normalized_weights.get(str(e_id), 0.0)
+                                e_schs = [s for s in expected_schs if s.exam_id == e_id]
+                                if e_schs:
+                                    e_obt = sum(cls_marks_map[(s_id, s.id)] for s in e_schs)
+                                    e_max = sum(cls_sch_max_map[s.id] for s in e_schs)
+                                    if e_max > 0:
+                                        s_wt_sum += (e_obt / e_max) * 100.0 * w
+                                        s_w_tot += w
+                            s_score = round(s_wt_sum / s_w_tot, 2) if s_w_tot > 0 else 0.0
+                        else:
+                            g_obt = sum(cls_marks_map[(s_id, sch.id)] for sch in expected_schs)
+                            g_max = sum(cls_sch_max_map[sch.id] for sch in expected_schs)
+                            s_score = round((g_obt / g_max) * 100.0, 2) if g_max > 0 else 0.0
+                        cls_eligible_scores[s_id] = s_score
+
+                if student_id in cls_eligible_scores:
+                    my_cls_score = cls_eligible_scores[student_id]
+                    cls_pos = 1 + sum(1 for s_id, sc in cls_eligible_scores.items() if sc > my_cls_score)
+                    class_rank = f"Rank {cls_pos} of {len(cls_eligible_scores)}"
+                else:
+                    class_rank = "Rank unavailable - result incomplete"
+
+        exam_weightages_display = {
+            e.exam_name: weightages.get(str(e.id), 0.0) for e in active_exams
+        }
 
         return {
             "student": student,
             "db_rep": db_rep,
-            "is_valid": is_valid,
+            "is_valid": len(warnings) == 0,
             "missing_reasons": warnings,
             "subject_marks_rows": subject_marks_rows,
+            "consolidated_subject_marks": consolidated_subject_marks,
             "total_days": total_days,
             "present_days": present_days,
             "attendance_pct": attendance_pct,
             "overall_pct": overall_pct,
             "overall_grade": overall_grade,
+            "total_obtained": total_obtained_marks,
+            "total_max": total_max_marks,
             "prom_status": prom_status,
-            "teacher_remarks": teacher_remarks
+            "class_rank": class_rank,
+            "section_rank": section_rank,
+            "teacher_remarks": effective_teacher_remarks,
+            "report_card_type": report_card_type,
+            "calculation_method": calc_method,
+            "examination_weightages": exam_weightages_display
         }
 
     async def compile_live_data(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, student_id: uuid.UUID, teacher_remarks: Optional[str] = None, examination_id: Optional[uuid.UUID] = None
+        self,
+        tenant_id: uuid.UUID,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        teacher_remarks: Optional[str] = None,
+        examination_id: Optional[uuid.UUID] = None,
+        report_card_type: Optional[str] = "CONSOLIDATED"
     ) -> ReportCardPreviewResponse:
         val = await self.validate_report_card_data(
             tenant_id=tenant_id,
             school_id=school_id,
             student_id=student_id,
             examination_id=examination_id,
-            teacher_remarks=teacher_remarks
+            teacher_remarks=teacher_remarks,
+            report_card_type=report_card_type
         )
         student = val["student"]
         prom_status = val["prom_status"]
@@ -411,9 +1083,15 @@ class ReportCardService:
             overall_percentage=val["overall_pct"],
             overall_grade=val["overall_grade"],
             promotion_status=prom_status,
+            class_rank=val.get("class_rank"),
+            section_rank=val.get("section_rank"),
             subject_marks=val["subject_marks_rows"],
+            consolidated_subject_marks=val.get("consolidated_subject_marks"),
+            report_card_type=val.get("report_card_type"),
+            calculation_method=val.get("calculation_method"),
+            examination_weightages=val.get("examination_weightages"),
             teacher_remarks=val["teacher_remarks"],
-            principal_remarks="Approved for promotion." if prom_status == "PROMOTED" else "Promotion under principal review.",
+            principal_remarks="Approved for promotion." if prom_status == "PROMOTED" else ("Promotion under principal review." if prom_status not in ["NOT_CONFIGURED", "PENDING_RESULTS"] else "Pending examination completion."),
             ai_narrative="This section will be available after AI analysis.",
             is_valid=val["is_valid"],
             missing_reasons=val["missing_reasons"]
@@ -424,8 +1102,9 @@ class ReportCardService:
     ) -> ReportCardPublication:
         # 1. Compile live validation check
         effective_remarks = obj_in.teacher_remarks or "Good academic progress and conduct."
+        rep_type = obj_in.report_card_type or "CONSOLIDATED"
         preview = await self.compile_live_data(
-            tenant_id, school_id, obj_in.student_id, effective_remarks, obj_in.examination_id
+            tenant_id, school_id, obj_in.student_id, effective_remarks, obj_in.examination_id, report_card_type=rep_type
         )
         if not preview.is_valid:
             raise HTTPException(
@@ -481,8 +1160,16 @@ class ReportCardService:
             db_rep.settings = dict(obj_in.settings or {})
             if obj_in.examination_id:
                 db_rep.settings["examination_id"] = str(obj_in.examination_id)
-            if obj_in.teacher_remarks:
-                db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks
+            db_rep.settings["report_card_type"] = preview.report_card_type
+            db_rep.settings["calculation_method"] = preview.calculation_method
+            db_rep.settings["examination_weightages"] = preview.examination_weightages
+            db_rep.settings["consolidated_subject_marks"] = preview.consolidated_subject_marks
+            db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks or effective_remarks
+            db_rep.settings["class_rank"] = preview.class_rank
+            db_rep.settings["section_rank"] = preview.section_rank
+            db_rep.settings["overall_percentage"] = preview.overall_percentage
+            db_rep.settings["overall_grade"] = preview.overall_grade
+            db_rep.settings["promotion_status"] = preview.promotion_status
         else:
             db_rep = ReportCardPublication(
                 tenant_id=tenant_id,
@@ -497,8 +1184,18 @@ class ReportCardService:
             )
             if obj_in.examination_id:
                 db_rep.settings["examination_id"] = str(obj_in.examination_id)
-            if obj_in.teacher_remarks:
-                db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks
+            db_rep.settings["report_card_type"] = preview.report_card_type
+            db_rep.settings["calculation_method"] = preview.calculation_method
+            db_rep.settings["examination_weightages"] = preview.examination_weightages
+            db_rep.settings["consolidated_subject_marks"] = preview.consolidated_subject_marks
+            db_rep.settings["teacher_remarks"] = obj_in.teacher_remarks or effective_remarks
+            db_rep.settings["class_rank"] = preview.class_rank
+            db_rep.settings["section_rank"] = preview.section_rank
+            db_rep.settings["overall_percentage"] = preview.overall_percentage
+            db_rep.settings["overall_grade"] = preview.overall_grade
+            db_rep.settings["promotion_status"] = preview.promotion_status
+
+        db_rep.settings = json.loads(json.dumps(db_rep.settings, default=str))
 
         # 3. Generate Printable PDF Report File
         # Compile PDF contents using ReportLab
@@ -546,6 +1243,7 @@ class ReportCardService:
                     school_id=school_id,
                     examination_id=obj_in.examination_id,
                     academic_year_id=obj_in.academic_year_id or st.academic_year_id,
+                    report_card_type=obj_in.report_card_type or "CONSOLIDATED",
                     settings=obj_in.settings,
                     teacher_remarks="Good academic progress and conduct."
                 )
@@ -682,12 +1380,12 @@ class ReportCardService:
                 success_count += 1
                 continue
 
-            if db_rep.status != ReportCardStatus.APPROVED:
+            if db_rep.status not in [ReportCardStatus.APPROVED, ReportCardStatus.UNDER_REVIEW, ReportCardStatus.DRAFT]:
                 failed_count += 1
                 failures.append(StudentFailureDetail(
                     student_id=db_rep.student_id,
                     student_name=student_name,
-                    reasons=[f"Report card must be in APPROVED status to publish (currently {db_rep.status.value})."]
+                    reasons=[f"Report card is in {db_rep.status.value} status and cannot be published."]
                 ))
                 continue
 
@@ -715,6 +1413,37 @@ class ReportCardService:
                     reasons=val["missing_reasons"]
                 ))
                 continue
+
+            if db_rep.status != ReportCardStatus.APPROVED:
+                db_rep.approved_by = current_user.id
+                db_rep.approved_at = now
+
+            if not db_rep.settings or not isinstance(db_rep.settings, dict):
+                db_rep.settings = {}
+            else:
+                db_rep.settings = dict(db_rep.settings)
+
+            raw_snapshot = {
+                "overall_percentage": val["overall_pct"],
+                "overall_grade": val["overall_grade"],
+                "promotion_status": val["prom_status"],
+                "attendance_total": val["total_days"],
+                "attendance_present": val["present_days"],
+                "attendance_percentage": val["attendance_pct"],
+                "class_rank": val["class_rank"],
+                "section_rank": val["section_rank"],
+                "teacher_remarks": val["teacher_remarks"],
+                "calculation_method": val.get("calculation_method"),
+                "examination_weightages": val.get("examination_weightages"),
+                "consolidated_subject_marks": val.get("consolidated_subject_marks"),
+                "subject_marks_rows": [
+                    row.model_dump() if hasattr(row, "model_dump") else (row.dict() if hasattr(row, "dict") else dict(row))
+                    for row in val.get("subject_marks_rows", [])
+                ],
+                "published_at": now.isoformat()
+            }
+            db_rep.settings["snapshot"] = json.loads(json.dumps(raw_snapshot, default=str))
+            db_rep.settings = json.loads(json.dumps(db_rep.settings, default=str))
 
             db_rep.status = ReportCardStatus.PUBLISHED
             db_rep.published_by = current_user.id
@@ -796,30 +1525,137 @@ class ReportCardService:
         await self.report_repo.db.commit()
         return await self.report_repo.get_by_id(id, school_id, tenant_id)
 
+    async def reject_report_card(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, id: uuid.UUID, obj_in: ReportCardRejectRequest, current_user: User
+    ) -> ReportCardPublication:
+        db_rep = await self.report_repo.get_by_id(id, school_id, tenant_id)
+        if not db_rep:
+            raise HTTPException(status_code=404, detail="Report card publication not found.")
+
+        if db_rep.status not in [ReportCardStatus.UNDER_REVIEW, ReportCardStatus.APPROVED]:
+            raise HTTPException(status_code=422, detail=f"Report card in status {db_rep.status.value} cannot be rejected.")
+
+        db_rep.status = ReportCardStatus.DRAFT
+        db_rep.updated_by = current_user.id
+        now = datetime.now(timezone.utc)
+        if not db_rep.settings or not isinstance(db_rep.settings, dict):
+            db_rep.settings = {}
+        db_rep.settings = dict(db_rep.settings)
+        db_rep.settings["rejection_reason"] = obj_in.rejection_reason
+        db_rep.settings["rejected_by"] = str(current_user.id)
+        db_rep.settings["rejected_at"] = now.isoformat()
+
+        self.report_repo.db.add(db_rep)
+        await self.report_repo.db.commit()
+        return await self.report_repo.get_by_id(id, school_id, tenant_id)
+
+    async def unpublish_report_card(
+        self, tenant_id: uuid.UUID, school_id: uuid.UUID, id: uuid.UUID, obj_in: ReportCardUnpublishRequest, current_user: User
+    ) -> ReportCardPublication:
+        db_rep = await self.report_repo.get_by_id(id, school_id, tenant_id)
+        if not db_rep:
+            raise HTTPException(status_code=404, detail="Report card publication not found.")
+
+        if db_rep.status != ReportCardStatus.PUBLISHED:
+            raise HTTPException(status_code=422, detail="Report card must be in PUBLISHED status to unpublish.")
+
+        db_rep.status = ReportCardStatus.DRAFT
+        db_rep.updated_by = current_user.id
+        now = datetime.now(timezone.utc)
+        if not db_rep.settings or not isinstance(db_rep.settings, dict):
+            db_rep.settings = {}
+        db_rep.settings = dict(db_rep.settings)
+        db_rep.settings["unpublish_reason"] = obj_in.reason or "Reopened for correction"
+        db_rep.settings["unpublished_by"] = str(current_user.id)
+        db_rep.settings["unpublished_at"] = now.isoformat()
+
+        self.report_repo.db.add(db_rep)
+        await self.report_repo.db.commit()
+        return await self.report_repo.get_by_id(id, school_id, tenant_id)
+
     async def publish_report_cards(
         self, tenant_id: uuid.UUID, school_id: uuid.UUID, class_id: uuid.UUID, section_id: uuid.UUID, current_user: User
     ) -> List[ReportCardPublication]:
-        # Fetch approved report cards for class
+        # Fetch report cards for class eligible to publish
         stmt = select(ReportCardPublication).join(ReportCardPublication.student).where(
             Student.class_id == class_id,
             Student.section_id == section_id,
-            ReportCardPublication.status == ReportCardStatus.APPROVED,
+            ReportCardPublication.status.in_([
+                ReportCardStatus.APPROVED,
+                ReportCardStatus.UNDER_REVIEW,
+                ReportCardStatus.DRAFT
+            ]),
             ReportCardPublication.school_id == school_id,
             ReportCardPublication.tenant_id == tenant_id,
             ReportCardPublication.deleted_at.is_(None)
         )
         res = await self.report_repo.db.execute(stmt)
-        pubs = list(res.scalars().all())
+        candidate_pubs = list(res.scalars().all())
 
-        if not pubs:
-            raise HTTPException(status_code=422, detail="No approved report cards found to publish.")
+        if not candidate_pubs:
+            raise HTTPException(status_code=422, detail="No report cards found eligible to publish.")
 
-        for p in pubs:
+        now = datetime.now(timezone.utc)
+        pubs = []
+        for p in candidate_pubs:
+            exam_id_ctx = None
+            if p.settings and p.settings.get("examination_id"):
+                try:
+                    exam_id_ctx = uuid.UUID(str(p.settings["examination_id"]))
+                except Exception:
+                    exam_id_ctx = None
+
+            val = await self.validate_report_card_data(
+                tenant_id=tenant_id,
+                school_id=school_id,
+                student_id=p.student_id,
+                academic_year_id=p.academic_year_id,
+                examination_id=exam_id_ctx,
+                teacher_remarks=(p.settings or {}).get("teacher_remarks")
+            )
+            if not val["is_valid"]:
+                continue
+
+            if p.status != ReportCardStatus.APPROVED:
+                p.approved_by = current_user.id
+                p.approved_at = now
+
+            if not p.settings or not isinstance(p.settings, dict):
+                p.settings = {}
+            else:
+                p.settings = dict(p.settings)
+
+            raw_snapshot = {
+                "overall_percentage": val["overall_pct"],
+                "overall_grade": val["overall_grade"],
+                "promotion_status": val["prom_status"],
+                "attendance_total": val["total_days"],
+                "attendance_present": val["present_days"],
+                "attendance_percentage": val["attendance_pct"],
+                "class_rank": val["class_rank"],
+                "section_rank": val["section_rank"],
+                "teacher_remarks": val["teacher_remarks"],
+                "calculation_method": val.get("calculation_method"),
+                "examination_weightages": val.get("examination_weightages"),
+                "consolidated_subject_marks": val.get("consolidated_subject_marks"),
+                "subject_marks_rows": [
+                    row.model_dump() if hasattr(row, "model_dump") else (row.dict() if hasattr(row, "dict") else dict(row))
+                    for row in val.get("subject_marks_rows", [])
+                ],
+                "published_at": now.isoformat()
+            }
+            p.settings["snapshot"] = json.loads(json.dumps(raw_snapshot, default=str))
+            p.settings = json.loads(json.dumps(p.settings, default=str))
+
             p.status = ReportCardStatus.PUBLISHED
             p.published_by = current_user.id
-            p.published_at = datetime.now(timezone.utc)
+            p.published_at = now
             p.updated_by = current_user.id
             self.report_repo.db.add(p)
+            pubs.append(p)
+
+        if not pubs:
+            raise HTTPException(status_code=422, detail="No complete report cards could be published. Please ensure marks and attendance are entered.")
 
         await self.report_repo.db.commit()
 
@@ -911,19 +1747,16 @@ class ReportCardService:
         if not student or not student.is_active:
             raise HTTPException(status_code=404, detail="Active student details not found.")
 
-        # 2. Fetch all examinations for this academic year
-        from app.models.examination import Examination
-        stmt_exams = select(Examination).where(
-            Examination.academic_year_id == student.academic_year_id,
-            Examination.school_id == school_id,
-            Examination.tenant_id == tenant_id,
-            Examination.deleted_at.is_(None)
+        # 2. Fetch all reportable examinations for this academic year
+        examinations = await self.get_reportable_examinations(
+            tenant_id=tenant_id,
+            school_id=school_id,
+            student_id=student.id,
+            academic_year_id=student.academic_year_id,
+            class_id=student.class_id,
+            section_id=student.section_id,
+            as_of_date=datetime.now(timezone.utc).date()
         )
-        res_exams = await self.report_repo.db.execute(stmt_exams)
-        examinations = list(res_exams.scalars().all())
-
-        # Sort examinations chronologically by their start date
-        examinations.sort(key=lambda x: x.start_date)
 
         # 3. For each examination, fetch the exam schedules and corresponding student marks
         exam_summaries = []
@@ -959,7 +1792,7 @@ class ReportCardService:
                 joinedload(ExamSchedule.subject)
             )
             res_sch = await self.report_repo.db.execute(stmt_sch)
-            schedules = list(res_sch.scalars().all())
+            schedules = list(res_sch.unique().scalars().all())
             
             if not schedules:
                 continue
@@ -969,33 +1802,47 @@ class ReportCardService:
             total_obtained_marks = 0.0
             
             for sched in schedules:
-                # Query published mark
+                # Query entered mark
                 stmt_m = select(Marks).where(
                     Marks.exam_schedule_id == sched.id,
                     Marks.student_id == student_id,
-                    Marks.status == "PUBLISHED",
                     Marks.deleted_at.is_(None)
                 )
                 res_m = await self.report_repo.db.execute(stmt_m)
                 mark = res_m.scalar_one_or_none()
                 
-                subj_name = f"Subject {sched.subject_id}"
+                subj_name = None
+                subj_code = None
                 if sched.subject:
                     subj_name = sched.subject.subject_name
+                    subj_code = sched.subject.subject_code
+                if not subj_name:
+                    from app.models.subject import Subject
+                    res_sub = await self.report_repo.db.execute(
+                        select(Subject).where(Subject.id == sched.subject_id, Subject.deleted_at.is_(None))
+                    )
+                    db_sub = res_sub.scalar_one_or_none()
+                    if db_sub:
+                        subj_name = db_sub.subject_name
+                        subj_code = db_sub.subject_code
+                if not subj_name:
+                    subj_name = subj_code if subj_code else "Subject"
 
                 obtained = float(mark.marks_obtained) if (mark and mark.marks_obtained is not None) else None
                 max_m = sched.max_marks
                 total_max_marks += max_m
 
-                status = mark.result_status.value if mark else "ABSENT"
+                status = mark.result_status.value if (mark and hasattr(mark.result_status, "value")) else (str(mark.result_status) if (mark and mark.result_status) else ("PRESENT" if (mark and mark.marks_obtained is not None) else "ABSENT"))
                 grade = "F"
-                if status in ["PRESENT", "EXEMPTED"] and obtained is not None:
+                if (status in ["PRESENT", "EXEMPTED"] or (mark and mark.marks_obtained is not None)) and obtained is not None:
                     total_obtained_marks += obtained
-                    paper_pct = (obtained / max_m) * 100
+                    paper_pct = (obtained / max_m) * 100 if max_m > 0 else 0.0
                     grade = get_grade_for_percentage(paper_pct)
 
                 subject_marks.append(ExamSubjectMark(
+                    subject_id=sched.subject_id,
                     subject_name=subj_name,
+                    subject_code=subj_code,
                     max_marks=max_m,
                     marks_obtained=obtained,
                     grade=grade,
@@ -1026,11 +1873,46 @@ class ReportCardService:
         )
 
     async def generate_professional_report_card_pdf(
-        self, tenant_id: uuid.UUID, school_id: uuid.UUID, student_id: uuid.UUID, preview: ReportCardPreviewResponse, history: StudentAcademicHistoryResponse, db_rep: ReportCardPublication
+        self,
+        tenant_id: Union[uuid.UUID, ReportCardPublication],
+        school_id: Optional[uuid.UUID] = None,
+        student_id: Optional[uuid.UUID] = None,
+        preview: Optional[ReportCardPreviewResponse] = None,
+        history: Optional[StudentAcademicHistoryResponse] = None,
+        db_rep: Optional[ReportCardPublication] = None
     ) -> bytes:
+        if isinstance(tenant_id, ReportCardPublication):
+            db_rep = tenant_id
+            effective_tenant_id = db_rep.tenant_id
+            effective_school_id = db_rep.school_id
+            effective_student_id = db_rep.student_id
+        else:
+            effective_tenant_id = tenant_id
+            effective_school_id = school_id
+            effective_student_id = student_id
+
+        if preview is None and db_rep is not None:
+            r_type = db_rep.settings.get("report_card_type", "CONSOLIDATED") if db_rep.settings else "CONSOLIDATED"
+            exam_id = None
+            if db_rep.settings and db_rep.settings.get("examination_id"):
+                try:
+                    exam_id = uuid.UUID(str(db_rep.settings["examination_id"]))
+                except Exception:
+                    exam_id = None
+            preview = await self.compile_live_data(
+                tenant_id=effective_tenant_id,
+                school_id=effective_school_id,
+                student_id=effective_student_id,
+                report_card_type=r_type,
+                examination_id=exam_id
+            )
+
+        if history is None:
+            history = await self.get_student_academic_history(effective_tenant_id, effective_school_id, effective_student_id)
+
         # Load student & school
-        student = await self.student_repo.get_by_id(student_id, school_id, tenant_id)
-        school = await self.school_repo.get_by_id(school_id, tenant_id)
+        student = await self.student_repo.get_by_id(effective_student_id, effective_school_id, effective_tenant_id)
+        school = await self.school_repo.get_by_id(effective_school_id, effective_tenant_id)
         
         report_card_settings = school.settings.get("report_card_settings", {}) if school and school.settings else {}
         report_card_title = report_card_settings.get("title", "EduPulse Report Card")
@@ -1168,32 +2050,113 @@ class ReportCardService:
         
         # 1. School Branding Header
         logo_flowable = None
+        logo_bytes = None
+
+        candidate_sources = []
+        if school and school.settings and isinstance(school.settings, dict):
+            branding = school.settings.get("branding", {})
+            if isinstance(branding, dict):
+                if branding.get("logo_data"):
+                    candidate_sources.append(branding["logo_data"])
+                if branding.get("logo_base64"):
+                    candidate_sources.append(branding["logo_base64"])
+                if branding.get("logo_storage_key"):
+                    candidate_sources.append(branding["logo_storage_key"])
+                if branding.get("logo_url"):
+                    candidate_sources.append(branding["logo_url"])
+
         if school and school.logo_url:
-            if school.logo_url.startswith("http"):
-                try:
+            candidate_sources.append(school.logo_url)
+
+        try:
+            from app.models.school_administration import SchoolProfile
+            stmt_prof = select(SchoolProfile).where(
+                SchoolProfile.school_id == effective_school_id,
+                SchoolProfile.tenant_id == effective_tenant_id,
+                SchoolProfile.deleted_at.is_(None)
+            )
+            prof_res = await self.report_repo.db.execute(stmt_prof)
+            school_prof = prof_res.scalars().first()
+            if school_prof:
+                if getattr(school_prof, "school_photo_url", None):
+                    candidate_sources.append(school_prof.school_photo_url)
+                if getattr(school_prof, "logo_url", None):
+                    candidate_sources.append(school_prof.logo_url)
+        except Exception as e:
+            logger.debug(f"Could not check SchoolProfile for branding: {e}")
+
+        for src in candidate_sources:
+            if not src or not isinstance(src, str):
+                continue
+            src = src.strip()
+            if not src:
+                continue
+
+            try:
+                # Case A: Base64 Data URI
+                if src.startswith("data:image"):
+                    import base64
+                    _, b64_data = src.split(",", 1)
+                    logo_bytes = base64.b64decode(b64_data)
+                    if logo_bytes and len(logo_bytes) > 10:
+                        break
+                # Case B: Raw base64 string
+                elif len(src) > 100 and not src.startswith("http") and not src.startswith("/") and not src.startswith("storage/"):
+                    try:
+                        import base64
+                        raw_decoded = base64.b64decode(src)
+                        if raw_decoded.startswith(b"\x89PNG") or raw_decoded.startswith(b"\xff\xd8") or raw_decoded.startswith(b"GIF"):
+                            logo_bytes = raw_decoded
+                            break
+                    except Exception:
+                        pass
+
+                # Case C: HTTP / HTTPS URL
+                if not logo_bytes and (src.startswith("http://") or src.startswith("https://")):
                     import httpx
-                    resp = httpx.get(school.logo_url, timeout=1.0)
-                    if resp.status_code == 200:
-                        logo_flowable = Image(io.BytesIO(resp.content), width=50, height=50)
-                except Exception as e:
-                    logger.warning(f"Could not load school logo from URL {school.logo_url}: {e}")
-            elif os.path.exists(school.logo_url):
-                try:
-                    logo_flowable = Image(school.logo_url, width=50, height=50)
-                except Exception as e:
-                    logger.warning(f"Could not load school logo from path {school.logo_url}: {e}")
-            else:
-                try:
-                    import asyncio
-                    # Try downloading from storage_service
-                    logo_bytes = asyncio.run(self.storage_service.download(school.logo_url)) if asyncio.get_event_loop().is_running() is False else None
-                    if not logo_bytes:
-                        # If inside running loop
-                        logo_bytes = self.storage_service.download_sync(school.logo_url) if hasattr(self.storage_service, 'download_sync') else None
-                    if logo_bytes:
-                        logo_flowable = Image(io.BytesIO(logo_bytes), width=50, height=50)
-                except Exception as e:
-                    logger.debug(f"Could not load school logo from storage {school.logo_url}: {e}")
+                    async with httpx.AsyncClient(timeout=3.0) as client:
+                        resp = await client.get(src)
+                        if resp.status_code == 200 and len(resp.content) > 10:
+                            logo_bytes = resp.content
+                            break
+
+                # Case D: Local file path
+                if not logo_bytes and (os.path.isfile(src) or os.path.exists(src)):
+                    with open(src, "rb") as f:
+                        logo_bytes = f.read()
+                        if len(logo_bytes) > 10:
+                            break
+
+                # Case E: Storage key (GCS / Local storage service)
+                if not logo_bytes and hasattr(self, "storage_service") and self.storage_service:
+                    try:
+                        downloaded = await self.storage_service.download(src)
+                        if downloaded and len(downloaded) > 10:
+                            logo_bytes = downloaded
+                            break
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Failed to load candidate school logo from {src[:50]}: {e}")
+
+        if logo_bytes:
+            try:
+                from PIL import Image as PILImage
+                im = PILImage.open(io.BytesIO(logo_bytes))
+                orig_w, orig_h = im.size
+                if orig_h > 0 and orig_w > 0:
+                    aspect = orig_w / orig_h
+                    max_w, max_h = 55.0, 50.0
+                    if aspect >= 1:
+                        w = min(max_w, max_h * aspect)
+                        h = w / aspect
+                    else:
+                        h = min(max_h, max_w / aspect)
+                        w = h * aspect
+                    logo_flowable = Image(io.BytesIO(logo_bytes), width=w, height=h)
+            except Exception as e:
+                logger.warning(f"Error processing school logo dimensions for ReportLab PDF: {e}")
+                logo_flowable = None
                     
         if not logo_flowable:
             initials = "".join([w[0] for w in school.name.split() if w])[:3].upper() if school and school.name else "EP"
@@ -1324,6 +2287,10 @@ class ReportCardService:
                 Paragraph("<b>Father/Guardian:</b>", body_style), Paragraph(father_name, body_style)
             ],
             [
+                Paragraph("<b>Class Rank:</b>", body_style), Paragraph(preview.class_rank or "N/A", body_style),
+                Paragraph("<b>Section Rank:</b>", body_style), Paragraph(preview.section_rank or "N/A", body_style)
+            ],
+            [
                 Paragraph("<b>Class Teacher:</b>", body_style), Paragraph(class_teacher_name, body_style),
                 Paragraph("<b>Blood Group:</b>", body_style), Paragraph(student.blood_group or "N/A", body_style)
             ]
@@ -1341,7 +2308,7 @@ class ReportCardService:
             detail_table = Table(student_details_data, colWidths=[80, 135, 90, 135])
             detail_table.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('PADDING', (0,0), (-1,-1), 4),
+                ('PADDING', (0,0), (-1,-1), 3),
                 ('LINEBELOW', (0,0), (-1,-1), 0.25, colors.HexColor("#E2E8F0")),
             ]))
             
@@ -1355,7 +2322,7 @@ class ReportCardService:
             detail_table = Table(student_details_data, colWidths=[90, 167, 90, 168])
             detail_table.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('PADDING', (0,0), (-1,-1), 4),
+                ('PADDING', (0,0), (-1,-1), 3),
                 ('LINEBELOW', (0,0), (-1,-1), 0.25, colors.HexColor("#E2E8F0")),
             ]))
             student_card_table = detail_table
@@ -1364,7 +2331,7 @@ class ReportCardService:
         student_info_card.setStyle(TableStyle([
             ('BOX', (0,0), (-1,-1), 1, navy_primary),
             ('BACKGROUND', (0,0), (-1,-1), light_grey),
-            ('PADDING', (0,0), (-1,-1), 8),
+            ('PADDING', (0,0), (-1,-1), 6),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         story.append(student_info_card)
@@ -1451,21 +2418,8 @@ class ReportCardService:
         story.append(snapshot_table)
         story.append(Spacer(1, 10))
         
-        # 4. Academic Performance Table
+        # 4. Academic Performance Presentation: Dual-Section vs Single Exam
         exams_in_order = history.examinations
-        subjects_set = {}
-        for exam in exams_in_order:
-            for sub_mark in exam.subject_marks:
-                subjects_set[sub_mark.subject_name] = True
-        subjects_list = sorted(list(subjects_set.keys()))
-        
-        table_headers = [Paragraph("<b>Subject</b>", table_header_style)]
-        for exam in exams_in_order:
-            table_headers.append(Paragraph(f"<b>{exam.examination_name}</b>", table_header_style))
-        table_headers.append(Paragraph("<b>Overall Avg</b>", table_header_style))
-        table_headers.append(Paragraph("<b>Grade</b>", table_header_style))
-        
-        performance_rows = [table_headers]
         
         # School grading policy loader
         grade_policy = school.settings.get("grade_policy") if school else None
@@ -1486,73 +2440,11 @@ class ReportCardService:
                     return g["grade"]
             return "F"
 
-        for sub_name in subjects_list:
-            row = [Paragraph(sub_name, table_cell_left)]
-            sub_total_obtained = 0.0
-            sub_total_max = 0
-            
-            for exam in exams_in_order:
-                sub_mark = next((sm for sm in exam.subject_marks if sm.subject_name == sub_name), None)
-                if sub_mark and sub_mark.status == "PRESENT" and sub_mark.marks_obtained is not None:
-                    obtained_val = sub_mark.marks_obtained
-                    row.append(Paragraph(f"{obtained_val} ({sub_mark.grade})", table_cell_style))
-                    sub_total_obtained += obtained_val
-                    sub_total_max += sub_mark.max_marks
-                elif sub_mark and sub_mark.status == "ABSENT":
-                    row.append(Paragraph("ABS", table_cell_style))
-                else:
-                    row.append(Paragraph("-", table_cell_style))
-                    
-            if sub_total_max > 0:
-                avg_pct = round((sub_total_obtained / sub_total_max) * 100, 2)
-                overall_grade = get_grade_for_percentage(avg_pct)
-                row.append(Paragraph(f"{avg_pct}%", table_cell_style))
-                row.append(Paragraph(overall_grade, table_cell_style))
-            else:
-                row.append(Paragraph("-", table_cell_style))
-                row.append(Paragraph("-", table_cell_style))
-                
-            performance_rows.append(row)
-            
-        # Add authoritative overall totals row
-        total_row = [Paragraph("<b>TOTAL</b>", table_cell_left)]
-        for exam in exams_in_order:
-            total_row.append(Paragraph(f"<b>{exam.total_obtained_marks} / {exam.total_max_marks}</b>", table_cell_bold))
-        total_row.append(Paragraph(f"<b>{preview.overall_percentage}%</b>", table_cell_bold))
-        total_row.append(Paragraph(f"<b>{preview.overall_grade}</b>", table_cell_bold))
-        performance_rows.append(total_row)
-        
-        # Compute exact widths dynamically
-        num_exams = len(exams_in_order)
-        sub_width = 115
-        rem_width = 515 - sub_width
-        col_width_each = rem_width / (num_exams + 2)
-        
-        perf_table = Table(performance_rows, colWidths=[sub_width] + [col_width_each] * (num_exams + 2))
-        
-        t_style = [
-            ('BACKGROUND', (0,0), (-1,0), navy_primary),
-            ('GRID', (0,0), (-1,-1), 0.5, border_grey),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('PADDING', (0,0), (-1,-1), 4),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
-            ('LINEABOVE', (0, -1), (-1, -1), 1.5, gold_accent),
-        ]
-        
-        for i in range(1, len(performance_rows) - 1):
-            bg = colors.HexColor("#F8FAFC") if i % 2 == 1 else colors.white
-            t_style.append(('BACKGROUND', (0, i), (-1, i), bg))
-            
-        perf_table.setStyle(TableStyle(t_style))
-        story.append(Paragraph("ACADEMIC PERFORMANCE MATRIX", section_title_style))
-        story.append(perf_table)
-        story.append(Spacer(1, 10))
-        
-        # 5. Side-by-side Grading Scale and Detailed Attendance Record (grouped together)
-        secondary_group = []
-        
-        # Grade Scale table
+        is_consolidated = (preview.report_card_type == "CONSOLIDATED" or (preview.report_card_type != "SINGLE_EXAM" and len(exams_in_order) > 1))
+
+        # -------------------------------------------------------------
+        # Reusable Section 1 Elements: Grading Scale & Attendance Table
+        # -------------------------------------------------------------
         grade_headers = [
             Paragraph("<b>Range</b>", table_header_style),
             Paragraph("<b>Grade</b>", table_header_style)
@@ -1580,7 +2472,6 @@ class ReportCardService:
             for i in range(1, len(grade_scale_rows))
         ]))
 
-        # Attendance Record details
         attendance_detail_rows = [
             [Paragraph("<b>Attendance Metric</b>", table_header_style), Paragraph("<b>Value</b>", table_header_style)],
             [Paragraph("Total Working Days", table_cell_left), Paragraph(str(preview.attendance_total), table_cell_style)],
@@ -1606,49 +2497,9 @@ class ReportCardService:
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('PADDING', (0,0), (-1,-1), 0),
         ]))
-        
-        secondary_group.append(Paragraph("GRADING SCALE & ATTENDANCE SUMMARY", section_title_style))
-        secondary_group.append(side_by_side_table)
-        secondary_group.append(Spacer(1, 10))
-        
-        # 6. Academic Performance Trend Visualization
-        trend_table_data = []
-        trend_widths = []
-        if num_exams > 0:
-            # Display up to latest 5 examinations to ensure clean layout without table overflow
-            recent_exams = exams_in_order[-5:]
-            recent_num = len(recent_exams)
-            card_w = max(50.0, min(85.0, (515.0 - (recent_num - 1) * 15.0) / recent_num))
-            arrow_w = 15.0
-            for i, exam in enumerate(recent_exams):
-                trend_table_data.append(
-                    Paragraph(
-                        f"<b>{exam.examination_name}</b><br/><font size=11 color='{navy_primary.hexval()}'><b>{exam.percentage}%</b></font>",
-                        ParagraphStyle('TrendVal', parent=body_style, alignment=TA_CENTER)
-                    )
-                )
-                trend_widths.append(card_w)
-                if i < len(recent_exams) - 1:
-                    trend_table_data.append(
-                        Paragraph("<font size=14 color='#A0AEC0'>→</font>", ParagraphStyle('Arrow', parent=body_style, alignment=TA_CENTER))
-                    )
-                    trend_widths.append(arrow_w)
-            
-            trend_table = Table([trend_table_data], colWidths=trend_widths)
-            trend_table.setStyle(TableStyle([
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
-                ('BOX', (0,0), (-1,-1), 1, border_grey),
-                ('PADDING', (0,0), (-1,-1), 6),
-            ]))
-            secondary_group.append(Paragraph("ACADEMIC PERFORMANCE TREND", section_title_style))
-            secondary_group.append(trend_table)
-            secondary_group.append(Spacer(1, 10))
-            
-        story.append(KeepTogether(secondary_group))
 
-        # 7. AI Predictive Insights Section
+        # Reusable AI Insights Element
+        ai_card_table = None
         if show_ai_insights:
             ai_risk = "LOW"
             ai_trend = "STABLE"
@@ -1666,11 +2517,11 @@ class ReportCardService:
                     ai_trend = ai_data.get("overall_trend", "STABLE")
                     ai_narrative = ai_data.get("ai_narrative", ai_narrative)
                     
-            risk_color = colors.HexColor("#10B981") # Green
+            risk_color = colors.HexColor("#10B981")
             if ai_risk.upper() == "HIGH":
-                risk_color = colors.HexColor("#EF4444") # Red
+                risk_color = colors.HexColor("#EF4444")
             elif ai_risk.upper() == "MEDIUM":
-                risk_color = colors.HexColor("#F59E0B") # Amber
+                risk_color = colors.HexColor("#F59E0B")
                 
             ai_card_data = [
                 [
@@ -1685,11 +2536,8 @@ class ReportCardService:
                 ('PADDING', (0,0), (-1,-1), 8),
                 ('VALIGN', (0,0), (-1,-1), 'TOP'),
             ]))
-            story.append(Paragraph("AI ACADEMIC INSIGHTS", section_title_style))
-            story.append(ai_card_table)
-            story.append(Spacer(1, 10))
 
-        # 8. Remarks & Signatures & Verification (Grouped together at bottom)
+        # Reusable Remarks & Signatures Footer Group
         footer_group = []
         remarks_data = []
         if show_remarks:
@@ -1717,9 +2565,8 @@ class ReportCardService:
             ]))
             footer_group.append(Paragraph("SIGNATURES & REMARKS", section_title_style))
             footer_group.append(remarks_table)
-            footer_group.append(Spacer(1, 12))
+            footer_group.append(Spacer(1, 10))
             
-        # Signatures
         sig_data = [
             [
                 Paragraph(f"<br/><br/>_______________________<br/><b>{teacher_sig_label}</b>", ParagraphStyle('Sig', parent=body_style, alignment=TA_CENTER)),
@@ -1734,9 +2581,8 @@ class ReportCardService:
             ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
         footer_group.append(sig_table)
-        footer_group.append(Spacer(1, 12))
+        footer_group.append(Spacer(1, 10))
         
-        # Digital Verification QR & UUID Card
         verification_uuid = db_rep.verification_uuid if db_rep else uuid.uuid4()
         qr_value = f"/api/v1/report-cards/verify/{verification_uuid}"
         
@@ -1764,11 +2610,249 @@ class ReportCardService:
             ('LINELEFT', (1,0), (1,-1), 1.5, gold_accent),
         ]))
         footer_group.append(verif_table)
-        
-        story.append(KeepTogether(footer_group))
+
+        # -------------------------------------------------------------
+        # BRANCH A: CONSOLIDATED DUAL-SECTION PDF LAYOUT
+        # -------------------------------------------------------------
+        if is_consolidated:
+            # SECTION 1: Academic-Year Summary (Page 1)
+            story.append(Paragraph("GRADING SCALE & ATTENDANCE SUMMARY", section_title_style))
+            story.append(side_by_side_table)
+            story.append(Spacer(1, 10))
+
+            if ai_card_table:
+                story.append(Paragraph("AI ACADEMIC INSIGHTS", section_title_style))
+                story.append(ai_card_table)
+                story.append(Spacer(1, 10))
+
+            # PAGE BREAK TO SECTION 2 (Page 2)
+            story.append(PageBreak())
+
+            # SECTION 2: Consolidated Multi-Exam Performance Matrix (Page 2)
+            story.append(Paragraph("SECTION 2: CONSOLIDATED MULTI-EXAM PERFORMANCE MATRIX", section_title_style))
+            
+            subjects_set = {}
+            for exam in exams_in_order:
+                for sub_mark in exam.subject_marks:
+                    subjects_set[sub_mark.subject_name] = True
+            subjects_list = sorted(list(subjects_set.keys()))
+            
+            weightages_map = preview.examination_weightages or {}
+            
+            table_headers = [Paragraph("<b>Subject</b>", table_header_style)]
+            for exam in exams_in_order:
+                w_val = weightages_map.get(exam.examination_name)
+                w_str = f"<br/><font size=6 color='#E2E8F0'>({w_val:g}%)</font>" if (w_val and preview.calculation_method == "WEIGHTED_POLICY") else ""
+                table_headers.append(Paragraph(f"<b>{exam.examination_name}</b>{w_str}", table_header_style))
+            table_headers.append(Paragraph("<b>Final Score</b>", table_header_style))
+            table_headers.append(Paragraph("<b>Grade</b>", table_header_style))
+            
+            performance_rows = [table_headers]
+
+            for sub_name in subjects_list:
+                row = [Paragraph(sub_name, table_cell_left)]
+                sub_total_obtained = 0.0
+                sub_total_max = 0
+                
+                for exam in exams_in_order:
+                    sub_mark = next((sm for sm in exam.subject_marks if sm.subject_name == sub_name), None)
+                    if sub_mark and sub_mark.status == "PRESENT" and sub_mark.marks_obtained is not None:
+                        obtained_val = sub_mark.marks_obtained
+                        row.append(Paragraph(f"{obtained_val} ({sub_mark.grade})", table_cell_style))
+                        sub_total_obtained += obtained_val
+                        sub_total_max += sub_mark.max_marks
+                    elif sub_mark and sub_mark.status == "ABSENT":
+                        row.append(Paragraph("ABS", table_cell_style))
+                    else:
+                        row.append(Paragraph("-", table_cell_style))
+                        
+                # Match preview consolidated subject row if available
+                matching_cons = None
+                if preview.consolidated_subject_marks:
+                    matching_cons = next((c for c in preview.consolidated_subject_marks if c.get("subject_name") == sub_name), None)
+
+                if matching_cons and matching_cons.get("consolidated_percentage") is not None:
+                    c_pct = matching_cons["consolidated_percentage"]
+                    c_gr = matching_cons.get("grade", get_grade_for_percentage(c_pct))
+                    row.append(Paragraph(f"{c_pct}%", table_cell_style))
+                    row.append(Paragraph(c_gr, table_cell_style))
+                elif sub_total_max > 0:
+                    avg_pct = round((sub_total_obtained / sub_total_max) * 100, 2)
+                    overall_grade = get_grade_for_percentage(avg_pct)
+                    row.append(Paragraph(f"{avg_pct}%", table_cell_style))
+                    row.append(Paragraph(overall_grade, table_cell_style))
+                else:
+                    row.append(Paragraph("-", table_cell_style))
+                    row.append(Paragraph("-", table_cell_style))
+                    
+                performance_rows.append(row)
+                
+            # Add authoritative overall totals row
+            total_row = [Paragraph("<b>TOTAL</b>", table_cell_left)]
+            for exam in exams_in_order:
+                total_row.append(Paragraph(f"<b>{exam.total_obtained_marks} / {exam.total_max_marks}</b>", table_cell_bold))
+            total_row.append(Paragraph(f"<b>{preview.overall_percentage}%</b>", table_cell_bold))
+            total_row.append(Paragraph(f"<b>{preview.overall_grade}</b>", table_cell_bold))
+            performance_rows.append(total_row)
+            
+            # Compute exact column widths dynamically
+            num_exams = len(exams_in_order)
+            sub_width = 115
+            rem_width = 515 - sub_width
+            col_width_each = rem_width / max(1, (num_exams + 2))
+            
+            perf_table = Table(performance_rows, colWidths=[sub_width] + [col_width_each] * (num_exams + 2))
+            
+            t_style = [
+                ('BACKGROUND', (0,0), (-1,0), navy_primary),
+                ('GRID', (0,0), (-1,-1), 0.5, border_grey),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('PADDING', (0,0), (-1,-1), 4),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
+                ('LINEABOVE', (0, -1), (-1, -1), 1.5, gold_accent),
+            ]
+            for i in range(1, len(performance_rows) - 1):
+                bg = colors.HexColor("#F8FAFC") if i % 2 == 1 else colors.white
+                t_style.append(('BACKGROUND', (0, i), (-1, i), bg))
+                
+            perf_table.setStyle(TableStyle(t_style))
+            story.append(perf_table)
+            story.append(Spacer(1, 6))
+
+            # Footnote explaining calculation policy
+            footnote_style = ParagraphStyle(
+                'Footnote',
+                parent=styles['Normal'],
+                fontName='Helvetica-Oblique',
+                fontSize=7.5,
+                leading=10,
+                textColor=colors.HexColor("#4A5568")
+            )
+            if preview.calculation_method == "WEIGHTED_POLICY" and weightages_map:
+                w_items = [f"{k}: {v:g}%" for k, v in weightages_map.items() if v > 0]
+                footnote_text = f"<b>* Calculation Policy:</b> <b>WEIGHTED_POLICY</b>. Final annual scores were consolidated using authoritative institutional assessment weightages ({', '.join(w_items)})."
+            else:
+                footnote_text = "<b>* Calculation Policy:</b> <b>PROPORTIONAL_MAX_MARKS</b>. Final annual scores were aggregated proportionally across all configured examinations (Total Marks Obtained / Total Maximum Marks)."
+            
+            story.append(Paragraph(footnote_text, footnote_style))
+            story.append(Spacer(1, 14))
+
+            # Performance Trend Progression Flowable
+            if num_exams > 1:
+                trend_table_data = []
+                trend_widths = []
+                recent_exams = exams_in_order[-5:]
+                recent_num = len(recent_exams)
+                t_card_w = max(50.0, min(85.0, (515.0 - (recent_num - 1) * 15.0) / recent_num))
+                arrow_w = 15.0
+                for i, exam in enumerate(recent_exams):
+                    trend_table_data.append(
+                        Paragraph(
+                            f"<b>{exam.examination_name}</b><br/><font size=11 color='{navy_primary.hexval()}'><b>{exam.percentage}%</b></font>",
+                            ParagraphStyle('TrendVal', parent=body_style, alignment=TA_CENTER)
+                        )
+                    )
+                    trend_widths.append(t_card_w)
+                    if i < len(recent_exams) - 1:
+                        trend_table_data.append(
+                            Paragraph("<font size=14 color='#A0AEC0'>→</font>", ParagraphStyle('Arrow', parent=body_style, alignment=TA_CENTER))
+                        )
+                        trend_widths.append(arrow_w)
+                
+                trend_table = Table([trend_table_data], colWidths=trend_widths)
+                trend_table.setStyle(TableStyle([
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+                    ('BOX', (0,0), (-1,-1), 1, border_grey),
+                    ('PADDING', (0,0), (-1,-1), 6),
+                ]))
+                story.append(Paragraph("ACADEMIC PROGRESSION TIMELINE", section_title_style))
+                story.append(trend_table)
+
+            story.append(Spacer(1, 10))
+            story.append(KeepTogether(footer_group))
+
+        # -------------------------------------------------------------
+        # BRANCH B: SINGLE-EXAMINATION SINGLE-PAGE LAYOUT
+        # -------------------------------------------------------------
+        else:
+            exam_title = exams_in_order[0].examination_name if exams_in_order else "EXAMINATION"
+            table_headers = [
+                Paragraph("<b>Subject</b>", table_header_style),
+                Paragraph("<b>Max Marks</b>", table_header_style),
+                Paragraph("<b>Marks Obtained</b>", table_header_style),
+                Paragraph("<b>Percentage</b>", table_header_style),
+                Paragraph("<b>Grade</b>", table_header_style),
+                Paragraph("<b>Status</b>", table_header_style)
+            ]
+            performance_rows = [table_headers]
+            total_max = 0
+            total_obt = 0.0
+
+            for sm in preview.subject_marks:
+                total_max += sm.maximum_marks
+                if sm.marks_obtained is not None:
+                    total_obt += sm.marks_obtained
+                obt_str = str(sm.marks_obtained) if sm.marks_obtained is not None else "-"
+                pct = round((sm.marks_obtained / sm.maximum_marks) * 100, 1) if (sm.marks_obtained is not None and sm.maximum_marks > 0) else None
+                pct_str = f"{pct}%" if pct is not None else "-"
+                row = [
+                    Paragraph(sm.subject_name, table_cell_left),
+                    Paragraph(str(sm.maximum_marks), table_cell_style),
+                    Paragraph(obt_str, table_cell_style),
+                    Paragraph(pct_str, table_cell_style),
+                    Paragraph(sm.grade, table_cell_bold),
+                    Paragraph(sm.result_status, table_cell_style)
+                ]
+                performance_rows.append(row)
+
+            total_row = [
+                Paragraph("<b>TOTAL</b>", table_cell_left),
+                Paragraph(f"<b>{total_max}</b>", table_cell_bold),
+                Paragraph(f"<b>{total_obt}</b>", table_cell_bold),
+                Paragraph(f"<b>{preview.overall_percentage}%</b>", table_cell_bold),
+                Paragraph(f"<b>{preview.overall_grade}</b>", table_cell_bold),
+                Paragraph(f"<b>{promotion_status_str}</b>", table_cell_bold)
+            ]
+            performance_rows.append(total_row)
+
+            perf_table = Table(performance_rows, colWidths=[155, 70, 75, 75, 70, 70])
+            t_style = [
+                ('BACKGROUND', (0,0), (-1,0), navy_primary),
+                ('GRID', (0,0), (-1,-1), 0.5, border_grey),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('PADDING', (0,0), (-1,-1), 4),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
+                ('LINEABOVE', (0, -1), (-1, -1), 1.5, gold_accent),
+            ]
+            for i in range(1, len(performance_rows) - 1):
+                bg = colors.HexColor("#F8FAFC") if i % 2 == 1 else colors.white
+                t_style.append(('BACKGROUND', (0, i), (-1, i), bg))
+
+            perf_table.setStyle(TableStyle(t_style))
+            story.append(Paragraph(f"ACADEMIC PERFORMANCE — {exam_title.upper()}", section_title_style))
+            story.append(perf_table)
+            story.append(Spacer(1, 10))
+
+            secondary_group = [
+                Paragraph("GRADING SCALE & ATTENDANCE SUMMARY", section_title_style),
+                side_by_side_table,
+                Spacer(1, 10)
+            ]
+            story.append(KeepTogether(secondary_group))
+
+            if ai_card_table:
+                story.append(Paragraph("AI ACADEMIC INSIGHTS", section_title_style))
+                story.append(ai_card_table)
+                story.append(Spacer(1, 10))
+
+            story.append(KeepTogether(footer_group))
         
         # Build Document
-        numbered_canvas_class = make_numbered_canvas_class(school.name if school else "Delhi Public School", ay_name, report_card_title)
+        numbered_canvas_class = make_numbered_canvas_class(school.name if school else "", ay_name, report_card_title)
         doc.build(story, canvasmaker=numbered_canvas_class)
         
         pdf_bytes = buffer.getvalue()

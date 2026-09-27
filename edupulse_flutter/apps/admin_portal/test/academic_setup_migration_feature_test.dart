@@ -55,6 +55,15 @@ class FakeAcademicSetupRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    String? confirmPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeAcademicSetupSessionManager implements SessionManager {
@@ -69,19 +78,29 @@ class FakeAcademicSetupSessionManager implements SessionManager {
   }
 
   @override
+  Future<String?> getTenantName() async => 'Mock Tenant';
+
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+
+  @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
   Future<String?> getRefreshToken() async => 'mock_refresh';
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Mock School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
 }
 
 class FakeAcademicSetupApiClient extends BaseApiClient {

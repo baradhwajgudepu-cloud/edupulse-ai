@@ -132,4 +132,62 @@ class AttendanceRepositoryImpl implements AttendanceRepository {
       onFailure: (err) => ApiResult.failure(err),
     );
   }
+
+  @override
+  Future<ApiResult<AttendanceSessionEntity?>> getDailySession({
+    required String schoolId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+  }) async {
+    final result = await _remoteDatasource.getDailySession(
+      schoolId: schoolId,
+      classId: classId,
+      sectionId: sectionId,
+      attendanceDate: attendanceDate,
+      sessionType: sessionType,
+    );
+
+    return result.when(
+      onSuccess: (dto) => ApiResult.success(dto?.toEntity()),
+      onFailure: (err) => ApiResult.failure(err),
+    );
+  }
+
+  @override
+  Future<ApiResult<AttendanceSessionEntity>> markDailyAttendance({
+    required String schoolId,
+    required String academicYearId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+    String attendanceSource = 'MANUAL',
+    required List<AttendanceRecordPayload> records,
+  }) async {
+    final mappedRecords = records.map((rec) => {
+      'student_id': rec.studentId,
+      'attendance_status': rec.attendanceStatus.name,
+      'attendance_source': rec.attendanceSource.name,
+      'attendance_reason': rec.attendanceReason.name,
+      if (rec.remarks != null) 'remarks': rec.remarks,
+    }).toList();
+
+    final result = await _remoteDatasource.markDailyAttendance(
+      schoolId: schoolId,
+      academicYearId: academicYearId,
+      classId: classId,
+      sectionId: sectionId,
+      attendanceDate: attendanceDate,
+      sessionType: sessionType,
+      attendanceSource: attendanceSource,
+      records: mappedRecords,
+    );
+
+    return result.when(
+      onSuccess: (dto) => ApiResult.success(dto.toEntity()),
+      onFailure: (err) => ApiResult.failure(err),
+    );
+  }
 }

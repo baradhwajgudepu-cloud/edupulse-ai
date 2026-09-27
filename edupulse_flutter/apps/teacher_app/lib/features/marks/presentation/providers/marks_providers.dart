@@ -10,7 +10,7 @@ import '../../domain/repositories/marks_repository.dart';
 import '../../data/datasources/marks_remote_datasource.dart';
 import '../../data/repositories/marks_repository_impl.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
-import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 final marksRemoteDatasourceProvider = Provider<MarksRemoteDatasource>((ref) {
   final apiClient = ref.watch(apiClientProvider);
@@ -27,7 +27,7 @@ final marksExaminationsProvider = FutureProvider.family<List<ExaminationEntity>,
   final repository = ref.watch(marksRepositoryProvider);
   final authState = ref.watch(authStateProvider);
   if (authState is! Authenticated) return [];
-  final schoolId = authState.user.schools.first;
+  final schoolId = ref.watch(activeSchoolIdProvider) ?? authState.user.schools.firstOrNull ?? '';
   final result = await repository.getExaminations(
     schoolId: schoolId,
     academicYearId: academicYearId,
@@ -156,7 +156,7 @@ class MarksWizardNotifier extends StateNotifier<MarksWizardState> {
       state = state.copyWith(isLoading: false, errorMessage: 'User is not authenticated.');
       return;
     }
-    final schoolId = authState.user.schools.first;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? authState.user.schools.firstOrNull ?? '';
 
     final result = await _repository.getMarksWizard(
       examScheduleId: _examScheduleId,
@@ -282,7 +282,7 @@ class MarksWizardNotifier extends StateNotifier<MarksWizardState> {
 
     final authState = _ref.read(authStateProvider);
     if (authState is! Authenticated) return;
-    final schoolId = authState.user.schools.first;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? authState.user.schools.firstOrNull ?? '';
 
     state = state.copyWith(isSaving: true, saveStatusText: 'Saving...');
 
@@ -412,7 +412,7 @@ class MarksWizardNotifier extends StateNotifier<MarksWizardState> {
   Future<void> fetchPublishSummary() async {
     final authState = _ref.read(authStateProvider);
     if (authState is! Authenticated) return;
-    final schoolId = authState.user.schools.first;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? authState.user.schools.firstOrNull ?? '';
 
     final result = await _repository.getPublishSummary(
       examScheduleId: _examScheduleId,
@@ -432,7 +432,7 @@ class MarksWizardNotifier extends StateNotifier<MarksWizardState> {
   Future<bool> publishMarks() async {
     final authState = _ref.read(authStateProvider);
     if (authState is! Authenticated) return false;
-    final schoolId = authState.user.schools.first;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? authState.user.schools.firstOrNull ?? '';
 
     state = state.copyWith(isPublishing: true);
 

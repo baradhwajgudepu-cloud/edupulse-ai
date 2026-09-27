@@ -15,6 +15,8 @@ _$ReportCardSubjectMarkRowDtoImpl _$$ReportCardSubjectMarkRowDtoImplFromJson(
       resultStatus: json['result_status'] as String,
       grade: json['grade'] as String,
       remarks: json['remarks'] as String?,
+      subjectCode: json['subject_code'] as String?,
+      subjectId: json['subject_id'] as String?,
     );
 
 Map<String, dynamic> _$$ReportCardSubjectMarkRowDtoImplToJson(
@@ -26,6 +28,8 @@ Map<String, dynamic> _$$ReportCardSubjectMarkRowDtoImplToJson(
       'result_status': instance.resultStatus,
       'grade': instance.grade,
       'remarks': instance.remarks,
+      'subject_code': instance.subjectCode,
+      'subject_id': instance.subjectId,
     };
 
 _$ReportCardPreviewDtoImpl _$$ReportCardPreviewDtoImplFromJson(

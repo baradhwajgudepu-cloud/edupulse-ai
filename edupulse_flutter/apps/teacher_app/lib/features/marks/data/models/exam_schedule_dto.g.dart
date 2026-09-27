@@ -24,6 +24,10 @@ _$ExamScheduleDtoImpl _$$ExamScheduleDtoImplFromJson(
       roomNumber: json['room_number'] as String?,
       isActive: json['is_active'] as bool,
       version: (json['version'] as num).toInt(),
+      subjectName: json['subject_name'] as String?,
+      subjectCode: json['subject_code'] as String?,
+      className: json['class_name'] as String?,
+      sectionName: json['section_name'] as String?,
     );
 
 Map<String, dynamic> _$$ExamScheduleDtoImplToJson(
@@ -43,4 +47,8 @@ Map<String, dynamic> _$$ExamScheduleDtoImplToJson(
       'room_number': instance.roomNumber,
       'is_active': instance.isActive,
       'version': instance.version,
+      'subject_name': instance.subjectName,
+      'subject_code': instance.subjectCode,
+      'class_name': instance.className,
+      'section_name': instance.sectionName,
     };

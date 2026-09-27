@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:admin_portal/core/routing/routes.dart';
 import 'package:admin_portal/features/school_setup/presentation/providers/school_setup_providers.dart';
 import 'package:admin_portal/features/students/data/models/student_models.dart';
 import '../providers/guardian_providers.dart';
+import '../widgets/guardian_avatar.dart';
+import '../widgets/guardian_form_dialog.dart';
+import '../widgets/linked_student_card.dart';
 
 class GuardianDetailsScreen extends ConsumerStatefulWidget {
   final String guardianId;
@@ -16,6 +21,46 @@ class GuardianDetailsScreen extends ConsumerStatefulWidget {
 }
 
 class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
+  Future<void> _pickAndUploadPhoto(String schoolId, String guardianId) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+        withData: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        if (file.bytes == null) return;
+        if (file.size > 5 * 1024 * 1024) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Selected photo exceeds 5MB limit. Please choose a smaller photo.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        final success = await ref.read(guardianActionsProvider.notifier).uploadGuardianPhoto(
+              schoolId: schoolId,
+              guardianId: guardianId,
+              fileBytes: file.bytes!,
+              fileName: file.name,
+            );
+        if (success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Guardian profile photo updated successfully.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error selecting photo: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Future<void> _unlinkStudent(String mappingId, String schoolId) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -265,11 +310,67 @@ class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
     }
   }
 
+  Future<void> _showEditGuardianDialog(BuildContext context, GuardianDto guardian, String schoolId) async {
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (context) => GuardianFormDialog(guardian: guardian),
+    );
+    if (updated == true && mounted) {
+      ref.invalidate(guardianDetailProvider(widget.guardianId));
+      ref.invalidate(guardianListProvider);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Guardian profile updated successfully.')),
+      );
+    }
+  }
+
+  Widget _buildCopyableField(String label, String value, {IconData? icon}) {
+    final hasVal = value.isNotEmpty && value != 'N/A';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 16, color: Colors.grey[600]),
+            const SizedBox(width: 6),
+          ],
+          Expanded(
+            child: Text(
+              '$label: $value',
+              style: TextStyle(
+                fontWeight: hasVal ? FontWeight.w500 : FontWeight.normal,
+                fontSize: 13,
+                color: hasVal ? null : Colors.grey,
+              ),
+            ),
+          ),
+          if (hasVal) ...[
+            IconButton(
+              icon: const Icon(Icons.copy, size: 14, color: Colors.blueGrey),
+              tooltip: 'Copy $label',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$label copied to clipboard'), duration: const Duration(seconds: 2)),
+                );
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final schoolId = ref.watch(selectedSchoolIdProvider);
     final detailAsync = ref.watch(guardianDetailProvider(widget.guardianId));
     final mappingsAsync = ref.watch(guardianMappingsProvider(widget.guardianId));
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
       appBar: AppBar(
@@ -278,6 +379,19 @@ class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go(AppRoutes.guardians),
         ),
+        actions: [
+          detailAsync.whenOrNull(
+            data: (guardian) => Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: FilledButton.icon(
+                key: const Key('edit_guardian_header_btn'),
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('Edit Profile'),
+                onPressed: () => _showEditGuardianDialog(context, guardian, schoolId ?? ''),
+              ),
+            ),
+          ) ?? const SizedBox.shrink(),
+        ],
       ),
       body: schoolId == null
           ? const Center(child: Text('Please select a school campus first.'))
@@ -291,98 +405,134 @@ class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
                   children: [
                     // A. Profile Panel
                     Card(
-                      child: ListTile(
-                        title: Text('${guardian.firstName} ${guardian.lastName}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                        subtitle: Text('Parent Login ID: ${guardian.loginId ?? "N/A"} | Type: ${guardian.guardianType} | Gender: ${guardian.gender} | DOB: ${guardian.dateOfBirth} | Status: ${guardian.status}'),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: guardian.status == 'ACTIVE' ? Colors.green.shade100 : Colors.red.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            guardian.status,
-                            style: TextStyle(color: guardian.status == 'ACTIVE' ? Colors.green.shade800 : Colors.red.shade800, fontWeight: FontWeight.bold),
-                          ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Stack(
+                                  alignment: Alignment.bottomRight,
+                                  children: [
+                                    GuardianAvatar(
+                                      guardianId: guardian.id,
+                                      schoolId: schoolId,
+                                      photoUrl: guardian.photoUrl,
+                                      firstName: guardian.firstName,
+                                      lastName: guardian.lastName,
+                                      radius: 32,
+                                      version: '${guardian.version}_${guardian.updatedAt}',
+                                    ),
+                                    InkWell(
+                                      key: const Key('guardian_photo_edit_btn'),
+                                      onTap: () => _pickAndUploadPhoto(schoolId, guardian.id),
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: CircleAvatar(
+                                        radius: 12,
+                                        backgroundColor: Theme.of(context).colorScheme.primary,
+                                        child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${guardian.firstName} ${guardian.lastName}',
+                                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
+                                          Text('Login ID: ${guardian.loginId ?? "N/A"}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                          const Text('•', style: TextStyle(color: Colors.grey)),
+                                          Text('Type: ${guardian.guardianType}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                          const Text('•', style: TextStyle(color: Colors.grey)),
+                                          Text('Gender: ${guardian.gender}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                          const Text('•', style: TextStyle(color: Colors.grey)),
+                                          Text('DOB: ${guardian.dateOfBirth}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: guardian.status == 'ACTIVE' ? Colors.green.shade100 : Colors.red.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        guardian.status,
+                                        style: TextStyle(
+                                          color: guardian.status == 'ACTIVE' ? Colors.green.shade800 : Colors.red.shade800,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    OutlinedButton.icon(
+                                      key: const Key('edit_guardian_profile_btn'),
+                                      icon: const Icon(Icons.edit, size: 14),
+                                      label: const Text('Edit Details', style: TextStyle(fontSize: 12)),
+                                      style: OutlinedButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      ),
+                                      onPressed: () => _showEditGuardianDialog(context, guardian, schoolId),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                     ),
                     const SizedBox(height: 16),
 
-                    // B. Contact & Identity Grid
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('Contact Information', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                  const Divider(),
-                                  Text('Mobile: ${guardian.mobile}'),
-                                  Text('Mobile Verified: ${guardian.isMobileVerified ? "Yes" : "No"}'),
-                                  Text('Alternate Mobile: ${guardian.alternateMobile ?? "N/A"}'),
-                                  Text('Email: ${guardian.email ?? "N/A"}'),
-                                  Text('Email Verified: ${guardian.isEmailVerified ? "Yes" : "No"}'),
-                                  const SizedBox(height: 12),
-                                  Text('Emergency Contact: ${guardian.emergencyContactName ?? "N/A"}'),
-                                  Text('Emergency Mobile: ${guardian.emergencyContactMobile ?? "N/A"}'),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('Credentials & Professional', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                  const Divider(),
-                                  Text('Aadhaar Number: ${guardian.aadhaarNumber ?? "N/A"}'),
-                                  Text('PAN Number: ${guardian.panNumber ?? "N/A"}'),
-                                  const SizedBox(height: 12),
-                                  Text('Occupation: ${guardian.occupation ?? "N/A"}'),
-                                  Text('Qualification: ${guardian.qualification ?? "N/A"}'),
-                                  Text('Organization: ${guardian.organization ?? "N/A"}'),
-                                  Text('Annual Income: \$${guardian.annualIncome?.toStringAsFixed(2) ?? "0.00"}'),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // E. Address Parser
-                    SizedBox(
-                      width: double.infinity,
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Address Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                              const Divider(),
-                              Text('Street: ${guardian.address['street'] ?? "N/A"}'),
-                              Text('City/Town: ${guardian.address['city'] ?? "N/A"}'),
-                              Text('State/Province: ${guardian.address['state'] ?? "N/A"}'),
-                              Text('Postal Code: ${guardian.address['postal_code'] ?? "N/A"}'),
-                              Text('Country: ${guardian.address['country'] ?? "N/A"}'),
-                            ],
-                          ),
-                        ),
+                    // B. Contact, Credentials & Address Section (Responsive 3-Column on Desktop)
+                    if (screenWidth >= 1100) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _buildContactCard(guardian)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildCredentialsCard(guardian)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildAddressCard(guardian)),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 24),
+                    ] else if (screenWidth >= 768) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _buildContactCard(guardian)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildCredentialsCard(guardian)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildAddressCard(guardian),
+                    ] else ...[
+                      _buildContactCard(guardian),
+                      const SizedBox(height: 12),
+                      _buildCredentialsCard(guardian),
+                      const SizedBox(height: 12),
+                      _buildAddressCard(guardian),
+                    ],
+                    const SizedBox(height: 20),
 
                     // F. Linked Students mappings
                     Row(
@@ -413,45 +563,22 @@ class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
                           );
                         }
 
-                        return SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            key: const Key('mappings_data_table'),
-                            columns: const [
-                              DataColumn(label: Text('Student ID')),
-                              DataColumn(label: Text('Relationship')),
-                              DataColumn(label: Text('Primary')),
-                              DataColumn(label: Text('Can Pickup')),
-                              DataColumn(label: Text('Receives Notifications')),
-                              DataColumn(label: Text('Actions')),
-                            ],
-                            rows: mappings.map((m) {
-                              return DataRow(
-                                cells: [
-                                  DataCell(Text(m.studentId)),
-                                  DataCell(Text(m.relationship)),
-                                  DataCell(Icon(m.isPrimary ? Icons.check_circle : Icons.cancel, color: m.isPrimary ? Colors.green : Colors.grey)),
-                                  DataCell(Icon(m.canPickupStudent ? Icons.check_circle : Icons.cancel, color: m.canPickupStudent ? Colors.green : Colors.grey)),
-                                  DataCell(Icon(m.receivesNotifications ? Icons.check_circle : Icons.cancel, color: m.receivesNotifications ? Colors.green : Colors.grey)),
-                                  DataCell(
-                                    Row(
-                                      children: [
-                                        IconButton(
-                                          key: Key('edit_mapping_${m.id}'),
-                                          icon: const Icon(Icons.edit),
-                                          onPressed: () => _showEditMappingDialog(m, schoolId),
-                                        ),
-                                        IconButton(
-                                          key: Key('unlink_student_${m.id}'),
-                                          icon: const Icon(Icons.link_off),
-                                          onPressed: () => _unlinkStudent(m.id, schoolId),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
+                        return Container(
+                          key: const Key('mappings_data_table'),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: mappings.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 12),
+                            itemBuilder: (context, idx) {
+                              final m = mappings[idx];
+                              return LinkedStudentCard(
+                                mapping: m,
+                                schoolId: schoolId,
+                                onEdit: () => _showEditMappingDialog(m, schoolId),
+                                onUnlink: () => _unlinkStudent(m.id, schoolId),
                               );
-                            }).toList(),
+                            },
                           ),
                         );
                       },
@@ -460,6 +587,157 @@ class _GuardianDetailsScreenState extends ConsumerState<GuardianDetailsScreen> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildContactCard(GuardianDto guardian) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.contact_phone_outlined, size: 18, color: Colors.blueGrey),
+                SizedBox(width: 6),
+                Text('Contact Information', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const Divider(),
+            _buildCopyableField('Mobile', guardian.mobile, icon: Icons.phone),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2.0),
+              child: Row(
+                children: [
+                  const SizedBox(width: 130 + 22, child: Text('Mobile Verified', style: TextStyle(color: Colors.grey, fontSize: 12))),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: guardian.isMobileVerified ? Colors.green.withValues(alpha: 0.15) : Colors.orange.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      guardian.isMobileVerified ? 'VERIFIED' : 'UNVERIFIED',
+                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: guardian.isMobileVerified ? Colors.green.shade800 : Colors.orange.shade800),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _buildCopyableField('Alternate Mobile', guardian.alternateMobile ?? 'N/A', icon: Icons.phone_forwarded_outlined),
+            _buildCopyableField('Email', guardian.email ?? 'N/A', icon: Icons.email_outlined),
+            if (guardian.email != null && guardian.email!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2.0),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 130 + 22, child: Text('Email Verified', style: TextStyle(color: Colors.grey, fontSize: 12))),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: guardian.isEmailVerified ? Colors.green.withValues(alpha: 0.15) : Colors.orange.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        guardian.isEmailVerified ? 'VERIFIED' : 'UNVERIFIED',
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: guardian.isEmailVerified ? Colors.green.shade800 : Colors.orange.shade800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            const Divider(),
+            const Text('Emergency Contact', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+            const SizedBox(height: 4),
+            _buildCopyableField('Name', guardian.emergencyContactName ?? 'N/A'),
+            _buildCopyableField('Mobile', guardian.emergencyContactMobile ?? 'N/A', icon: Icons.phone_in_talk_outlined),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCredentialsCard(GuardianDto guardian) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.badge_outlined, size: 18, color: Colors.blueGrey),
+                SizedBox(width: 6),
+                Text('Credentials & Professional', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const Divider(),
+            _buildCopyableField('Aadhaar Number', guardian.aadhaarNumber ?? 'N/A'),
+            _buildCopyableField('PAN Number', guardian.panNumber ?? 'N/A'),
+            const SizedBox(height: 8),
+            const Divider(),
+            const Text('Professional Background', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+            const SizedBox(height: 4),
+            _buildCopyableField('Occupation', guardian.occupation ?? 'N/A'),
+            _buildCopyableField('Qualification', guardian.qualification ?? 'N/A'),
+            _buildCopyableField('Organization', guardian.organization ?? 'N/A'),
+            _buildCopyableField('Annual Income', guardian.annualIncome != null ? '₹${guardian.annualIncome!.toStringAsFixed(2)}' : 'N/A'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressCard(GuardianDto guardian) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.location_on_outlined, size: 18, color: Colors.blueGrey),
+                    SizedBox(width: 6),
+                    Text('Address Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                if (guardian.address.values.any((v) => v != null && v.toString().isNotEmpty))
+                  IconButton(
+                    icon: const Icon(Icons.copy, size: 14, color: Colors.blueGrey),
+                    tooltip: 'Copy Full Address',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () {
+                      final fullAddr = [
+                        guardian.address['street'],
+                        guardian.address['city'],
+                        guardian.address['state'],
+                        guardian.address['postal_code'],
+                        guardian.address['country'],
+                      ].where((p) => p != null && p.toString().isNotEmpty).join(', ');
+                      Clipboard.setData(ClipboardData(text: fullAddr));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Address copied to clipboard')),
+                      );
+                    },
+                  ),
+              ],
+            ),
+            const Divider(),
+            _buildCopyableField('Street', guardian.address['street']?.toString() ?? 'N/A'),
+            _buildCopyableField('City/Town', guardian.address['city']?.toString() ?? 'N/A'),
+            _buildCopyableField('State/Province', guardian.address['state']?.toString() ?? 'N/A'),
+            _buildCopyableField('Postal Code', guardian.address['postal_code']?.toString() ?? 'N/A'),
+            _buildCopyableField('Country', guardian.address['country']?.toString() ?? 'N/A'),
+          ],
+        ),
+      ),
     );
   }
 }

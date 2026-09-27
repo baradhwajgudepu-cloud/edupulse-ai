@@ -183,7 +183,7 @@ class TeacherSubjectAssignmentRepository:
             Subject, TeacherSubjectAssignment.subject_id == Subject.id
         ).join(
             Class, TeacherSubjectAssignment.class_id == Class.id
-        ).join(
+        ).outerjoin(
             Section, TeacherSubjectAssignment.section_id == Section.id
         )
 
@@ -213,7 +213,7 @@ class TeacherSubjectAssignmentRepository:
             .limit(limit)
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        return list(result.scalars().unique().all())
 
     async def create(
         self,

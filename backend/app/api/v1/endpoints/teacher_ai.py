@@ -165,7 +165,7 @@ async def generate_student_insight(
     for m in marks_list:
         marks_data.append({
             "subject": m.subject.subject_name if m.subject else "Unknown",
-            "examination": m.examination.name if m.examination else "Assessment",
+            "examination": (m.examination.exam_name if hasattr(m.examination, "exam_name") else getattr(m.examination, "name", "Assessment")) if m.examination else "Assessment",
             "score": float(m.marks_obtained) if m.marks_obtained is not None else None,
             "max": m.maximum_marks,
             "result_status": m.result_status.value
@@ -178,7 +178,7 @@ async def generate_student_insight(
     # 3. Request AI Insight
     prompt = f"""
     Generate student insights using this academic record summary:
-    Student Name (anonymized): {student.first_name} {student.last_name[0] if student.last_name else ''}.
+    Student Identifier (anonymized): Student-1
     Recent Marks Details: {marks_data}
     Attendance Percentage: {attendance_percentage:.1f}% (Total sessions: {total_attendance}, Present/Late: {present_attendance})
     """
@@ -194,17 +194,25 @@ async def generate_student_insight(
         insight_response = StudentInsightResponse.model_validate(structured)
         
         # Log Audit event
+        active_model = getattr(ai_service.provider, "model", None) or settings.AI_MODEL or "openrouter/free"
         logger.info(
             "AI Audit Log: user_id=%s, tenant_id=%s, school_id=%s, operation=student-insight, status=success, latency_ms=%d, model=%s",
-            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), settings.AI_MODEL or "gemini"
+            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), active_model
         )
         return APIResponse(success=True, message="Student insights generated successfully.", data=insight_response)
 
+    except HTTPException as he:
+        if he.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND):
+            raise he
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI Service currently unavailable: {he.status_code}: {he.detail}"
+        )
     except Exception as e:
         logger.error(f"AI Provider failure during student insight: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI Service currently unavailable: {str(e)}"
+            detail="AI_UPSTREAM_UNAVAILABLE: AI Service currently unavailable."
         )
 
 
@@ -277,7 +285,9 @@ async def generate_class_analysis(
     passed_students = 0
     grade_distribution = {}
     
+    student_label_map = {}
     student_marks_map = {}
+    label_to_display_name = {}
 
     for m in marks_list:
         if m.marks_obtained is not None:
@@ -291,16 +301,23 @@ async def generate_class_analysis(
             g = m.grade or ("A" if pct >= 85 else "B" if pct >= 70 else "C" if pct >= 50 else "D" if pct >= 40 else "F")
             grade_distribution[g] = grade_distribution.get(g, 0) + 1
 
-            s_name = f"{m.student.first_name} {m.student.last_name[0] if m.student.last_name else ''}"
-            student_marks_map[s_name] = pct
+            s_id = str(m.student_id)
+            if s_id not in student_label_map:
+                anon_label = f"Student {len(student_label_map) + 1}"
+                student_label_map[s_id] = anon_label
+                if m.student:
+                    label_to_display_name[anon_label] = f"{m.student.first_name} {m.student.last_name[0] if m.student.last_name else ''}".strip()
+
+            s_label = student_label_map[s_id]
+            student_marks_map[s_label] = pct
 
     class_avg = (total_score_pct / students_evaluated) if students_evaluated > 0 else 0.0
     pass_pct = (passed_students / students_evaluated * 100.0) if students_evaluated > 0 else 0.0
 
-    # Identify top/low performers (anonymized names passed to AI)
+    # Identify top/low performers (anonymized labels passed to AI)
     sorted_students = sorted(student_marks_map.items(), key=lambda x: x[1])
-    top_performers = [name for name, pct in sorted_students[-3:] if pct >= 80]
-    low_performers = [name for name, pct in sorted_students[:3] if pct < 50]
+    top_performers = [label for label, pct in sorted_students[-3:] if pct >= 80]
+    low_performers = [label for label, pct in sorted_students[:3] if pct < 50]
 
     prompt = f"""
     Analyze the following class performance data:
@@ -320,19 +337,31 @@ async def generate_class_analysis(
             system_instruction=SYSTEM_INSTRUCTION_CLASS_ANALYSIS
         )
         analysis_response = ClassAnalysisResponse.model_validate(structured)
+        if analysis_response.students_improving:
+            analysis_response.students_improving = [
+                label_to_display_name.get(item, item) for item in analysis_response.students_improving
+            ]
+        if analysis_response.students_declining:
+            analysis_response.students_declining = [
+                label_to_display_name.get(item, item) for item in analysis_response.students_declining
+            ]
 
         # Log Audit event
         logger.info(
             "AI Audit Log: user_id=%s, tenant_id=%s, school_id=%s, operation=class-analysis, status=success, latency_ms=%d, model=%s",
-            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), settings.AI_MODEL or "gemini"
+            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), getattr(ai_service.provider, "model", None) or settings.AI_MODEL or "openrouter/free"
         )
         return APIResponse(success=True, message="Class analysis generated successfully.", data=analysis_response)
 
+    except HTTPException as he:
+        if he.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND, status.HTTP_503_SERVICE_UNAVAILABLE):
+            raise he
+        raise HTTPException(status_code=he.status_code, detail=he.detail)
     except Exception as e:
         logger.error(f"AI Provider failure during class analysis: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI Service currently unavailable: {str(e)}"
+            detail="AI_UPSTREAM_UNAVAILABLE: AI Service currently unavailable."
         )
 
 
@@ -394,13 +423,13 @@ async def generate_remark(
     marks_data = []
     for m in marks_list:
         marks_data.append({
-            "exam": m.examination.name if m.examination else "Assessment",
+            "exam": (m.examination.exam_name if hasattr(m.examination, "exam_name") else getattr(m.examination, "name", "Assessment")) if m.examination else "Assessment",
             "score": float(m.marks_obtained) if m.marks_obtained is not None else None,
             "max": m.maximum_marks
         })
 
     prompt = f"""
-    Generate a constructive draft report card remark for student {student.first_name}.
+    Generate a constructive draft report card remark for the student.
     Subject marks data: {marks_data}
     """
 
@@ -415,21 +444,31 @@ async def generate_remark(
         remark_response = RemarkGenerationResponse.model_validate(structured)
 
         # Log Audit event
+        active_model = getattr(ai_service.provider, "model", None) or settings.AI_MODEL or "openrouter/free"
         logger.info(
             "AI Audit Log: user_id=%s, tenant_id=%s, school_id=%s, operation=generate-remark, status=success, latency_ms=%d, model=%s",
-            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), settings.AI_MODEL or "gemini"
+            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), active_model
         )
         return APIResponse(success=True, message="Draft remark generated successfully.", data=remark_response)
 
+    except HTTPException as he:
+        if he.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND, status.HTTP_503_SERVICE_UNAVAILABLE):
+            raise he
+        raise HTTPException(status_code=he.status_code, detail=he.detail)
     except Exception as e:
         logger.error(f"AI Provider failure during remark generation: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI Service currently unavailable: {str(e)}"
+            detail="AI_UPSTREAM_UNAVAILABLE: AI Service currently unavailable."
         )
 
 
-def normalize_homework_response(data: Dict[str, Any], fallback_difficulty: str) -> Dict[str, Any]:
+def normalize_homework_response(
+    data: Dict[str, Any],
+    fallback_difficulty: str,
+    target_marks: Optional[int] = None,
+    question_count: Optional[int] = None
+) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return data
         
@@ -450,18 +489,34 @@ def normalize_homework_response(data: Dict[str, Any], fallback_difficulty: str) 
     if "estimated_minutes" not in normalized:
         for opt in ["estimated_duration_minutes", "estimated_duration", "duration_minutes"]:
             if opt in normalized:
-                normalized["estimated_minutes"] = int(normalized[opt])
-                break
+                try:
+                    normalized["estimated_minutes"] = int(normalized[opt])
+                    break
+                except (ValueError, TypeError):
+                    pass
         else:
             normalized["estimated_minutes"] = 30
+
+    # 3. Parent level normalization: difficulty & description
+    if "difficulty" not in normalized or not normalized["difficulty"]:
+        normalized["difficulty"] = fallback_difficulty
+    if "description" not in normalized or not normalized["description"]:
+        normalized["description"] = f"Homework assignment on {normalized.get('title', 'specified topic')}."
             
-    # 3. Questions list normalization
+    # 4. Questions list normalization and marks allocation
     if "questions" in normalized and isinstance(normalized["questions"], list):
         questions_normalized = []
-        for idx, q_obj in enumerate(normalized["questions"]):
-            if not isinstance(q_obj, dict):
-                continue
-                
+        raw_questions = [q for q in normalized["questions"] if isinstance(q, dict)]
+        num_q = len(raw_questions) or question_count or 1
+
+        # Calculate default marks per question: for 5 questions and 10 total marks -> 2 marks each
+        default_per_question_mark = 2
+        if target_marks and question_count and question_count > 0:
+            default_per_question_mark = max(1, target_marks // question_count)
+        elif target_marks and num_q > 0:
+            default_per_question_mark = max(1, target_marks // num_q)
+
+        for idx, q_obj in enumerate(raw_questions):
             q_copy = q_obj.copy()
             
             # Map q -> text
@@ -478,27 +533,44 @@ def normalize_homework_response(data: Dict[str, Any], fallback_difficulty: str) 
             if "question_number" not in q_copy:
                 q_copy["question_number"] = idx + 1
                 
-            # Ensure marks is present
-            if "marks" not in q_copy:
+            # Ensure marks is present and consistent
+            q_marks = q_copy.get("marks")
+            if q_marks is None or not isinstance(q_marks, int) or q_marks <= 0:
+                q_copy["marks"] = default_per_question_mark
+            elif target_marks and question_count and target_marks == (question_count * 2):
                 q_copy["marks"] = 2
                 
             questions_normalized.append(q_copy)
             
         normalized["questions"] = questions_normalized
+        # Calculate total marks directly from question marks: sum(question.marks for question in questions)
+        normalized["total_marks"] = sum(q["marks"] for q in questions_normalized)
         
     return normalized
 
 
-def normalize_questions_response(data: Dict[str, Any], fallback_difficulty: str) -> Dict[str, Any]:
+def normalize_questions_response(
+    data: Dict[str, Any],
+    fallback_difficulty: str,
+    target_marks: Optional[int] = None,
+    question_count: Optional[int] = None
+) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return data
         
     normalized = data.copy()
     if "questions" in normalized and isinstance(normalized["questions"], list):
         questions_normalized = []
-        for idx, q_obj in enumerate(normalized["questions"]):
-            if not isinstance(q_obj, dict):
-                continue
+        raw_questions = [q for q in normalized["questions"] if isinstance(q, dict)]
+        num_q = len(raw_questions) or question_count or 1
+
+        default_per_question_mark = 2
+        if target_marks and question_count and question_count > 0:
+            default_per_question_mark = max(1, target_marks // question_count)
+        elif target_marks and num_q > 0:
+            default_per_question_mark = max(1, target_marks // num_q)
+
+        for idx, q_obj in enumerate(raw_questions):
             q_copy = q_obj.copy()
             
             # Map q -> text
@@ -515,13 +587,17 @@ def normalize_questions_response(data: Dict[str, Any], fallback_difficulty: str)
             if "question_number" not in q_copy:
                 q_copy["question_number"] = idx + 1
                 
-            # Ensure marks is present
-            if "marks" not in q_copy:
+            # Ensure marks is present and consistent
+            q_marks = q_copy.get("marks")
+            if q_marks is None or not isinstance(q_marks, int) or q_marks <= 0:
+                q_copy["marks"] = default_per_question_mark
+            elif target_marks and question_count and target_marks == (question_count * 2):
                 q_copy["marks"] = 2
                 
             questions_normalized.append(q_copy)
             
         normalized["questions"] = questions_normalized
+        normalized["total_marks"] = sum(q["marks"] for q in questions_normalized)
         
     return normalized
 
@@ -565,6 +641,7 @@ async def generate_homework(
         )
 
     # 2. Call AI service
+    marks_per_q = max(1, request.marks // request.number_of_questions) if request.number_of_questions > 0 else 2
     prompt = f"""
     Create a homework assignment draft.
     Subject: {tsa.subject.subject_name if tsa.subject else 'Subject'}
@@ -573,6 +650,7 @@ async def generate_homework(
     Difficulty: {request.difficulty}
     Number of questions: {request.number_of_questions}
     Total Marks: {request.marks}
+    Marks per question: {marks_per_q}
     Question Type: {request.question_type or 'Mixed'}
     """
 
@@ -584,21 +662,31 @@ async def generate_homework(
             client_key=str(current_user.id),
             system_instruction=SYSTEM_INSTRUCTION_HOMEWORK_GENERATION
         )
-        normalized = normalize_homework_response(structured, request.difficulty)
+        normalized = normalize_homework_response(
+            structured,
+            request.difficulty,
+            target_marks=request.marks,
+            question_count=request.number_of_questions
+        )
         homework_response = HomeworkGenerationResponse.model_validate(normalized)
 
         # Log Audit event
+        active_model = getattr(ai_service.provider, "model", None) or getattr(settings, "OPENSOURCE_MODEL", None) or getattr(settings, "OPENROUTER_MODEL", None) or settings.AI_MODEL or "openrouter/free"
         logger.info(
             "AI Audit Log: user_id=%s, tenant_id=%s, school_id=%s, operation=generate-homework, status=success, latency_ms=%d, model=%s",
-            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), settings.AI_MODEL or "gemini"
+            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), active_model
         )
         return APIResponse(success=True, message="Homework draft generated successfully.", data=homework_response)
 
+    except HTTPException as he:
+        if he.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND, status.HTTP_503_SERVICE_UNAVAILABLE):
+            raise he
+        raise HTTPException(status_code=he.status_code, detail=he.detail)
     except Exception as e:
         logger.error(f"AI Provider failure during homework generation: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI Service currently unavailable: {str(e)}"
+            detail="AI_UPSTREAM_UNAVAILABLE: AI Service currently unavailable."
         )
 
 
@@ -640,6 +728,7 @@ async def generate_questions(
             detail="Access denied. You are not assigned to this class, section, and subject combination."
         )
 
+    marks_per_q = max(1, request.marks // request.number_of_questions) if request.number_of_questions > 0 else 2
     prompt = f"""
     Generate questions.
     Subject: {tsa.subject.subject_name if tsa.subject else 'Subject'}
@@ -648,6 +737,7 @@ async def generate_questions(
     Difficulty: {request.difficulty}
     Number of questions: {request.number_of_questions}
     Total Marks: {request.marks}
+    Marks per question: {marks_per_q}
     Question Type: {request.question_type or 'Mixed'}
     """
 
@@ -659,19 +749,29 @@ async def generate_questions(
             client_key=str(current_user.id),
             system_instruction=SYSTEM_INSTRUCTION_HOMEWORK_GENERATION
         )
-        normalized = normalize_questions_response(structured, request.difficulty)
+        normalized = normalize_questions_response(
+            structured,
+            request.difficulty,
+            target_marks=request.marks,
+            question_count=request.number_of_questions
+        )
         questions_response = QuestionsGenerationResponse.model_validate(normalized)
 
         # Log Audit
+        active_model = getattr(ai_service.provider, "model", None) or getattr(settings, "OPENSOURCE_MODEL", None) or getattr(settings, "OPENROUTER_MODEL", None) or settings.AI_MODEL or "openrouter/free"
         logger.info(
             "AI Audit Log: user_id=%s, tenant_id=%s, school_id=%s, operation=generate-questions, status=success, latency_ms=%d, model=%s",
-            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), settings.AI_MODEL or "gemini"
+            str(current_user.id), str(tenant_id), str(teacher.school_id), "success", int((time.time() - start_time) * 100), active_model
         )
         return APIResponse(success=True, message="Questions generated successfully.", data=questions_response)
 
+    except HTTPException as he:
+        if he.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND, status.HTTP_503_SERVICE_UNAVAILABLE):
+            raise he
+        raise HTTPException(status_code=he.status_code, detail=he.detail)
     except Exception as e:
         logger.error(f"AI Provider failure during questions generation: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"AI Service currently unavailable: {str(e)}"
+            detail="AI_UPSTREAM_UNAVAILABLE: AI Service currently unavailable."
         )

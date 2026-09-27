@@ -95,12 +95,19 @@ class Settings(BaseSettings):
         
         return f"postgresql+asyncpg://{user}:{password}@{server}:{port}/{db}"
 
-    # AI Service Settings
+    # AI Service Settings (Open-source AI provider via OpenAI-compatible gateway)
     AI_ENABLED: bool = True
-    AI_PROVIDER: str = "gemini"
+    AI_PROVIDER: str = "opensource"
+    OPENSOURCE_API_KEY: str | None = None
+    OPENSOURCE_MODEL: str | None = None
+    OPENSOURCE_BASE_URL: str | None = None
+    OPENROUTER_API_KEY: str | None = None
+    OPENROUTER_MODEL: str | None = None
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     GEMINI_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
-    AI_MODEL: str | None = None
+    AI_MODEL: str = "openrouter/free"
+    AI_API_VERSION: str = "v1beta"
     AI_TIMEOUT: float = 60.0
     AI_RETRIES: int = 3
     AI_RATE_LIMIT_PER_MINUTE: int = 20

@@ -21,6 +21,7 @@ class StaffAttendanceRemoteDatasource {
   Future<ApiResult<StaffAttendanceDto>> checkIn({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) {
@@ -29,6 +30,7 @@ class StaffAttendanceRemoteDatasource {
       data: {
         'latitude': latitude,
         'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
         'is_mocked': isMocked,
         if (remarks != null) 'remarks': remarks,
       },
@@ -42,6 +44,7 @@ class StaffAttendanceRemoteDatasource {
   Future<ApiResult<StaffAttendanceDto>> checkOut({
     required double latitude,
     required double longitude,
+    double? accuracy,
     required bool isMocked,
     String? remarks,
   }) {
@@ -50,12 +53,23 @@ class StaffAttendanceRemoteDatasource {
       data: {
         'latitude': latitude,
         'longitude': longitude,
+        if (accuracy != null) 'accuracy': accuracy,
         'is_mocked': isMocked,
         if (remarks != null) 'remarks': remarks,
       },
       mapper: (json) {
         final payload = json as Map<String, dynamic>;
         return StaffAttendanceDto.fromJson(payload['data'] as Map<String, dynamic>);
+      },
+    );
+  }
+
+  Future<ApiResult<Map<String, dynamic>>> getSchoolGeofence(String schoolId) {
+    return _apiClient.get(
+      '/schools/$schoolId/geofence',
+      mapper: (json) {
+        final payload = json as Map<String, dynamic>;
+        return payload['data'] as Map<String, dynamic>;
       },
     );
   }

@@ -58,4 +58,23 @@ abstract class AttendanceRepository {
     AttendanceReason? attendanceReason,
     String? remarks,
   });
+
+  Future<ApiResult<AttendanceSessionEntity?>> getDailySession({
+    required String schoolId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+  });
+
+  Future<ApiResult<AttendanceSessionEntity>> markDailyAttendance({
+    required String schoolId,
+    required String academicYearId,
+    required String classId,
+    required String sectionId,
+    required String attendanceDate,
+    String sessionType = 'FULL_DAY',
+    String attendanceSource = 'MANUAL',
+    required List<AttendanceRecordPayload> records,
+  });
 }

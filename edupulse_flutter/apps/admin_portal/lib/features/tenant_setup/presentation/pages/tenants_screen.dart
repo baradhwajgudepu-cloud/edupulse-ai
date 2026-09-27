@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import '../../../auth/presentation/providers/auth_provider.dart';
 import '../providers/tenant_providers.dart';
 import '../../data/models/tenant_models.dart';
+import '../../../../core/presentation/pages/access_denied_screen.dart';
+import '../../../../core/presentation/utils/responsive_utils.dart';
+
 
 class TenantsScreen extends ConsumerStatefulWidget {
   const TenantsScreen({super.key});
@@ -13,19 +17,29 @@ class TenantsScreen extends ConsumerStatefulWidget {
 
 class _TenantsScreenState extends ConsumerState<TenantsScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _hScrollController = ScrollController();
   String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     Future.microtask(() {
-      ref.read(tenantsListProvider.notifier).fetchTenants();
+      final auth = ref.read(authStateProvider);
+      if (auth is Authenticated) {
+        final u = auth.user;
+        final isSuper = u.isSuperuser ||
+            u.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN');
+        if (isSuper) {
+          ref.read(tenantsListProvider.notifier).fetchTenants();
+        }
+      }
     });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _hScrollController.dispose();
     super.dispose();
   }
 
@@ -43,12 +57,29 @@ class _TenantsScreenState extends ConsumerState<TenantsScreen> {
     );
   }
 
+  void _showDeleteTenantDialog(TenantDto tenant) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => TenantDeleteDialog(tenant: tenant),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = ref.watch(tenantsListProvider);
     final selectedTenantId = ref.watch(selectedTenantIdProvider);
-    
+
+    final authState = ref.watch(authStateProvider);
+    final user = authState is Authenticated ? authState.user : null;
+    final isSuperAdmin = user?.isSuperuser == true ||
+        (user?.roles.any((r) => r.toUpperCase() == 'SUPER_ADMIN' || r.toUpperCase() == 'SYSTEM_ADMIN') ?? false);
+
+    if (!isSuperAdmin) {
+      return const AccessDeniedScreen();
+    }
+
     // Register the watcher provider to ensure it listens to active tenant switching
     ref.watch(tenantSetupWatcherProvider);
 
@@ -125,117 +156,324 @@ class _TenantsScreenState extends ConsumerState<TenantsScreen> {
                   ? const Center(child: CircularProgressIndicator())
                   : filteredTenants.isEmpty
                       ? const Center(child: Text('No tenants found.'))
-                      : Card(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.vertical,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                columns: const [
-                                  DataColumn(label: Text('Name')),
-                                  DataColumn(label: Text('Code')),
-                                  DataColumn(label: Text('Subdomain')),
-                                  DataColumn(label: Text('Email')),
-                                  DataColumn(label: Text('Phone')),
-                                  DataColumn(label: Text('Status')),
-                                  DataColumn(label: Text('Actions')),
-                                ],
-                                rows: filteredTenants.map((tenant) {
-                                  final isActive = selectedTenantId == tenant.id;
-                                  return DataRow(
-                                    selected: isActive,
-                                    cells: [
-                                      DataCell(
-                                        Row(
-                                          children: [
-                                            Text(
-                                              tenant.name,
-                                              style: const TextStyle(fontWeight: FontWeight.bold),
-                                            ),
-                                            if (isActive) ...[
-                                              const SizedBox(width: 8),
-                                              Icon(
-                                                Icons.check_circle,
-                                                color: theme.colorScheme.primary,
-                                                size: 16,
-                                              ),
-                                            ]
-                                          ],
-                                        ),
-                                      ),
-                                      DataCell(Text(tenant.code)),
-                                      DataCell(Text(tenant.subdomain)),
-                                      DataCell(Text(tenant.email)),
-                                      DataCell(Text(tenant.phone ?? 'N/A')),
-                                      DataCell(
-                                        Chip(
-                                          label: Text(tenant.status),
-                                          backgroundColor: tenant.status == 'ACTIVE'
-                                              ? Colors.green.shade100
-                                              : Colors.red.shade100,
-                                          labelStyle: TextStyle(
-                                            color: tenant.status == 'ACTIVE'
-                                                ? Colors.green.shade800
-                                                : Colors.red.shade800,
-                                            fontSize: 12,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                          visualDensity: VisualDensity.compact,
-                                        ),
-                                      ),
-                                      DataCell(
-                                        Row(
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(Icons.edit_outlined),
-                                              tooltip: 'Edit Tenant',
-                                              onPressed: () => _showEditTenantDialog(tenant),
-                                            ),
-                                            Switch(
-                                              value: tenant.status == 'ACTIVE',
-                                              onChanged: (val) {
-                                                ref
-                                                    .read(tenantsListProvider.notifier)
-                                                    .toggleTenantStatus(tenant);
-                                              },
-                                            ),
-                                            const SizedBox(width: 8),
-                                            ElevatedButton(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: isActive
-                                                    ? theme.colorScheme.secondaryContainer
-                                                    : theme.colorScheme.primary,
-                                                foregroundColor: isActive
-                                                    ? theme.colorScheme.onSecondaryContainer
-                                                    : theme.colorScheme.onPrimary,
-                                              ),
-                                              onPressed: isActive
-                                                  ? null
-                                                  : () {
-                                                      ref.read(selectedTenantIdProvider.notifier).state =
-                                                          tenant.id;
-                                                      ScaffoldMessenger.of(context).showSnackBar(
-                                                        SnackBar(
-                                                          content: Text('Switched to Tenant: ${tenant.name}'),
-                                                        ),
-                                                      );
-                                                    },
-                                              child: Text(isActive ? 'Active' : 'Select'),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  );
-                                }).toList(),
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            if (constraints.maxWidth < 850) {
+                              return _buildMobileTenantList(filteredTenants, theme, selectedTenantId, isSuperAdmin);
+                            }
+                            return Card(
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                side: BorderSide(color: theme.colorScheme.outlineVariant),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                            ),
-                          ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Scrollbar(
+                                  controller: _hScrollController,
+                                  thumbVisibility: true,
+                                  trackVisibility: true,
+                                  child: SingleChildScrollView(
+                                    controller: _hScrollController,
+                                    scrollDirection: Axis.horizontal,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.vertical,
+                                      child: ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          minWidth: constraints.maxWidth > 850 ? constraints.maxWidth : 850,
+                                        ),
+                                        child: DataTable(
+                                          columns: const [
+                                            DataColumn(label: Text('Name')),
+                                            DataColumn(label: Text('Code')),
+                                            DataColumn(label: Text('Subdomain')),
+                                            DataColumn(label: Text('Email')),
+                                            DataColumn(label: Text('Phone')),
+                                            DataColumn(label: Text('Status')),
+                                            DataColumn(label: Text('Actions')),
+                                          ],
+                                          rows: filteredTenants.map((tenant) {
+                                            final isActive = selectedTenantId == tenant.id;
+                                            return DataRow(
+                                              selected: isActive,
+                                              cells: [
+                                                DataCell(
+                                                  ConstrainedBox(
+                                                    constraints: const BoxConstraints(maxWidth: 180),
+                                                    child: Row(
+                                                      mainAxisSize: MainAxisSize.min,
+                                                      children: [
+                                                        Flexible(
+                                                          child: Tooltip(
+                                                            message: tenant.name,
+                                                            child: Text(
+                                                              tenant.name,
+                                                              style: const TextStyle(fontWeight: FontWeight.bold),
+                                                              overflow: TextOverflow.ellipsis,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        if (isActive) ...[
+                                                          const SizedBox(width: 8),
+                                                          Icon(
+                                                            Icons.check_circle,
+                                                            color: theme.colorScheme.primary,
+                                                            size: 16,
+                                                          ),
+                                                        ]
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                                DataCell(Text(tenant.code)),
+                                                DataCell(
+                                                  ConstrainedBox(
+                                                    constraints: const BoxConstraints(maxWidth: 140),
+                                                    child: Tooltip(
+                                                      message: tenant.subdomain,
+                                                      child: Text(tenant.subdomain, overflow: TextOverflow.ellipsis),
+                                                    ),
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  ConstrainedBox(
+                                                    constraints: const BoxConstraints(maxWidth: 180),
+                                                    child: Tooltip(
+                                                      message: tenant.email,
+                                                      child: Text(tenant.email, overflow: TextOverflow.ellipsis),
+                                                    ),
+                                                  ),
+                                                ),
+                                                DataCell(Text(tenant.phone ?? 'N/A')),
+                                                DataCell(
+                                                  Chip(
+                                                    label: Text(tenant.status),
+                                                    backgroundColor: tenant.status == 'ACTIVE'
+                                                        ? Colors.green.shade100
+                                                        : Colors.red.shade100,
+                                                    labelStyle: TextStyle(
+                                                      color: tenant.status == 'ACTIVE'
+                                                          ? Colors.green.shade800
+                                                          : Colors.red.shade800,
+                                                      fontSize: 12,
+                                                    ),
+                                                    padding: EdgeInsets.zero,
+                                                    visualDensity: VisualDensity.compact,
+                                                  ),
+                                                ),
+                                                DataCell(
+                                                  Row(
+                                                    children: [
+                                                      IconButton(
+                                                        icon: const Icon(Icons.edit_outlined),
+                                                        tooltip: 'Edit Tenant',
+                                                        onPressed: () => _showEditTenantDialog(tenant),
+                                                      ),
+                                                      Switch(
+                                                        value: tenant.status == 'ACTIVE',
+                                                        onChanged: (val) {
+                                                          ref
+                                                              .read(tenantsListProvider.notifier)
+                                                              .toggleTenantStatus(tenant);
+                                                        },
+                                                      ),
+                                                      if (isSuperAdmin) ...[
+                                                        if (tenant.code.toUpperCase() == 'EDUPULSE_SYSTEM')
+                                                          const Tooltip(
+                                                            message: 'System master tenant cannot be deleted',
+                                                            child: IconButton(
+                                                              icon: Icon(Icons.lock_outline, color: Colors.grey),
+                                                              onPressed: null,
+                                                            ),
+                                                          )
+                                                        else
+                                                          IconButton(
+                                                            icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
+                                                            tooltip: 'Delete Tenant Permanently',
+                                                            onPressed: () => _showDeleteTenantDialog(tenant),
+                                                          ),
+                                                      ],
+                                                      const SizedBox(width: 8),
+                                                      ElevatedButton(
+                                                        style: ElevatedButton.styleFrom(
+                                                          backgroundColor: isActive
+                                                              ? theme.colorScheme.secondaryContainer
+                                                              : theme.colorScheme.primary,
+                                                          foregroundColor: isActive
+                                                              ? theme.colorScheme.onSecondaryContainer
+                                                              : theme.colorScheme.onPrimary,
+                                                        ),
+                                                        onPressed: isActive
+                                                            ? null
+                                                            : () {
+                                                                ref.read(selectedTenantIdProvider.notifier).state =
+                                                                    tenant.id;
+                                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                                  SnackBar(
+                                                                    content: Text('Switched to Tenant: ${tenant.name}'),
+                                                                  ),
+                                                                );
+                                                              },
+                                                        child: Text(isActive ? 'Active' : 'Select'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            );
+                                          }).toList(),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMobileTenantList(
+    List<TenantDto> tenants,
+    ThemeData theme,
+    String? selectedTenantId,
+    bool isSuperAdmin,
+  ) {
+    return ListView.builder(
+      itemCount: tenants.length,
+      itemBuilder: (context, index) {
+        final tenant = tenants[index];
+        final isActive = selectedTenantId == tenant.id;
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: isActive ? theme.colorScheme.primary : theme.colorScheme.outlineVariant,
+              width: isActive ? 1.5 : 1,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              tenant.name,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isActive) ...[
+                            const SizedBox(width: 6),
+                            Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 16),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'ACTIVE',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Chip(
+                      label: Text(tenant.status),
+                      backgroundColor: tenant.status == 'ACTIVE' ? Colors.green.shade100 : Colors.red.shade100,
+                      labelStyle: TextStyle(
+                        color: tenant.status == 'ACTIVE' ? Colors.green.shade800 : Colors.red.shade800,
+                        fontSize: 11,
+                      ),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Code: ${tenant.code} • Subdomain: ${tenant.subdomain}',
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+                Text('Email: ${tenant.email}',
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+                if (tenant.phone != null && tenant.phone!.isNotEmpty)
+                  Text('Phone: ${tenant.phone}',
+                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant)),
+                const Divider(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 20),
+                          tooltip: 'Edit Tenant',
+                          onPressed: () => _showEditTenantDialog(tenant),
+                        ),
+                        Switch(
+                          value: tenant.status == 'ACTIVE',
+                          onChanged: (val) {
+                            ref.read(tenantsListProvider.notifier).toggleTenantStatus(tenant);
+                          },
+                        ),
+                        if (isSuperAdmin && tenant.code.toUpperCase() != 'EDUPULSE_SYSTEM')
+                          IconButton(
+                            icon: const Icon(Icons.delete_forever_outlined, color: Colors.red, size: 20),
+                            tooltip: 'Delete Tenant Permanently',
+                            onPressed: () => _showDeleteTenantDialog(tenant),
+                          ),
+                      ],
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isActive
+                            ? theme.colorScheme.secondaryContainer
+                            : theme.colorScheme.primary,
+                        foregroundColor: isActive
+                            ? theme.colorScheme.onSecondaryContainer
+                            : theme.colorScheme.onPrimary,
+                      ),
+                      onPressed: isActive
+                          ? null
+                          : () {
+                              ref.read(selectedTenantIdProvider.notifier).state = tenant.id;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Switched to Tenant: ${tenant.name}'),
+                                ),
+                              );
+                            },
+                      child: Text(isActive ? 'Active' : 'Select'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -251,7 +489,7 @@ class TenantFormDialog extends ConsumerStatefulWidget {
 
 class _TenantFormDialogState extends ConsumerState<TenantFormDialog> {
   final _formKey = GlobalKey<FormState>();
-  
+
   late final TextEditingController _nameController;
   late final TextEditingController _displayNameController;
   late final TextEditingController _codeController;
@@ -265,7 +503,7 @@ class _TenantFormDialogState extends ConsumerState<TenantFormDialog> {
   late final TextEditingController _postalCodeController;
   late final TextEditingController _panController;
   late final TextEditingController _gstinController;
-  
+
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -374,7 +612,7 @@ class _TenantFormDialogState extends ConsumerState<TenantFormDialog> {
     return AlertDialog(
       title: Text(isEdit ? 'Edit Tenant' : 'Create Tenant'),
       content: SizedBox(
-        width: 600,
+        width: Responsive.dialogWidth(context, maxWidth: 600),
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -538,6 +776,249 @@ class _TenantFormDialogState extends ConsumerState<TenantFormDialog> {
           child: _isLoading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
               : Text(isEdit ? 'Save Changes' : 'Create Tenant'),
+        ),
+      ],
+    );
+  }
+}
+
+class TenantDeleteDialog extends ConsumerStatefulWidget {
+  final TenantDto tenant;
+  const TenantDeleteDialog({super.key, required this.tenant});
+
+  @override
+  ConsumerState<TenantDeleteDialog> createState() => _TenantDeleteDialogState();
+}
+
+class _TenantDeleteDialogState extends ConsumerState<TenantDeleteDialog> {
+  final TextEditingController _confirmController = TextEditingController();
+  bool _isLoadingPreview = true;
+  bool _isDeleting = false;
+  TenantDeletionSummaryDto? _previewSummary;
+  String? _previewError;
+  String? _deleteError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreview();
+  }
+
+  @override
+  void dispose() {
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPreview() async {
+    setState(() {
+      _isLoadingPreview = true;
+      _previewError = null;
+    });
+
+    final result = await ref
+        .read(tenantsListProvider.notifier)
+        .previewTenantDeletion(widget.tenant.id);
+
+    result.when(
+      onSuccess: (summary) {
+        if (mounted) {
+          setState(() {
+            _previewSummary = summary;
+            _isLoadingPreview = false;
+          });
+        }
+      },
+      onFailure: (failure) {
+        if (mounted) {
+          setState(() {
+            _previewError = failure.message;
+            _isLoadingPreview = false;
+          });
+        }
+      },
+    );
+  }
+
+  Future<void> _handlePermanentDelete() async {
+    setState(() {
+      _isDeleting = true;
+      _deleteError = null;
+    });
+
+    final result = await ref
+        .read(tenantsListProvider.notifier)
+        .deleteTenantPermanent(widget.tenant.id);
+
+    if (!mounted) return;
+
+    result.when(
+      onSuccess: (summary) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.green.shade800,
+            content: Text(
+              'Tenant "${widget.tenant.name}" permanently deleted (${summary.totalRecordsDeleted} records removed).',
+            ),
+          ),
+        );
+      },
+      onFailure: (failure) {
+        setState(() {
+          _isDeleting = false;
+          _deleteError = failure.message;
+        });
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isNameMatched = _confirmController.text.trim() == widget.tenant.name.trim();
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: theme.colorScheme.error, size: 28),
+          const SizedBox(width: 8),
+          const Text('Delete Tenant Permanently'),
+        ],
+      ),
+      content: SizedBox(
+        width: Responsive.dialogWidth(context, maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: theme.colorScheme.error.withValues(alpha: 0.5)),
+                ),
+                child: Text(
+                  'DANGER: This action is irreversible. All schools, students, teachers, marks, examination, and financial records belonging exclusively to this tenant will be permanently wiped.',
+                  style: TextStyle(color: theme.colorScheme.onErrorContainer, fontSize: 13, height: 1.4),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Tenant to Delete:',
+                style: theme.textTheme.labelMedium?.copyWith(color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.tenant.name,
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                'Code: ${widget.tenant.code} | ID: ${widget.tenant.id}',
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Estimated Impact (Dry-Run Simulation):',
+                style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              if (_isLoadingPreview)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 8),
+                      Text('Calculating dependent entity impact...', style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                )
+              else if (_previewError != null)
+                Text(
+                  'Impact check warning: $_previewError',
+                  style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                )
+              else if (_previewSummary != null)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Wrap(
+                    spacing: 16,
+                    runSpacing: 8,
+                    children: [
+                      _buildCountBadge('Total Records', _previewSummary!.totalRecordsDeleted, isTotal: true),
+                      ..._previewSummary!.deletedCounts.entries.map(
+                        (e) => _buildCountBadge(e.key.replaceAll('_', ' '), e.value),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 20),
+              Text(
+                'To confirm, type the exact tenant name:',
+                style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              SelectableText(
+                widget.tenant.name,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _confirmController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Enter exact tenant name...',
+                  border: const OutlineInputBorder(),
+                  errorText: _deleteError,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isDeleting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.error,
+            foregroundColor: theme.colorScheme.onError,
+          ),
+          onPressed: (!isNameMatched || _isDeleting) ? null : _handlePermanentDelete,
+          child: _isDeleting
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('DELETE TENANT PERMANENTLY'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCountBadge(String label, int count, {bool isTotal = false}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(fontSize: 10, color: Colors.grey.shade600, fontWeight: FontWeight.bold),
+        ),
+        Text(
+          '$count',
+          style: TextStyle(
+            fontSize: isTotal ? 16 : 13,
+            fontWeight: FontWeight.bold,
+            color: isTotal ? Colors.red.shade700 : Colors.black87,
+          ),
         ),
       ],
     );

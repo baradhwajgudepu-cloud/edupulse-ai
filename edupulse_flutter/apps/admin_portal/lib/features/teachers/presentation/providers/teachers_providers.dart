@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_network/edupulse_network.dart';
 import '../../data/models/teachers_models.dart';
+import '../../data/models/teacher_360_models.dart';
 import '../../../school_setup/presentation/providers/school_setup_providers.dart';
 
 class TeacherFetchResult {
@@ -263,6 +264,67 @@ final teacherAssignmentsProvider =
   );
 });
 
+typedef TeacherAssignmentFilterParams = ({
+  String schoolId,
+  String? academicYearId,
+  String? teacherId,
+  String? subjectId,
+  String? classId,
+  String? sectionId,
+  String? status,
+  String? search,
+});
+
+final allTeacherAssignmentsProvider =
+    FutureProvider.family<List<TeacherSubjectAssignmentDto>, TeacherAssignmentFilterParams>((ref, params) async {
+  final apiClient = ref.watch(apiClientProvider);
+
+  final query = <String, String>{
+    'school_id': params.schoolId,
+    'limit': '100',
+  };
+  if (params.academicYearId != null && params.academicYearId!.isNotEmpty) {
+    query['academic_year_id'] = params.academicYearId!;
+  }
+  if (params.teacherId != null && params.teacherId!.isNotEmpty) {
+    query['teacher_id'] = params.teacherId!;
+  }
+  if (params.subjectId != null && params.subjectId!.isNotEmpty) {
+    query['subject_id'] = params.subjectId!;
+  }
+  if (params.classId != null && params.classId!.isNotEmpty) {
+    query['class_id'] = params.classId!;
+  }
+  if (params.sectionId != null && params.sectionId!.isNotEmpty) {
+    query['section_id'] = params.sectionId!;
+  }
+  if (params.status != null && params.status!.isNotEmpty) {
+    query['status'] = params.status!;
+  }
+  if (params.search != null && params.search!.isNotEmpty) {
+    query['search'] = params.search!;
+  }
+
+  final queryString = query.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
+
+  final result = await apiClient.get(
+    '/teacher-subject-assignments?$queryString',
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      final list = payload['data'] as List<dynamic>;
+      return list
+          .map((item) => TeacherSubjectAssignmentDto.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList();
+    },
+  );
+
+  return result.when(
+    onSuccess: (assignments) => assignments,
+    onFailure: (failure) => throw Exception(failure.message),
+  );
+});
+
+
 class TeacherActionState {
   final bool isLoading;
   final String? successMessage;
@@ -390,7 +452,9 @@ class AssignmentActionNotifier extends StateNotifier<AssignmentActionState> {
         
         // Invalidate specific teacher's assignments
         _ref.invalidate(teacherAssignmentsProvider(teacherId));
+        _ref.invalidate(allTeacherAssignmentsProvider);
         return true;
+
       },
       onFailure: (failure) {
         state = AssignmentActionState(
@@ -408,3 +472,40 @@ final assignmentActionProvider =
   final apiClient = ref.watch(apiClientProvider);
   return AssignmentActionNotifier(apiClient, ref);
 });
+
+class Teacher360Key {
+  final String schoolId;
+  final String teacherId;
+
+  const Teacher360Key({required this.schoolId, required this.teacherId});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Teacher360Key &&
+          runtimeType == other.runtimeType &&
+          schoolId == other.schoolId &&
+          teacherId == other.teacherId;
+
+  @override
+  int get hashCode => schoolId.hashCode ^ teacherId.hashCode;
+}
+
+final teacher360AnalyticsProvider =
+    FutureProvider.family<Teacher360Response, Teacher360Key>((ref, key) async {
+  final apiClient = ref.watch(apiClientProvider);
+  final result = await apiClient.get(
+    '/teachers/${key.teacherId}/360?school_id=${key.schoolId}',
+    mapper: (json) {
+      final payload = json as Map<String, dynamic>;
+      return Teacher360Response.fromJson(
+          Map<String, dynamic>.from(payload['data'] as Map));
+    },
+  );
+
+  return result.when(
+    onSuccess: (data) => data,
+    onFailure: (failure) => throw Exception(failure.message),
+  );
+});
+

@@ -2,7 +2,7 @@ import uuid
 import enum
 from typing import Optional, Dict, Any
 from datetime import date, datetime
-from sqlalchemy import String, Integer, Boolean, ForeignKey, UniqueConstraint, Enum as SQLEnum, JSON, Date, Numeric, DateTime, text
+from sqlalchemy import String, Integer, Boolean, ForeignKey, UniqueConstraint, Enum as SQLEnum, JSON, Date, Numeric, DateTime, text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -39,7 +39,7 @@ class TeacherSubjectAssignment(Base, BaseModelMixin):
     
     assigned_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     assigned_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()"), nullable=True
+        DateTime(timezone=True), default=func.now(), server_default=func.now(), nullable=True
     )
     
     status: Mapped[AssignmentStatus] = mapped_column(

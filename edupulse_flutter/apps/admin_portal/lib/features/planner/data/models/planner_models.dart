@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 // --- EVENTS ---
 enum EventAudience {
   all,
@@ -265,3 +263,173 @@ class Examination {
     );
   }
 }
+
+// --- TEACHER LEAVES ---
+class LeaveRequest {
+  final String id;
+  final String tenantId;
+  final String schoolId;
+  final String teacherId;
+  final String teacherName;
+  final String? teacherDesignation;
+  final String? teacherEmployeeId;
+  final String leaveType;
+  final String startDate;
+  final String endDate;
+  final String reason;
+  final String? remarks;
+  final String status; // PENDING, APPROVED, REJECTED, CANCELLED
+  final String requestedAt;
+  final String? reviewedAt;
+  final String? reviewedBy;
+  final String? reviewerRemarks;
+
+  LeaveRequest({
+    required this.id,
+    required this.tenantId,
+    required this.schoolId,
+    required this.teacherId,
+    required this.teacherName,
+    this.teacherDesignation,
+    this.teacherEmployeeId,
+    required this.leaveType,
+    required this.startDate,
+    required this.endDate,
+    required this.reason,
+    this.remarks,
+    required this.status,
+    required this.requestedAt,
+    this.reviewedAt,
+    this.reviewedBy,
+    this.reviewerRemarks,
+  });
+
+  int get daysCount {
+    try {
+      final start = DateTime.parse(startDate);
+      final end = DateTime.parse(endDate);
+      return end.difference(start).inDays + 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  factory LeaveRequest.fromJson(Map<String, dynamic> json) {
+    String teacherName = 'Staff Member';
+    String? designation;
+    String? employeeId;
+
+    if (json['teacher'] != null && json['teacher'] is Map) {
+      final t = json['teacher'] as Map<String, dynamic>;
+      final fn = t['first_name'] as String? ?? '';
+      final ln = t['last_name'] as String? ?? '';
+      teacherName = '$fn $ln'.trim();
+      if (teacherName.isEmpty) teacherName = 'Staff Member';
+      designation = t['designation'] as String?;
+      employeeId = t['employee_id'] as String?;
+    }
+
+    return LeaveRequest(
+      id: json['id'] as String? ?? '',
+      tenantId: json['tenant_id'] as String? ?? '',
+      schoolId: json['school_id'] as String? ?? '',
+      teacherId: json['teacher_id'] as String? ?? '',
+      teacherName: teacherName,
+      teacherDesignation: designation,
+      teacherEmployeeId: employeeId,
+      leaveType: json['leave_type'] as String? ?? 'CASUAL',
+      startDate: json['start_date'] as String? ?? '',
+      endDate: json['end_date'] as String? ?? '',
+      reason: json['reason'] as String? ?? '',
+      remarks: json['remarks'] as String?,
+      status: (json['status'] as String? ?? 'PENDING').toUpperCase(),
+      requestedAt: json['requested_at'] as String? ?? '',
+      reviewedAt: json['reviewed_at'] as String?,
+      reviewedBy: json['reviewed_by'] as String?,
+      reviewerRemarks: json['reviewer_remarks'] as String?,
+    );
+  }
+}
+
+// --- NOTIFICATIONS ---
+class PlannerNotification {
+  final String id;
+  final String title;
+  final String message;
+  final String targetAudience;
+  final String priority;
+  final String status; // DRAFT, SCHEDULED, PUBLISHED
+  final String createdAt;
+  final String? scheduledFor;
+
+  PlannerNotification({
+    required this.id,
+    required this.title,
+    required this.message,
+    required this.targetAudience,
+    required this.priority,
+    required this.status,
+    required this.createdAt,
+    this.scheduledFor,
+  });
+
+  factory PlannerNotification.fromJson(Map<String, dynamic> json) {
+    final publishedAt = json['published_at'] as String?;
+    final scheduledAt = json['scheduled_at'] as String? ?? json['scheduled_for'] as String?;
+
+    String computedStatus;
+    if (publishedAt != null && publishedAt.isNotEmpty) {
+      computedStatus = 'PUBLISHED';
+    } else if (scheduledAt != null && scheduledAt.isNotEmpty) {
+      computedStatus = 'SCHEDULED';
+    } else {
+      final rawStatus = (json['status'] as String? ?? '').toUpperCase();
+      if (rawStatus == 'PUBLISHED' || rawStatus == 'SCHEDULED' || rawStatus == 'DRAFT') {
+        computedStatus = rawStatus;
+      } else {
+        computedStatus = 'PUBLISHED';
+      }
+    }
+
+    return PlannerNotification(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      message: json['message'] as String? ?? (json['body'] as String? ?? ''),
+      targetAudience: json['target_role'] as String? ?? (json['target_audience'] as String? ?? 'ALL'),
+      priority: (json['priority'] as String? ?? 'NORMAL').toUpperCase(),
+      status: computedStatus,
+      createdAt: json['created_at'] as String? ?? '',
+      scheduledFor: scheduledAt,
+    );
+  }
+}
+
+// --- OPERATIONAL TIMELINE ITEM ---
+enum PlannerTimelineType {
+  leave,
+  exam,
+  circular,
+  notification,
+  event;
+}
+
+class PlannerTimelineItem {
+  final String id;
+  final String title;
+  final String description;
+  final String timestamp;
+  final String status;
+  final PlannerTimelineType type;
+  final String? actionRoute;
+
+  PlannerTimelineItem({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.timestamp,
+    required this.status,
+    required this.type,
+    this.actionRoute,
+  });
+}
+

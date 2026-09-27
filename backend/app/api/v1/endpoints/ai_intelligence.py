@@ -20,6 +20,7 @@ from app.models.marks import Marks, MarksStatus
 from app.models.attendance import Attendance
 from app.models.fee import StudentFeeAssignment
 from app.schemas.response import APIResponse
+from app.services.academic_predictive_service import AcademicPredictiveService
 
 logger = logging.getLogger(__name__)
 
@@ -96,29 +97,83 @@ async def get_ai_intelligence_summary(
         Subject.subject_name,
         func.count(Marks.id).label("total_papers"),
         func.avg(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("subj_avg"),
-        func.sum(case((Marks.marks_obtained < (Marks.maximum_marks * 0.5), 1), else_=0)).label("below_50_count")
+        func.percentile_cont(0.5).within_group(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("subj_median"),
+        func.min(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("subj_min"),
+        func.max(Marks.marks_obtained / Marks.maximum_marks * 100.0).label("subj_max"),
+        func.sum(case((Marks.marks_obtained >= (Marks.maximum_marks * 0.35), 1), else_=0)).label("passed_count"),
+        func.sum(case((Marks.marks_obtained < (Marks.maximum_marks * 0.5), 1), else_=0)).label("below_50_count"),
+        func.sum(case((Marks.marks_obtained / Marks.maximum_marks * 100.0 >= 90.0, 1), else_=0)).label("bucket_90_100"),
+        func.sum(case((and_(Marks.marks_obtained / Marks.maximum_marks * 100.0 >= 75.0, Marks.marks_obtained / Marks.maximum_marks * 100.0 < 90.0), 1), else_=0)).label("bucket_75_89"),
+        func.sum(case((and_(Marks.marks_obtained / Marks.maximum_marks * 100.0 >= 60.0, Marks.marks_obtained / Marks.maximum_marks * 100.0 < 75.0), 1), else_=0)).label("bucket_60_74"),
+        func.sum(case((and_(Marks.marks_obtained / Marks.maximum_marks * 100.0 >= 50.0, Marks.marks_obtained / Marks.maximum_marks * 100.0 < 60.0), 1), else_=0)).label("bucket_50_59"),
+        func.sum(case((Marks.marks_obtained / Marks.maximum_marks * 100.0 < 50.0, 1), else_=0)).label("bucket_below_50")
     ).join(Subject, Subject.id == Marks.subject_id)\
      .where(and_(*marks_filters))\
-     .group_by(Subject.id, Subject.subject_name)
+     .group_by(Subject.id, Subject.subject_name)\
+     .order_by(Subject.subject_name.asc())
     res_subj_agg = await db.execute(stmt_subj_agg)
     subj_rows = res_subj_agg.all()
 
     subject_difficulty_list = []
     difficult_subject_count = 0
-    for s_id, s_name, total_p, subj_avg, below_50 in subj_rows:
+    for (s_id, s_name, total_p, subj_avg, subj_median, subj_min, subj_max,
+         passed_cnt, below_50, b_90_100, b_75_89, b_60_74, b_50_59, b_below_50) in subj_rows:
         total_p = total_p or 1
         below_50_pct = round(float(below_50 or 0) / float(total_p) * 100.0, 1)
-        difficulty_tier = "HIGH" if below_50_pct >= 35.0 else ("MEDIUM" if below_50_pct >= 20.0 else "NORMAL")
-        if difficulty_tier == "HIGH":
+        
+        # Centralized consistent difficulty thresholds: NORMAL, WATCH, MODERATE, HIGH
+        if below_50_pct >= 40.0:
+            difficulty_tier = "HIGH"
+        elif below_50_pct >= 25.0:
+            difficulty_tier = "MODERATE"
+        elif below_50_pct >= 15.0:
+            difficulty_tier = "WATCH"
+        else:
+            difficulty_tier = "NORMAL"
+
+        if difficulty_tier in ("HIGH", "MODERATE"):
             difficult_subject_count += 1
-            
+
+        subj_avg_val = round(float(subj_avg or 0.0), 1)
+        subj_med_val = round(float(subj_median or subj_avg_val), 1) if subj_median is not None else subj_avg_val
+        subj_min_val = round(float(subj_min or 0.0), 1)
+        subj_max_val = round(float(subj_max or 0.0), 1)
+        pass_pct_val = round(float(passed_cnt or 0) / float(total_p) * 100.0, 1)
+
+        diff_score_val = min(100.0, max(0.0, round((below_50_pct * 0.7) + ((100.0 - subj_avg_val) * 0.3), 1)))
+
+        # Deterministic human-readable explanation based on actual calculated values
+        if difficulty_tier == "NORMAL":
+            difficulty_explanation = f"{s_name} is classified as NORMAL because {below_50_pct:g}% of students scored below 50%, while the overall class average ({subj_avg_val}%) remains within the expected academic range."
+        elif difficulty_tier == "WATCH":
+            difficulty_explanation = f"{s_name} is classified as WATCH because {below_50_pct:g}% of students scored below 50%, while the overall class average is {subj_avg_val}%, showing early signs of difficulty that warrant attention."
+        elif difficulty_tier == "MODERATE":
+            difficulty_explanation = f"{s_name} is classified as MODERATE because {below_50_pct:g}% of students scored below 50%, with class average at {subj_avg_val}%, reflecting notable academic difficulty."
+        else:
+            difficulty_explanation = f"{s_name} is classified as HIGH because {below_50_pct:g}% of students scored below 50%, with class average at {subj_avg_val}%, requiring targeted instructional intervention."
+
         subject_difficulty_list.append({
             "subject_id": str(s_id),
             "subject_name": s_name,
-            "average_percentage": round(float(subj_avg or 0.0), 1),
+            "total_students_evaluated": int(total_p),
+            "average_percentage": subj_avg_val,
+            "median_percentage": subj_med_val,
+            "highest_percentage": subj_max_val,
+            "lowest_percentage": subj_min_val,
+            "pass_percentage": pass_pct_val,
             "below_50_percentage": below_50_pct,
+            "below_50_count": int(below_50 or 0),
             "difficulty_index": difficulty_tier,
-            "remedial_recommendation": f"Review foundational topics and conduct diagnostic assessments for {s_name}." if difficulty_tier == "HIGH" else "Performance meets expected standards."
+            "difficulty_score": diff_score_val,
+            "difficulty_explanation": difficulty_explanation,
+            "remedial_recommendation": f"Review foundational topics and conduct diagnostic assessments for {s_name}." if difficulty_tier in ("HIGH", "MODERATE") else "Performance meets expected standards.",
+            "marks_distribution": {
+                "score_90_100": int(b_90_100 or 0),
+                "score_75_89": int(b_75_89 or 0),
+                "score_60_74": int(b_60_74 or 0),
+                "score_50_59": int(b_50_59 or 0),
+                "score_below_50": int(b_below_50 or 0)
+            }
         })
 
     subject_difficulty_score = max(50, 100 - (difficult_subject_count * 15))
@@ -304,3 +359,62 @@ async def get_ai_intelligence_summary(
             }
         }
     )
+
+@router.get(
+    "/academic-predictive",
+    response_model=APIResponse[Dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+    summary="Get Scoped Academic Predictive Analytics with Strict Data Sufficiency"
+)
+async def get_academic_predictive(
+    school_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    class_id: Optional[uuid.UUID] = Query(None),
+    section_id: Optional[uuid.UUID] = Query(None),
+    student_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("reports.read")),
+    db: AsyncSession = Depends(get_db)
+) -> APIResponse[Dict[str, Any]]:
+    service = AcademicPredictiveService(db)
+    result = await service.get_academic_predictive_analysis(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
+        class_id=class_id,
+        section_id=section_id,
+        student_id=student_id
+    )
+    return APIResponse[Dict[str, Any]](
+        success=True,
+        message=result["data_sufficiency"]["status_message"],
+        data=result
+    )
+
+@router.get(
+    "/student/{student_id}/predictive",
+    response_model=APIResponse[Dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+    summary="Get Student Academic Trajectory and Predictive Score Band"
+)
+async def get_student_predictive(
+    student_id: uuid.UUID,
+    school_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    tenant_id: uuid.UUID = Depends(get_tenant_id),
+    current_user: User = Depends(require_permission("reports.read")),
+    db: AsyncSession = Depends(get_db)
+) -> APIResponse[Dict[str, Any]]:
+    service = AcademicPredictiveService(db)
+    result = await service.get_academic_predictive_analysis(
+        tenant_id=tenant_id,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
+        student_id=student_id
+    )
+    return APIResponse[Dict[str, Any]](
+        success=True,
+        message=result["data_sufficiency"]["status_message"],
+        data=result
+    )
+

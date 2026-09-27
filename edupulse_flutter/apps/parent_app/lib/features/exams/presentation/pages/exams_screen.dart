@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_theme/edupulse_theme.dart';
 import 'package:edupulse_network/edupulse_network.dart';
+import 'package:edupulse_core/edupulse_core.dart';
 import 'package:intl/intl.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
@@ -16,46 +17,96 @@ String formatDate(String? dateStr) {
   }
 }
 
-final parentExamsProvider = FutureProvider.family<List<Map<String, dynamic>>, String>((ref, schoolId) async {
+typedef ParentExamParam = ({String schoolId, String studentId});
+
+final parentExamsProvider = FutureProvider.family<List<Map<String, dynamic>>, ParentExamParam>((ref, param) async {
   final apiClient = ref.read(apiClientProvider);
   
-  final examResult = await apiClient.get(
-    '/examinations/parent',
-    queryParameters: {'school_id': schoolId},
+  final timetableResult = await apiClient.get(
+    '/marks/parent/student/${param.studentId}/timetable',
+    queryParameters: {'school_id': param.schoolId},
     mapper: (json) => json as Map<String, dynamic>,
   );
   
   final marksResult = await apiClient.get(
-    '/marks/student',
-    queryParameters: {'school_id': schoolId},
+    '/marks/parent/student/${param.studentId}',
+    queryParameters: {'school_id': param.schoolId},
     mapper: (json) => json as Map<String, dynamic>,
   );
 
-  final List exams = examResult.when(
+  final List timetableSlots = timetableResult.when(
     onSuccess: (data) => (data['data'] as List?) ?? [],
     onFailure: (_) => [],
   );
 
-  final List marks = marksResult.when(
+  final List publishedExams = marksResult.when(
     onSuccess: (data) => (data['data'] as List?) ?? [],
     onFailure: (_) => [],
   );
 
   final List<Map<String, dynamic>> combined = [];
-  for (final exam in exams) {
-    final scheduleId = exam['id'] as String?;
-    final examId = exam['exam_id'] as String?;
-    
-    final matchingMark = marks.firstWhere(
-      (m) => m['exam_schedule_id'] == scheduleId || m['examination_id'] == examId,
-      orElse: () => null,
-    );
+
+  for (final slot in timetableSlots) {
+    final scheduleMap = slot as Map<String, dynamic>;
+    final examId = scheduleMap['examination_id'] as String?;
+    final subjectId = scheduleMap['subject_id'] as String?;
+    final subjectName = scheduleMap['subject_name'] as String?;
+
+    Map<String, dynamic>? matchingMark;
+    for (final exam in publishedExams) {
+      if (exam['examination_id'] == examId) {
+        final subMarks = (exam['subject_marks'] as List?) ?? [];
+        for (final sm in subMarks) {
+          if (sm['subject_id'] == subjectId ||
+              (subjectName != null && sm['subject_name'] == subjectName)) {
+            matchingMark = sm as Map<String, dynamic>;
+            break;
+          }
+        }
+      }
+      if (matchingMark != null) break;
+    }
 
     combined.add({
-      'schedule': exam,
+      'schedule': scheduleMap,
       'mark': matchingMark,
     });
   }
+
+  // Also include any published exam subject marks not present in upcoming timetable
+  for (final exam in publishedExams) {
+    final examName = exam['exam_name'] as String? ?? 'Examination';
+    final examId = exam['examination_id'] as String?;
+    final subMarks = (exam['subject_marks'] as List?) ?? [];
+    for (final sm in subMarks) {
+      final subjectId = sm['subject_id'] as String?;
+      final subjectName = sm['subject_name'] as String?;
+      final alreadyAdded = combined.any((c) {
+        final s = c['schedule'] as Map<String, dynamic>;
+        return s['examination_id'] == examId &&
+            (s['subject_id'] == subjectId || s['subject_name'] == subjectName);
+      });
+      if (!alreadyAdded) {
+        combined.add({
+          'schedule': {
+            'examination_id': examId,
+            'exam_name': examName,
+            'subject_id': subjectId,
+            'subject_name': subjectName,
+            'subject_code': sm['subject_code'] as String?,
+            'exam_date': sm['exam_date'] ?? 'N/A',
+            'start_time': 'Completed',
+            'end_time': '',
+            'room_number': 'N/A',
+            'max_marks': sm['maximum_marks'] ?? 100,
+            'pass_marks': sm['pass_marks'] ?? 35,
+          },
+          'mark': sm,
+        });
+      }
+    }
+  }
+
   return combined;
 });
 
@@ -68,22 +119,75 @@ class ExamsScreen extends ConsumerWidget {
     final spacing = theme.extension<AppSpacing>() ?? const AppSpacing.standard();
     final radius = theme.extension<AppRadius>() ?? const AppRadius.standard();
 
-    // Get selected student context
-    String studentName = 'Rahul Sharma';
     final authState = ref.watch(authStateProvider);
-    String schoolId = '16730f87-bf8d-44e0-acf9-4b055a778b58';
-    if (authState is Authenticated) {
-      schoolId = authState.user.schools.firstOrNull ?? schoolId;
-    }
+    final schoolId = authState is Authenticated ? authState.user.schools.firstOrNull : null;
+
     final dbState = ref.watch(dashboardStateProvider);
-    if (dbState is DashboardSuccess) {
-      final selected = dbState.data.selectedStudent;
-      if (selected != null) {
-        studentName = selected.fullName;
+    if (dbState is! DashboardSuccess || dbState.data.selectedStudent == null) {
+      if (dbState is DashboardLoading || dbState is DashboardInitial) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Exams & Results'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          body: const Center(child: CircularProgressIndicator()),
+        );
       }
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Exams & Results'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.person_off_outlined, size: 64, color: theme.colorScheme.outline),
+              SizedBox(height: spacing.md),
+              Text(
+                'No student selected',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
-    final examsAsync = ref.watch(parentExamsProvider(schoolId));
+    if (schoolId == null || schoolId.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Exams & Results'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.school_outlined, size: 64, color: theme.colorScheme.outline),
+              SizedBox(height: spacing.md),
+              Text(
+                'No school profile associated',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final selected = dbState.data.selectedStudent!;
+    final studentName = selected.fullName;
+    final examsAsync = ref.watch(parentExamsProvider((schoolId: schoolId, studentId: selected.id)));
 
     return Scaffold(
       appBar: AppBar(
@@ -134,7 +238,7 @@ class ExamsScreen extends ConsumerWidget {
           }
 
           return RefreshIndicator(
-            onRefresh: () => ref.refresh(parentExamsProvider(schoolId).future),
+            onRefresh: () => ref.refresh(parentExamsProvider((schoolId: schoolId, studentId: selected.id)).future),
             child: ListView(
               padding: EdgeInsets.all(spacing.md),
               children: [
@@ -154,6 +258,39 @@ class ExamsScreen extends ConsumerWidget {
                         style: theme.textTheme.titleSmall?.copyWith(
                           color: theme.colorScheme.onSecondaryContainer,
                           fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: spacing.md),
+
+                // AI Academic Trajectory Card
+                Container(
+                  padding: EdgeInsets.all(spacing.md),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0D9488).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(radius.sm),
+                    border: Border.all(color: const Color(0xFF0D9488).withValues(alpha: 0.2)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_graph_rounded, color: Color(0xFF0D9488), size: 24),
+                      SizedBox(width: spacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'AI Academic Trajectory & Forecast',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F766E)),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Trajectory prediction evaluates historical exam cycles to project performance bands and highlight subject strengths.',
+                              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -188,9 +325,16 @@ class ExamsScreen extends ConsumerWidget {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                'Exam: $dateStr',
-                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                              Expanded(
+                                child: Text(
+                                  '${displaySubjectName(
+                                    subjectName: schedule['subject_name'] as String?,
+                                    subjectCode: schedule['subject_code'] as String?,
+                                    subjectId: schedule['subject_id'] as String?,
+                                  )} • $dateStr',
+                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                               if (marksObtained != null)
                                 Container(

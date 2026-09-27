@@ -71,7 +71,8 @@ class SubjectService:
                 detail="Practical-only subjects cannot have theory marks."
             )
 
-        if pass_m > (theory + practical):
+        total_eval_marks = (theory + practical) if (theory + practical) > 0 else (obj_in.max_marks or 0)
+        if total_eval_marks > 0 and pass_m > total_eval_marks:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Passing marks cannot exceed total theory and practical marks."

@@ -20,13 +20,22 @@ class FakeHistorySessionManager implements SessionManager {
   }
 
   @override
+  Future<String?> getTenantName() async => 'Test Tenant';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Test School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+
+  @override
   Future<String?> getAccessToken() async => 'mock_access';
   @override
   Future<String?> getRefreshToken() async => 'mock_refresh';
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
@@ -292,8 +301,8 @@ void main() {
       // 4. Verify Subject Performance Matrix elements
       expect(find.text('Subject Performance'), findsOneWidget);
       expect(find.text('Mathematics'), findsWidgets);
-      expect(find.text('88'), findsOneWidget);
-      expect(find.text('93'), findsOneWidget); 
+      expect(find.text('88 (A)'), findsOneWidget);
+      expect(find.text('93 (A+)'), findsOneWidget); 
 
       // 5. Verify Academic Performance History (Expandable Tiles)
       expect(find.text('Academic Performance History'), findsOneWidget);
@@ -369,7 +378,7 @@ void main() {
 
       // Verify overall preview loads fine but history shows error
       expect(find.text('Demo Aditya Patel'), findsWidgets);
-      expect(find.text('Unable to load academic history.'), findsOneWidget);
+      expect(find.text('Failed to load academic history'), findsOneWidget);
       final retryButton = find.byType(ElevatedButton);
       expect(retryButton, findsOneWidget); 
 

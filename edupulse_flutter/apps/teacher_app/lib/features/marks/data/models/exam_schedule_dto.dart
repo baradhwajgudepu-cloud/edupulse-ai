@@ -21,6 +21,10 @@ class ExamScheduleDto with _$ExamScheduleDto {
     @JsonKey(name: 'room_number') String? roomNumber,
     @JsonKey(name: 'is_active') required bool isActive,
     required int version,
+    @JsonKey(name: 'subject_name') String? subjectName,
+    @JsonKey(name: 'subject_code') String? subjectCode,
+    @JsonKey(name: 'class_name') String? className,
+    @JsonKey(name: 'section_name') String? sectionName,
   }) = _ExamScheduleDto;
 
   const ExamScheduleDto._();
@@ -44,6 +48,10 @@ class ExamScheduleDto with _$ExamScheduleDto {
       roomNumber: roomNumber,
       isActive: isActive,
       version: version,
+      subjectName: subjectName,
+      subjectCode: subjectCode,
+      className: className,
+      sectionName: sectionName,
     );
   }
 }

@@ -10,6 +10,7 @@ class UserEntity extends Equatable {
   final List<String> roles;
   final List<String> schools;
   final Map<String, String> schoolNames;
+  final bool mustChangePassword;
 
   const UserEntity({
     required this.id,
@@ -21,6 +22,7 @@ class UserEntity extends Equatable {
     required this.roles,
     required this.schools,
     this.schoolNames = const {},
+    this.mustChangePassword = false,
   });
 
   String get fullName => '$firstName $lastName';
@@ -36,5 +38,6 @@ class UserEntity extends Equatable {
         roles,
         schools,
         schoolNames,
+        mustChangePassword,
       ];
 }

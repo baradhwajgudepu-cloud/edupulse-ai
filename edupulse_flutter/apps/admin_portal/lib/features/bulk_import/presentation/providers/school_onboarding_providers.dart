@@ -32,19 +32,33 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
 
   SchoolOnboardingNotifier(this._ref) : super(OnboardingState.initial()) {
     _initFromExistingContext();
+    _ref.listen<TenantsListState>(tenantsListProvider, (previous, next) {
+      if (next.tenants.isNotEmpty && state.selectedTenantId != null) {
+        final match = next.tenants.where((t) => t.id == state.selectedTenantId && t.isActive && t.status == 'ACTIVE').firstOrNull;
+        if (match == null) {
+          state = state.copyWith(
+            createNewTenant: true,
+            selectedTenantId: null,
+            resolvedTenantId: null,
+            resolvedTenantName: null,
+          );
+        } else {
+          state = state.copyWith(
+            resolvedTenantId: match.id,
+            resolvedTenantName: match.name,
+          );
+        }
+      }
+    });
   }
 
   void _initFromExistingContext() {
     final selectedTenantId = _ref.read(selectedTenantIdProvider);
-    final activeTenantId = _ref.read(activeTenantIdProvider);
-    final tenantId = (selectedTenantId != null && selectedTenantId.isNotEmpty)
-        ? selectedTenantId
-        : ((activeTenantId != null && activeTenantId.isNotEmpty) ? activeTenantId : null);
 
-    if (tenantId != null && tenantId.isNotEmpty) {
+    if (selectedTenantId != null && selectedTenantId.isNotEmpty) {
       final tenants = _ref.read(tenantsListProvider).tenants;
       if (tenants.isNotEmpty) {
-        final match = tenants.where((t) => t.id == tenantId && t.isActive && t.status == 'ACTIVE').firstOrNull;
+        final match = tenants.where((t) => t.id == selectedTenantId && t.isActive && t.status == 'ACTIVE').firstOrNull;
         if (match != null) {
           state = state.copyWith(
             createNewTenant: false,
@@ -53,23 +67,7 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             resolvedTenantName: match.name,
           );
           return;
-        } else {
-          // Explicitly deleted or missing tenant
-          state = state.copyWith(
-            createNewTenant: true,
-            selectedTenantId: null,
-            resolvedTenantId: null,
-            resolvedTenantName: null,
-          );
-          return;
         }
-      } else {
-        // Initial state or tenants list loading
-        state = state.copyWith(
-          createNewTenant: false,
-          selectedTenantId: tenantId,
-        );
-        return;
       }
     }
 
@@ -562,12 +560,17 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
             },
           );
           if (preCheck is Success<List<dynamic>> && preCheck.data.isNotEmpty) {
-            final existing = preCheck.data.first as Map<String, dynamic>;
-            final isActive = existing['is_active'] as bool? ?? true;
-            final status = existing['status'] as String? ?? 'ACTIVE';
-            if (isActive && status == 'ACTIVE') {
-              activeTenantId = existing['id'] as String;
-              activeTenantName = (existing['name'] as String?) ?? tName;
+            final match = preCheck.data
+                .map((e) => e as Map<String, dynamic>)
+                .where((m) => m['code'] == baseCode)
+                .firstOrNull;
+            if (match != null) {
+              final isActive = match['is_active'] as bool? ?? true;
+              final status = match['status'] as String? ?? 'ACTIVE';
+              if (isActive && status == 'ACTIVE') {
+                activeTenantId = match['id'] as String;
+                activeTenantName = (match['name'] as String?) ?? tName;
+              }
             }
           }
         } catch (_) {}
@@ -575,7 +578,8 @@ class SchoolOnboardingNotifier extends StateNotifier<OnboardingState> {
         const int maxCollisionRetries = 5;
         while (collisionAttempt < maxCollisionRetries && activeTenantId == null) {
           final tenantResult = await apiClient.post(
-            '/tenants?idempotent=true',
+            '/tenants',
+            queryParameters: {'idempotent': 'true'},
             data: {
               'name': tName,
               'code': currentCode,

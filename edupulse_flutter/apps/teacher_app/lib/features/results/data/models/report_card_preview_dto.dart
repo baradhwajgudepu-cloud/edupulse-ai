@@ -13,6 +13,8 @@ class ReportCardSubjectMarkRowDto with _$ReportCardSubjectMarkRowDto {
     @JsonKey(name: 'result_status') required String resultStatus,
     required String grade,
     String? remarks,
+    @JsonKey(name: 'subject_code') String? subjectCode,
+    @JsonKey(name: 'subject_id') String? subjectId,
   }) = _ReportCardSubjectMarkRowDto;
 
   const ReportCardSubjectMarkRowDto._();
@@ -28,6 +30,8 @@ class ReportCardSubjectMarkRowDto with _$ReportCardSubjectMarkRowDto {
       resultStatus: resultStatus,
       grade: grade,
       remarks: remarks,
+      subjectCode: subjectCode,
+      subjectId: subjectId,
     );
   }
 }

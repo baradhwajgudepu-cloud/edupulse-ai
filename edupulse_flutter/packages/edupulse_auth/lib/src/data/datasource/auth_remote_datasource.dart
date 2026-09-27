@@ -104,4 +104,18 @@ class AuthRemoteDatasource {
       mapper: (_) {},
     );
   }
+
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _apiClient.post(
+      '/auth/change-password',
+      data: {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      },
+      mapper: (_) {},
+    );
+  }
 }

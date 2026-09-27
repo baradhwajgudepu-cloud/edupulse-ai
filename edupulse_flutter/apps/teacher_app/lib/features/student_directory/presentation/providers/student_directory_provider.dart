@@ -1,10 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:edupulse_network/edupulse_network.dart';
 import '../../../my_classes/domain/entities/student.dart';
 import '../../../my_classes/domain/repositories/my_classes_repository.dart';
 import '../../../my_classes/presentation/providers/my_classes_provider.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../dashboard/presentation/providers/dashboard_provider.dart';
+import '../../../../core/providers/school_context_provider.dart';
 
 sealed class StudentDirectoryState {
   const StudentDirectoryState();
@@ -80,10 +80,10 @@ class StudentDirectoryNotifier extends StateNotifier<StudentDirectoryState> {
     }
 
     final academicYearId = dashboardState is DashboardSuccess
-        ? (dashboardState as DashboardSuccess).data.academicYear.id
+        ? dashboardState.data.academicYear.id
         : (dashboardState as DashboardRefreshing).data.academicYear.id;
 
-    final schoolId = authState.user.schools.isNotEmpty ? authState.user.schools.first : null;
+    final schoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
     if (schoolId == null) {
       state = const StudentDirectoryError('No school associated with this account.');
       return;
@@ -93,6 +93,12 @@ class StudentDirectoryNotifier extends StateNotifier<StudentDirectoryState> {
       schoolId: schoolId,
       academicYearId: academicYearId,
     );
+
+    // Guard against race condition: discard response if active school changed in-flight
+    final currentSchoolId = _ref.read(activeSchoolIdProvider) ?? (authState.user.schools.isNotEmpty ? authState.user.schools.first : null);
+    if (currentSchoolId != schoolId) {
+      return;
+    }
 
     result.when(
       onSuccess: (data) {

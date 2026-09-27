@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:edupulse_core/edupulse_core.dart';
@@ -56,6 +57,14 @@ class FakeStudentRepository implements AuthRepository {
   }) async {
     return const ApiResult.success(null);
   }
+
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    return const ApiResult.success(null);
+  }
 }
 
 class FakeStudentSessionManager implements SessionManager {
@@ -76,13 +85,21 @@ class FakeStudentSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String source = 'SessionManager.clearSession']) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'Delhi Public School';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
+  Future<String?> getTenantName() async => 'DPS Society';
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class FakeStudentApiClient extends BaseApiClient {
@@ -542,7 +559,7 @@ void main() {
   });
 
   testWidgets('GoRouter student navigation routes to details correctly without literal :id', (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.physicalSize = const Size(1280, 1024);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() {
       tester.view.resetPhysicalSize();
@@ -577,6 +594,7 @@ void main() {
     
     final studentNameFinder = find.text('Aarav Sharma');
     expect(studentNameFinder, findsOneWidget);
+    await tester.ensureVisible(studentNameFinder);
     await tester.tap(studentNameFinder);
     await tester.pumpAndSettle();
 
@@ -585,7 +603,7 @@ void main() {
     expect(router.state.uri.queryParameters['school_id'], 'school_1');
     expect(router.state.uri.path.contains(':id'), false);
     
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   group('Student Management Provider and Mutation Audit Tests', () {

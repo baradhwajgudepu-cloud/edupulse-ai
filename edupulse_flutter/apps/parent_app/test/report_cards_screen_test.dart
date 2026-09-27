@@ -11,7 +11,40 @@ import 'package:parent_app/features/homework/presentation/providers/homework_pro
 import 'package:parent_app/features/homework/domain/usecases/download_attachment_usecase.dart';
 import 'package:parent_app/core/providers/bootstrap_provider.dart';
 import 'package:edupulse_files/edupulse_files.dart';
+import 'package:parent_app/features/dashboard/presentation/providers/dashboard_provider.dart';
 
+class FakeDashboardNotifier extends DashboardNotifier {
+  @override
+  DashboardState build() {
+    final student = StudentProfile(
+      id: 'student_1',
+      firstName: 'Rahul',
+      lastName: 'Sharma',
+      admissionNumber: 'ADM101',
+      classId: 'class_1',
+      sectionId: 'sec_1',
+      academicYearId: 'ay_1',
+      className: 'Class 10',
+      sectionName: 'A',
+    );
+    return DashboardSuccess(
+      ParentDashboardData(
+        students: [student],
+        selectedStudent: student,
+        attendancePercentage: 90.0,
+        presentCount: 9,
+        absentCount: 1,
+        totalFees: 1000,
+        paidFees: 500,
+        pendingFees: 500,
+        pendingHomeworkCount: 1,
+        upcomingExam: 'Math',
+        latestResult: 'A+',
+        latestNotice: 'Notice',
+      ),
+    );
+  }
+}
 class FakeAuthRepository implements AuthRepository {
   @override
   Future<ApiResult<SessionToken>> login({required String email, required String password}) async {
@@ -38,6 +71,17 @@ class FakeAuthRepository implements AuthRepository {
   }
   @override
   Future<ApiResult<void>> requestPasswordReset({required String email}) async => const ApiResult.success(null);
+  @override
+  Future<ApiResult<void>> resetPassword({
+    required String token,
+    required String newPassword,
+    String? confirmPassword,
+  }) async => const ApiResult.success(null);
+  @override
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async => const ApiResult.success(null);
 }
 
 class FakeSessionManager implements SessionManager {
@@ -58,13 +102,21 @@ class FakeSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String? reason]) async {}
   @override
   Future<bool> hasSession() async => true;
   @override
   Future<String?> getSchoolId() async => 'school_1';
   @override
   Future<void> saveSchoolId(String schoolId) async {}
+  @override
+  Future<String?> getSchoolName() async => 'School 1';
+  @override
+  Future<String?> getTenantName() async => 'Tenant 1';
+  @override
+  Future<void> saveSchoolName(String schoolName) async {}
+  @override
+  Future<void> saveTenantName(String tenantName) async {}
 }
 
 class TestBaseApiClient extends BaseApiClient {
@@ -94,6 +146,21 @@ class TestBaseApiClient extends BaseApiClient {
       }));
     }
     return ApiResult.failure(const ApiFailure(message: 'Not found', type: ApiFailureType.unknown));
+  }
+}
+
+class TestFailingApiClient extends BaseApiClient {
+  TestFailingApiClient() : super(Dio());
+
+  @override
+  Future<ApiResult<T>> get<T>(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    Options? options,
+    CancelToken? cancelToken,
+    required T Function(dynamic json) mapper,
+  }) async {
+    return ApiResult.failure(const ApiFailure(message: 'No report card found for student.', type: ApiFailureType.unknown, statusCode: 404));
   }
 }
 
@@ -136,6 +203,43 @@ class FakeStorageManager implements StorageManager {
     return File(path).exists();
   }
 }
+
+class MockDashboardNotifier extends DashboardNotifier {
+  final DashboardState initialState;
+  MockDashboardNotifier(this.initialState);
+
+  @override
+  DashboardState build() => initialState;
+}
+
+final testStudent = StudentProfile(
+  id: 'student_1',
+  firstName: 'Rahul',
+  lastName: 'Sharma',
+  admissionNumber: 'ADM001',
+  classId: 'class_1',
+  sectionId: 'sec_1',
+  academicYearId: 'ay_1',
+  className: 'Class 10',
+  sectionName: 'A',
+);
+
+final mockDashboardState = DashboardSuccess(
+  ParentDashboardData(
+    students: [testStudent],
+    selectedStudent: testStudent,
+    attendancePercentage: 92.0,
+    presentCount: 180,
+    absentCount: 15,
+    totalFees: 12000,
+    paidFees: 10000,
+    pendingFees: 2000,
+    pendingHomeworkCount: 1,
+    upcomingExam: 'Mid-Term',
+    latestResult: 'Science: 88/100',
+    latestNotice: 'Notice',
+  ),
+);
 
 void main() {
   late Directory tempDir;
@@ -190,6 +294,7 @@ void main() {
           sessionManagerProvider.overrideWithValue(FakeSessionManager()),
           storageManagerProvider.overrideWithValue(fakeStorage),
           downloadAttachmentUseCaseProvider.overrideWithValue(fakeDownload),
+          dashboardStateProvider.overrideWith(() => MockDashboardNotifier(mockDashboardState)),
         ],
         child: const MaterialApp(
           home: ReportCardsScreen(),
@@ -232,6 +337,7 @@ void main() {
           sessionManagerProvider.overrideWithValue(FakeSessionManager()),
           storageManagerProvider.overrideWithValue(fakeStorage),
           downloadAttachmentUseCaseProvider.overrideWithValue(fakeDownload),
+          dashboardStateProvider.overrideWith(() => MockDashboardNotifier(mockDashboardState)),
         ],
         child: const MaterialApp(
           home: ReportCardsScreen(),
@@ -248,5 +354,35 @@ void main() {
 
     // Verify mapped error message is rendered
     expect(find.text('Report card not found.'), findsOneWidget);
+  });
+
+  testWidgets('ReportCardsScreen renders empty state with Refresh button when no report card is published', (WidgetTester tester) async {
+    final fakeDownload = FakeDownloadAttachmentUseCase(
+      const ApiResult.failure(ApiFailure(message: 'Report card not found.', type: ApiFailureType.unknown)),
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          bootstrapResultProvider.overrideWithValue(BootstrapResult(success: true)),
+          apiClientProvider.overrideWithValue(TestFailingApiClient()),
+          authRepositoryProvider.overrideWithValue(FakeAuthRepository()),
+          sessionManagerProvider.overrideWithValue(FakeSessionManager()),
+          storageManagerProvider.overrideWithValue(fakeStorage),
+          downloadAttachmentUseCaseProvider.overrideWithValue(fakeDownload),
+          dashboardStateProvider.overrideWith(() => MockDashboardNotifier(mockDashboardState)),
+        ],
+        child: const MaterialApp(
+          home: ReportCardsScreen(),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    // Verify empty state text and refresh button
+    expect(find.text('No report cards published'), findsOneWidget);
+    expect(find.text('There are no report cards published for the active student in this academic year.'), findsOneWidget);
+    expect(find.text('Refresh'), findsOneWidget);
   });
 }

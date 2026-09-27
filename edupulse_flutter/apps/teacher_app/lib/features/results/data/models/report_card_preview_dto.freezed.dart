@@ -31,6 +31,10 @@ mixin _$ReportCardSubjectMarkRowDto {
   String get resultStatus => throw _privateConstructorUsedError;
   String get grade => throw _privateConstructorUsedError;
   String? get remarks => throw _privateConstructorUsedError;
+  @JsonKey(name: 'subject_code')
+  String? get subjectCode => throw _privateConstructorUsedError;
+  @JsonKey(name: 'subject_id')
+  String? get subjectId => throw _privateConstructorUsedError;
 
   /// Serializes this ReportCardSubjectMarkRowDto to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -56,7 +60,9 @@ abstract class $ReportCardSubjectMarkRowDtoCopyWith<$Res> {
       @JsonKey(name: 'marks_obtained') double? marksObtained,
       @JsonKey(name: 'result_status') String resultStatus,
       String grade,
-      String? remarks});
+      String? remarks,
+      @JsonKey(name: 'subject_code') String? subjectCode,
+      @JsonKey(name: 'subject_id') String? subjectId});
 }
 
 /// @nodoc
@@ -81,6 +87,8 @@ class _$ReportCardSubjectMarkRowDtoCopyWithImpl<$Res,
     Object? resultStatus = null,
     Object? grade = null,
     Object? remarks = freezed,
+    Object? subjectCode = freezed,
+    Object? subjectId = freezed,
   }) {
     return _then(_value.copyWith(
       subjectName: null == subjectName
@@ -107,6 +115,14 @@ class _$ReportCardSubjectMarkRowDtoCopyWithImpl<$Res,
           ? _value.remarks
           : remarks // ignore: cast_nullable_to_non_nullable
               as String?,
+      subjectCode: freezed == subjectCode
+          ? _value.subjectCode
+          : subjectCode // ignore: cast_nullable_to_non_nullable
+              as String?,
+      subjectId: freezed == subjectId
+          ? _value.subjectId
+          : subjectId // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -126,7 +142,9 @@ abstract class _$$ReportCardSubjectMarkRowDtoImplCopyWith<$Res>
       @JsonKey(name: 'marks_obtained') double? marksObtained,
       @JsonKey(name: 'result_status') String resultStatus,
       String grade,
-      String? remarks});
+      String? remarks,
+      @JsonKey(name: 'subject_code') String? subjectCode,
+      @JsonKey(name: 'subject_id') String? subjectId});
 }
 
 /// @nodoc
@@ -150,6 +168,8 @@ class __$$ReportCardSubjectMarkRowDtoImplCopyWithImpl<$Res>
     Object? resultStatus = null,
     Object? grade = null,
     Object? remarks = freezed,
+    Object? subjectCode = freezed,
+    Object? subjectId = freezed,
   }) {
     return _then(_$ReportCardSubjectMarkRowDtoImpl(
       subjectName: null == subjectName
@@ -176,6 +196,14 @@ class __$$ReportCardSubjectMarkRowDtoImplCopyWithImpl<$Res>
           ? _value.remarks
           : remarks // ignore: cast_nullable_to_non_nullable
               as String?,
+      subjectCode: freezed == subjectCode
+          ? _value.subjectCode
+          : subjectCode // ignore: cast_nullable_to_non_nullable
+              as String?,
+      subjectId: freezed == subjectId
+          ? _value.subjectId
+          : subjectId // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }
@@ -189,7 +217,9 @@ class _$ReportCardSubjectMarkRowDtoImpl extends _ReportCardSubjectMarkRowDto {
       @JsonKey(name: 'marks_obtained') this.marksObtained,
       @JsonKey(name: 'result_status') required this.resultStatus,
       required this.grade,
-      this.remarks})
+      this.remarks,
+      @JsonKey(name: 'subject_code') this.subjectCode,
+      @JsonKey(name: 'subject_id') this.subjectId})
       : super._();
 
   factory _$ReportCardSubjectMarkRowDtoImpl.fromJson(
@@ -212,10 +242,16 @@ class _$ReportCardSubjectMarkRowDtoImpl extends _ReportCardSubjectMarkRowDto {
   final String grade;
   @override
   final String? remarks;
+  @override
+  @JsonKey(name: 'subject_code')
+  final String? subjectCode;
+  @override
+  @JsonKey(name: 'subject_id')
+  final String? subjectId;
 
   @override
   String toString() {
-    return 'ReportCardSubjectMarkRowDto(subjectName: $subjectName, maximumMarks: $maximumMarks, marksObtained: $marksObtained, resultStatus: $resultStatus, grade: $grade, remarks: $remarks)';
+    return 'ReportCardSubjectMarkRowDto(subjectName: $subjectName, maximumMarks: $maximumMarks, marksObtained: $marksObtained, resultStatus: $resultStatus, grade: $grade, remarks: $remarks, subjectCode: $subjectCode, subjectId: $subjectId)';
   }
 
   @override
@@ -232,13 +268,17 @@ class _$ReportCardSubjectMarkRowDtoImpl extends _ReportCardSubjectMarkRowDto {
             (identical(other.resultStatus, resultStatus) ||
                 other.resultStatus == resultStatus) &&
             (identical(other.grade, grade) || other.grade == grade) &&
-            (identical(other.remarks, remarks) || other.remarks == remarks));
+            (identical(other.remarks, remarks) || other.remarks == remarks) &&
+            (identical(other.subjectCode, subjectCode) ||
+                other.subjectCode == subjectCode) &&
+            (identical(other.subjectId, subjectId) ||
+                other.subjectId == subjectId));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, subjectName, maximumMarks,
-      marksObtained, resultStatus, grade, remarks);
+      marksObtained, resultStatus, grade, remarks, subjectCode, subjectId);
 
   /// Create a copy of ReportCardSubjectMarkRowDto
   /// with the given fields replaced by the non-null parameter values.
@@ -260,12 +300,15 @@ class _$ReportCardSubjectMarkRowDtoImpl extends _ReportCardSubjectMarkRowDto {
 abstract class _ReportCardSubjectMarkRowDto
     extends ReportCardSubjectMarkRowDto {
   const factory _ReportCardSubjectMarkRowDto(
-      {@JsonKey(name: 'subject_name') required final String subjectName,
-      @JsonKey(name: 'maximum_marks') required final int maximumMarks,
-      @JsonKey(name: 'marks_obtained') final double? marksObtained,
-      @JsonKey(name: 'result_status') required final String resultStatus,
-      required final String grade,
-      final String? remarks}) = _$ReportCardSubjectMarkRowDtoImpl;
+          {@JsonKey(name: 'subject_name') required final String subjectName,
+          @JsonKey(name: 'maximum_marks') required final int maximumMarks,
+          @JsonKey(name: 'marks_obtained') final double? marksObtained,
+          @JsonKey(name: 'result_status') required final String resultStatus,
+          required final String grade,
+          final String? remarks,
+          @JsonKey(name: 'subject_code') final String? subjectCode,
+          @JsonKey(name: 'subject_id') final String? subjectId}) =
+      _$ReportCardSubjectMarkRowDtoImpl;
   const _ReportCardSubjectMarkRowDto._() : super._();
 
   factory _ReportCardSubjectMarkRowDto.fromJson(Map<String, dynamic> json) =
@@ -287,6 +330,12 @@ abstract class _ReportCardSubjectMarkRowDto
   String get grade;
   @override
   String? get remarks;
+  @override
+  @JsonKey(name: 'subject_code')
+  String? get subjectCode;
+  @override
+  @JsonKey(name: 'subject_id')
+  String? get subjectId;
 
   /// Create a copy of ReportCardSubjectMarkRowDto
   /// with the given fields replaced by the non-null parameter values.

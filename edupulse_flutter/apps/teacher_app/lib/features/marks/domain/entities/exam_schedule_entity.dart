@@ -13,6 +13,10 @@ class ExamScheduleEntity {
   final String? roomNumber;
   final bool isActive;
   final int version;
+  final String? subjectName;
+  final String? subjectCode;
+  final String? className;
+  final String? sectionName;
 
   const ExamScheduleEntity({
     required this.id,
@@ -29,5 +33,9 @@ class ExamScheduleEntity {
     this.roomNumber,
     required this.isActive,
     required this.version,
+    this.subjectName,
+    this.subjectCode,
+    this.className,
+    this.sectionName,
   });
 }

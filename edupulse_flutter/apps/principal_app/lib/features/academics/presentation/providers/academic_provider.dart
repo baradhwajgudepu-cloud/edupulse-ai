@@ -23,6 +23,13 @@ class AcademicState {
   final List<Map<String, dynamic>> classes;
   final List<Map<String, dynamic>> sections;
   final List<Map<String, dynamic>> academicYears;
+  final Map<String, dynamic>? planningSummary;
+  final AcademicHeatmapData? academicHeatmap;
+  final List<SyllabusRecoveryPlan> recoveryPlans;
+  final TeacherAbsenceImpact? absenceImpact;
+  final bool isRecoveryLoading;
+  final String? recoveryMessage;
+  final String selectedHeatmapFilter;
   final bool isLoading;
   final String? errorMessage;
 
@@ -32,6 +39,13 @@ class AcademicState {
     this.classes = const [],
     this.sections = const [],
     this.academicYears = const [],
+    this.planningSummary,
+    this.academicHeatmap,
+    this.recoveryPlans = const [],
+    this.absenceImpact,
+    this.isRecoveryLoading = false,
+    this.recoveryMessage,
+    this.selectedHeatmapFilter = 'ALL',
     this.isLoading = false,
     this.errorMessage,
   });
@@ -42,9 +56,17 @@ class AcademicState {
     List<Map<String, dynamic>>? classes,
     List<Map<String, dynamic>>? sections,
     List<Map<String, dynamic>>? academicYears,
+    Map<String, dynamic>? planningSummary,
+    AcademicHeatmapData? academicHeatmap,
+    List<SyllabusRecoveryPlan>? recoveryPlans,
+    TeacherAbsenceImpact? absenceImpact,
+    bool? isRecoveryLoading,
+    String? recoveryMessage,
+    String? selectedHeatmapFilter,
     bool? isLoading,
     String? errorMessage,
     bool clearError = false,
+    bool clearRecoveryMessage = false,
   }) {
     return AcademicState(
       examinations: examinations ?? this.examinations,
@@ -52,6 +74,13 @@ class AcademicState {
       classes: classes ?? this.classes,
       sections: sections ?? this.sections,
       academicYears: academicYears ?? this.academicYears,
+      planningSummary: planningSummary ?? this.planningSummary,
+      academicHeatmap: academicHeatmap ?? this.academicHeatmap,
+      recoveryPlans: recoveryPlans ?? this.recoveryPlans,
+      absenceImpact: absenceImpact ?? this.absenceImpact,
+      isRecoveryLoading: isRecoveryLoading ?? this.isRecoveryLoading,
+      recoveryMessage: clearRecoveryMessage ? null : (recoveryMessage ?? this.recoveryMessage),
+      selectedHeatmapFilter: selectedHeatmapFilter ?? this.selectedHeatmapFilter,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     );
@@ -85,6 +114,26 @@ class AcademicNotifier extends StateNotifier<AcademicState> {
       onFailure: (failure) {
         state = state.copyWith(isLoading: false, errorMessage: failure.message);
       },
+    );
+
+    // Concurrently fetch planning and syllabus metrics
+    await fetchPlanningSummary();
+  }
+
+  Future<void> fetchPlanningSummary() async {
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) return;
+
+    final result = await _repository.getAcademicPlanningSummary(
+      schoolId: schoolId,
+      academicYearId: '',
+    );
+
+    result.when(
+      onSuccess: (data) {
+        state = state.copyWith(planningSummary: data);
+      },
+      onFailure: (_) {},
     );
   }
 
@@ -223,6 +272,161 @@ class AcademicNotifier extends StateNotifier<AcademicState> {
       },
       onFailure: (failure) => false,
     );
+  }
+
+  Future<void> fetchAcademicHeatmap({bool isRefresh = false, String? academicYearId}) async {
+    if (!isRefresh) {
+      state = state.copyWith(isRecoveryLoading: true);
+    }
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) {
+      state = state.copyWith(isRecoveryLoading: false, errorMessage: 'No active school context found.');
+      return;
+    }
+    final result = await _repository.getAcademicHeatmap(schoolId: schoolId, academicYearId: academicYearId);
+    result.when(
+      onSuccess: (data) {
+        state = state.copyWith(academicHeatmap: data, isRecoveryLoading: false);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<void> fetchRecoveryPlans({String? status, bool isRefresh = false}) async {
+    if (!isRefresh) {
+      state = state.copyWith(isRecoveryLoading: true);
+    }
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) {
+      state = state.copyWith(isRecoveryLoading: false);
+      return;
+    }
+    final result = await _repository.getRecoveryPlans(schoolId: schoolId, status: status);
+    result.when(
+      onSuccess: (plans) {
+        state = state.copyWith(recoveryPlans: plans, isRecoveryLoading: false);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<void> fetchAbsenceImpact({required String teacherId, required String absenceDate}) async {
+    state = state.copyWith(isRecoveryLoading: true);
+    final schoolId = await _sessionManager.getSchoolId();
+    if (schoolId == null || schoolId.isEmpty) {
+      state = state.copyWith(isRecoveryLoading: false);
+      return;
+    }
+    final result = await _repository.getTeacherAbsenceImpact(
+      schoolId: schoolId,
+      teacherId: teacherId,
+      absenceDate: absenceDate,
+    );
+    result.when(
+      onSuccess: (impact) {
+        state = state.copyWith(absenceImpact: impact, isRecoveryLoading: false);
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+      },
+    );
+  }
+
+  Future<bool> updateRecoveryPlanItem({
+    required String planId,
+    required String itemId,
+    required Map<String, dynamic> data,
+  }) async {
+    state = state.copyWith(isRecoveryLoading: true);
+    final result = await _repository.updateRecoveryPlanItem(
+      planId: planId,
+      itemId: itemId,
+      data: data,
+    );
+    return result.when(
+      onSuccess: (updatedPlan) {
+        final updatedList = state.recoveryPlans.map((p) => p.id == planId ? updatedPlan : p).toList();
+        state = state.copyWith(
+          recoveryPlans: updatedList,
+          isRecoveryLoading: false,
+          recoveryMessage: 'Slot updated and validated successfully.',
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> regenerateRecoveryPlan({required String planId, String? reason}) async {
+    state = state.copyWith(isRecoveryLoading: true);
+    final result = await _repository.regenerateRecoveryPlan(planId: planId, reason: reason);
+    return result.when(
+      onSuccess: (updatedPlan) {
+        final updatedList = state.recoveryPlans.map((p) => p.id == planId ? updatedPlan : p).toList();
+        state = state.copyWith(
+          recoveryPlans: updatedList,
+          isRecoveryLoading: false,
+          recoveryMessage: 'Recovery plan recomputed successfully.',
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> approveRecoveryPlan(String planId, {String? remarks}) async {
+    state = state.copyWith(isRecoveryLoading: true);
+    final result = await _repository.approveRecoveryPlan(planId: planId, remarks: remarks);
+    return result.when(
+      onSuccess: (updatedPlan) {
+        final updatedList = state.recoveryPlans.map((p) => p.id == planId ? updatedPlan : p).toList();
+        state = state.copyWith(
+          recoveryPlans: updatedList,
+          isRecoveryLoading: false,
+          recoveryMessage: 'Recovery plan approved and applied to timetable.',
+        );
+        fetchAcademicHeatmap(isRefresh: true);
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  Future<bool> rejectRecoveryPlan(String planId, {required String remarks}) async {
+    state = state.copyWith(isRecoveryLoading: true);
+    final result = await _repository.rejectRecoveryPlan(planId: planId, remarks: remarks);
+    return result.when(
+      onSuccess: (updatedPlan) {
+        final updatedList = state.recoveryPlans.map((p) => p.id == planId ? updatedPlan : p).toList();
+        state = state.copyWith(
+          recoveryPlans: updatedList,
+          isRecoveryLoading: false,
+          recoveryMessage: 'Recovery plan rejected.',
+        );
+        return true;
+      },
+      onFailure: (failure) {
+        state = state.copyWith(isRecoveryLoading: false, errorMessage: failure.message);
+        return false;
+      },
+    );
+  }
+
+  void setHeatmapFilter(String filter) {
+    state = state.copyWith(selectedHeatmapFilter: filter);
   }
 }
 

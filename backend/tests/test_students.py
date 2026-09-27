@@ -769,10 +769,10 @@ async def test_student_reallocation_and_transfers(client: AsyncClient, setup_stu
     assert resp_update.json()["data"]["section_id"] == str(sec_a)
     assert resp_update.json()["data"]["transferred_at"] is not None
 
-    # 3. Try to reallocate to the exact same section -> should fail 400
+    # 3. Saving the exact same section is idempotent -> succeeds with 200 and retains placement
     resp_same = await client.put(f"/api/v1/students/{student_id}?school_id={school_id}", json=update_payload, headers=headers)
-    assert resp_same.status_code == 400
-    assert "already assigned" in resp_same.json()["message"].lower()
+    assert resp_same.status_code == 200
+    assert resp_same.json()["data"]["section_id"] == str(sec_a)
 
     # 4. Create another student in Section B
     payload2 = payload.copy()
@@ -911,3 +911,79 @@ async def test_class_promotion_engine(client: AsyncClient, setup_student_data, d
     resp_student_after = await client.get(f"/api/v1/students/{student_id}?school_id={school_id}", headers=headers)
     assert resp_student_after.json()["data"]["class_id"] == str(next_class.id), f"Promotion failed: {resp_promote.json()}"
     assert resp_student_after.json()["data"]["section_id"] == str(target_sec.id)
+
+
+@pytest.mark.anyio
+async def test_student_360_analytics_zero_records(client: AsyncClient, setup_student_data: dict):
+    """
+    Ensure Student 360 analytics for a newly registered student with zero attendance,
+    zero examination marks, and zero fee transactions correctly returns no-data states
+    without any fabricated percentages or demo numbers.
+    """
+    data = setup_student_data
+    school_id = data["school_a"].id
+    ay_id = data["ay_a"].id
+    class_id = data["class_a"].id
+    sec_id = data["sec_b"].id
+    headers = data["auth_headers"]
+
+    # 1. Create a fresh student
+    payload = {
+        "school_id": str(school_id),
+        "academic_year_id": str(ay_id),
+        "class_id": str(class_id),
+        "section_id": str(sec_id),
+        "admission_number": "ADM-360-TEST",
+        "roll_number": "R-360",
+        "first_name": "Priya",
+        "last_name": "Sharma",
+        "gender": "FEMALE",
+        "date_of_birth": "2016-04-12",
+        "admission_date": "2026-06-01",
+    }
+    resp = await client.post("/api/v1/students", json=payload, headers=headers)
+    assert resp.status_code == 201
+    student_id = resp.json()["data"]["id"]
+
+    # 2. Query Student 360 analytics
+    resp_analytics = await client.get(
+        f"/api/v1/students/{student_id}/analytics?school_id={school_id}",
+        headers=headers
+    )
+    assert resp_analytics.status_code == 200
+    analytics = resp_analytics.json()["data"]
+
+    # Verify zero-attendance behavior
+    attendance = analytics["attendance"]
+    assert attendance["has_data"] is False
+    assert attendance["attendance_rate"] is None
+    assert attendance["total_days"] == 0
+    assert attendance["present_days"] == 0
+    assert attendance["absent_days"] == 0
+    assert attendance["leave_days"] == 0
+    assert attendance["monthly_trend"] == []
+
+    # Verify zero-academic marks behavior
+    academics = analytics["academics"]
+    assert academics["has_data"] is False
+    assert academics["academic_average"] is None
+    assert academics["exam_trends"] == []
+    assert academics["subject_scores"] == []
+
+    # Verify AI analysis is not fabricated
+    ai_analysis = analytics["ai_analysis"]
+    assert ai_analysis["has_data"] is False
+    assert ai_analysis["status_message"] == "Insufficient data for AI analysis"
+    assert ai_analysis["headline"] is None
+    assert ai_analysis["strong_highlights"] == []
+    assert ai_analysis["support_highlights"] == []
+    assert ai_analysis["action_recommendation"] is None
+
+    # Verify school isolation: query with non-existent or inaccessible school
+    other_school_id = uuid.uuid4()
+    resp_isolated = await client.get(
+        f"/api/v1/students/{student_id}/analytics?school_id={other_school_id}",
+        headers=headers
+    )
+    assert resp_isolated.status_code in [403, 404]
+

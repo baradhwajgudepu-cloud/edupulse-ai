@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/school_setup_providers.dart';
+import '../../data/models/school_setup_models.dart';
+import '../../../teachers/data/models/teachers_models.dart';
+import '../../../teachers/presentation/providers/teachers_providers.dart';
+import '../../../teachers/presentation/widgets/assignment_form_dialog.dart';
+import '../../../../core/routing/routes.dart';
 
 class SectionDetailsScreen extends ConsumerStatefulWidget {
   final String schoolId;
@@ -39,6 +44,8 @@ class _SectionDetailsScreenState extends ConsumerState<SectionDetailsScreen> {
     _isEditMode = widget.sectionId != null && widget.sectionId != 'new';
     Future.microtask(() {
       ref.read(classesProvider(widget.schoolId).notifier).fetchClasses();
+      ref.read(subjectsProvider(widget.schoolId).notifier).fetchSubjects();
+      ref.read(teachersListProvider.notifier).fetchTeachers();
       if (_isEditMode) {
         _loadSectionDetails();
       }
@@ -302,6 +309,10 @@ class _SectionDetailsScreenState extends ConsumerState<SectionDetailsScreen> {
                   ),
                 ),
               ),
+              if (_isEditMode) ...[
+                const SizedBox(height: 16),
+                _buildAssignedTeachersSection(theme),
+              ],
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -323,6 +334,504 @@ class _SectionDetailsScreenState extends ConsumerState<SectionDetailsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showAssignmentDialog([TeacherSubjectAssignmentDto? assignment, bool isClassTeacher = false]) {
+    showDialog(
+      context: context,
+      builder: (context) => AssignmentFormDialog(
+        initialClassId: _selectedClassId,
+        initialSectionId: widget.sectionId,
+        initialAcademicYearId: _selectedAyId,
+        isClassTeacherDefault: isClassTeacher,
+        existingAssignment: assignment,
+      ),
+    );
+  }
+
+  Future<void> _deleteAssignment(TeacherSubjectAssignmentDto a) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Assignment?'),
+        content: const Text('Are you sure you want to remove this teacher assignment?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final success = await ref.read(assignmentActionProvider.notifier).execute(
+      method: 'DELETE',
+      path: '/teacher-subject-assignments/${a.id}?school_id=${widget.schoolId}',
+      teacherId: a.teacherId,
+      successMsg: 'Assignment removed successfully',
+    );
+    if (success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Teacher assignment removed successfully'), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  Widget _buildAssignedTeachersSection(ThemeData theme) {
+    if (!_isEditMode || widget.sectionId == null) {
+      return const SizedBox.shrink();
+    }
+
+    final assignmentsAsync = ref.watch(allTeacherAssignmentsProvider((
+      schoolId: widget.schoolId,
+      academicYearId: _selectedAyId,
+      classId: _selectedClassId,
+      sectionId: widget.sectionId,
+      teacherId: null,
+      subjectId: null,
+      status: null,
+      search: null,
+    )));
+
+    final subjectsState = ref.watch(subjectsProvider(widget.schoolId));
+    final teachersState = ref.watch(teachersListProvider);
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Assigned Teachers & Class Teacher',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text('Class teacher and subject teacher allocations for this section',
+                        style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade600)),
+                  ],
+                ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.table_chart_outlined, size: 18),
+                      label: const Text('View Timetable'),
+                      onPressed: () => context.push('${AppRoutes.timetables}?section_id=${widget.sectionId}'),
+                    ),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.person_add_alt_1, size: 18),
+                      label: const Text('Assign Teacher'),
+                      onPressed: () => _showAssignmentDialog(),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            assignmentsAsync.when(
+              loading: () => const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24.0),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+              error: (err, _) => Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text('Failed to load assignments: $err', style: const TextStyle(color: Colors.red)),
+              ),
+              data: (assignments) {
+                final classTeacher = assignments.cast<TeacherSubjectAssignmentDto?>().firstWhere(
+                      (a) => a != null && a.isClassTeacher && a.status == 'ACTIVE',
+                      orElse: () => null,
+                    );
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Class Teacher Banner
+                    _buildClassTeacherBanner(classTeacher, teachersState.teachers, subjectsState.subjects, theme),
+                    const SizedBox(height: 16),
+                    Text('Subject Teachers Matrix',
+                        style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    if (assignments.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(Icons.assignment_ind_outlined, size: 36, color: Colors.grey.shade400),
+                            const SizedBox(height: 8),
+                            const Text('No teachers mapped to this section yet.',
+                                style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('Assign First Teacher'),
+                              onPressed: () => _showAssignmentDialog(),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 650) {
+                            return _buildAssignmentsMobileList(assignments, teachersState.teachers, subjectsState.subjects, theme);
+                          }
+                          return _buildAssignmentsTable(assignments, teachersState.teachers, subjectsState.subjects, theme);
+                        },
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClassTeacherBanner(
+    TeacherSubjectAssignmentDto? ct,
+    List<TeacherDto> teachers,
+    List<SubjectDto> subjects,
+    ThemeData theme,
+  ) {
+    if (ct == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.amber.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.amber.shade300),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.amber.shade800),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'No active Class Teacher assigned to this section yet.',
+                style: TextStyle(color: Colors.amber.shade900, fontWeight: FontWeight.w500),
+              ),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Assign Class Teacher'),
+              onPressed: () => _showAssignmentDialog(null, true),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final teacher = teachers.firstWhere(
+      (t) => t.id == ct.teacherId,
+      orElse: () => TeacherDto(id: ct.teacherId, tenantId: '', schoolId: '', employeeCode: '', staffCode: '', firstName: 'Unknown', lastName: 'Teacher', status: 'ACTIVE', version: 1),
+    );
+    final subject = subjects.firstWhere(
+      (s) => s.id == ct.subjectId,
+      orElse: () => const SubjectDto(id: '', tenantId: '', schoolId: '', academicYearId: '', subjectCode: '', subjectName: 'General', category: '', subjectType: '', theoryMarks: 100, practicalMarks: 0, passMarks: 40, status: 'ACTIVE', isActive: true, version: 1),
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: Colors.white,
+            radius: 20,
+            child: const Icon(Icons.stars_rounded, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('CLASS TEACHER', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        teacher.fullName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Subject: ${subject.subjectName} (${subject.subjectCode}) • ${ct.weeklyPeriods} periods/week',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            tooltip: 'Edit Class Teacher',
+            onPressed: () => _showAssignmentDialog(ct),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssignmentsTable(
+    List<TeacherSubjectAssignmentDto> assignments,
+    List<TeacherDto> teachers,
+    List<SubjectDto> subjects,
+    ThemeData theme,
+  ) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Scrollbar(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStateProperty.all(theme.colorScheme.surfaceVariant.withOpacity(0.3)),
+              columns: const [
+                DataColumn(label: Text('Subject')),
+                DataColumn(label: Text('Assigned Teacher')),
+                DataColumn(label: Text('Role / Type')),
+                DataColumn(label: Text('Periods / Wk')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Actions')),
+              ],
+              rows: assignments.map((a) {
+                final teacher = teachers.firstWhere(
+                  (t) => t.id == a.teacherId,
+                  orElse: () => TeacherDto(id: a.teacherId, tenantId: '', schoolId: '', employeeCode: '', staffCode: '', firstName: 'Teacher', lastName: '(${a.teacherId.substring(0, 4)})', status: 'ACTIVE', version: 1),
+                );
+                final subject = subjects.firstWhere(
+                  (s) => s.id == a.subjectId,
+                  orElse: () => SubjectDto(id: a.subjectId, tenantId: '', schoolId: '', academicYearId: '', subjectCode: '', subjectName: 'Subject (${a.subjectId.substring(0, 4)})', category: '', subjectType: '', theoryMarks: 100, practicalMarks: 0, passMarks: 40, status: 'ACTIVE', isActive: true, version: 1),
+                );
+
+                return DataRow(
+                  cells: [
+                    DataCell(
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(subject.subjectName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          Text(subject.subjectCode, style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    DataCell(
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircleAvatar(
+                            radius: 12,
+                            backgroundColor: theme.colorScheme.primaryContainer,
+                            child: Text(
+                              teacher.firstName.isNotEmpty ? teacher.firstName[0].toUpperCase() : 'T',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(teacher.fullName),
+                        ],
+                      ),
+                    ),
+                    DataCell(
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(a.assignmentType, style: const TextStyle(fontSize: 12)),
+                          if (a.isClassTeacher) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.blue.shade200),
+                              ),
+                              child: Text('Class Teacher', style: TextStyle(color: Colors.blue.shade800, fontSize: 10, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    DataCell(Text('${a.weeklyPeriods} / wk')),
+                    DataCell(
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: a.status == 'ACTIVE' ? Colors.green.shade50 : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          a.status,
+                          style: TextStyle(
+                            color: a.status == 'ACTIVE' ? Colors.green.shade700 : Colors.red.shade700,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    DataCell(
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            tooltip: 'Edit Assignment',
+                            onPressed: () => _showAssignmentDialog(a),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                            tooltip: 'Remove Assignment',
+                            onPressed: () => _deleteAssignment(a),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAssignmentsMobileList(
+    List<TeacherSubjectAssignmentDto> assignments,
+    List<TeacherDto> teachers,
+    List<SubjectDto> subjects,
+    ThemeData theme,
+  ) {
+    return Column(
+      children: assignments.map((a) {
+        final teacher = teachers.firstWhere(
+          (t) => t.id == a.teacherId,
+          orElse: () => TeacherDto(id: a.teacherId, tenantId: '', schoolId: '', employeeCode: '', staffCode: '', firstName: 'Teacher', lastName: '', status: 'ACTIVE', version: 1),
+        );
+        final subject = subjects.firstWhere(
+          (s) => s.id == a.subjectId,
+          orElse: () => SubjectDto(id: a.subjectId, tenantId: '', schoolId: '', academicYearId: '', subjectCode: '', subjectName: 'Subject', category: '', subjectType: '', theoryMarks: 100, practicalMarks: 0, passMarks: 40, status: 'ACTIVE', isActive: true, version: 1),
+        );
+
+        return Card(
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: theme.colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(subject.subjectName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: a.status == 'ACTIVE' ? Colors.green.shade50 : Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        a.status,
+                        style: TextStyle(
+                          color: a.status == 'ACTIVE' ? Colors.green.shade700 : Colors.red.shade700,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text('Teacher: ${teacher.fullName}', style: TextStyle(color: Colors.grey.shade800, fontSize: 13)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text('Type: ${a.assignmentType}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    const SizedBox(width: 8),
+                    Text('• ${a.weeklyPeriods} periods/wk', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                    if (a.isClassTeacher) ...[
+                      const SizedBox(width: 8),
+                      Text('• Class Teacher', style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.edit_outlined, size: 14),
+                      label: const Text('Edit', style: TextStyle(fontSize: 12)),
+                      onPressed: () => _showAssignmentDialog(a),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.delete_outline, size: 14, color: Colors.red),
+                      label: const Text('Remove', style: TextStyle(fontSize: 12, color: Colors.red)),
+                      onPressed: () => _deleteAssignment(a),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }

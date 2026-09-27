@@ -9,6 +9,18 @@ import 'package:admin_portal/features/school_setup/presentation/providers/school
 import 'package:admin_portal/features/promotions/presentation/pages/promotions_screen.dart';
 
 class FakeTestSessionManager implements SessionManager {
+  @override
+  Future<String?> getSchoolName() async => null;
+
+  @override
+  Future<String?> getTenantName() async => null;
+
+  @override
+  Future<void> saveSchoolName(String name) async {}
+
+  @override
+  Future<void> saveTenantName(String name) async {}
+
   String? cachedTenantId;
 
   @override
@@ -26,7 +38,7 @@ class FakeTestSessionManager implements SessionManager {
   @override
   Future<void> saveSession(SessionToken token) async {}
   @override
-  Future<void> clearSession() async {}
+  Future<void> clearSession([String? reason]) async {}
   @override
   Future<bool> hasSession() async => true;
   @override

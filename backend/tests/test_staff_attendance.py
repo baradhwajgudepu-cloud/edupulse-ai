@@ -170,6 +170,7 @@ async def test_check_in_success_inside_geofence(client: AsyncClient, setup_atten
     payload = {
         "latitude": SCHOOL_LAT + 0.0002,
         "longitude": SCHOOL_LON + 0.0002,
+        "accuracy": 10.0,
         "is_mocked": False,
         "remarks": "Check in at gate"
     }
@@ -212,6 +213,7 @@ async def test_check_in_exact_boundary(client: AsyncClient, setup_attendance_tes
     payload = {
         "latitude": target_lat,
         "longitude": target_lon,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -237,6 +239,7 @@ async def test_check_in_outside_geofence(client: AsyncClient, setup_attendance_t
     payload = {
         "latitude": 17.5500,
         "longitude": 78.4800,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -270,6 +273,7 @@ async def test_check_in_school_not_configured(client: AsyncClient, setup_attenda
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -296,6 +300,7 @@ async def test_duplicate_check_in(client: AsyncClient, setup_attendance_test_dat
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -326,6 +331,7 @@ async def test_check_out_success_inside_geofence(client: AsyncClient, setup_atte
     payload_in = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False,
         "remarks": "Morning shift"
     }
@@ -337,6 +343,7 @@ async def test_check_out_success_inside_geofence(client: AsyncClient, setup_atte
     payload_out = {
         "latitude": SCHOOL_LAT + 0.0001,
         "longitude": SCHOOL_LON + 0.0001,
+        "accuracy": 10.0,
         "is_mocked": False,
         "remarks": "Heading home"
     }
@@ -368,6 +375,7 @@ async def test_check_out_outside_geofence(client: AsyncClient, setup_attendance_
     payload_in = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
     await client.post("/api/v1/staff-attendance/check-in", json=payload_in, headers=headers)
@@ -376,6 +384,7 @@ async def test_check_out_outside_geofence(client: AsyncClient, setup_attendance_
     payload_out = {
         "latitude": 17.5500,
         "longitude": 78.4800,
+        "accuracy": 10.0,
         "is_mocked": False
     }
     response = await client.post("/api/v1/staff-attendance/check-out", json=payload_out, headers=headers)
@@ -400,6 +409,7 @@ async def test_check_out_without_check_in(client: AsyncClient, setup_attendance_
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -426,6 +436,7 @@ async def test_duplicate_check_out(client: AsyncClient, setup_attendance_test_da
     payload_in = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
     await client.post("/api/v1/staff-attendance/check-in", json=payload_in, headers=headers)
@@ -434,6 +445,7 @@ async def test_duplicate_check_out(client: AsyncClient, setup_attendance_test_da
     payload_out = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
     await client.post("/api/v1/staff-attendance/check-out", json=payload_out, headers=headers)
@@ -467,6 +479,7 @@ async def test_today_status_transitions(client: AsyncClient, setup_attendance_te
     payload_in = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
     await client.post("/api/v1/staff-attendance/check-in", json=payload_in, headers=headers)
@@ -489,10 +502,11 @@ async def test_today_status_transitions(client: AsyncClient, setup_attendance_te
 
 
 @pytest.mark.anyio
-async def test_mock_location_audit_record(client: AsyncClient, setup_attendance_test_data):
+async def test_mock_location_audit_record(client: AsyncClient, setup_attendance_test_data, db_session: AsyncSession):
     data = setup_attendance_test_data
     user = data["user_teacher"]
     tenant = data["tenant_a"]
+    school = data["school_a"]
 
     app.dependency_overrides[get_current_user] = lambda: user
 
@@ -503,12 +517,36 @@ async def test_mock_location_audit_record(client: AsyncClient, setup_attendance_
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": True
     }
 
+    # 1. When geofence is enabled: Mocked location is strictly rejected with HTTP 400
     response = await client.post("/api/v1/staff-attendance/check-in", json=payload, headers=headers)
-    assert response.status_code == status.HTTP_201_CREATED
-    assert response.json()["data"]["is_mocked_location"] is True
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Mocked GPS location detected" in response.json()["message"]
+
+    # 2. When geofence is explicitly disabled by an administrator: Allowed and logged in audit record
+    admin_id = uuid.uuid4()
+    school.settings = {
+        "geofence": {
+            "enabled": False,
+            "updated_by": str(admin_id),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+    }
+    db_session.add(school)
+    await db_session.commit()
+
+    response_exempt = await client.post("/api/v1/staff-attendance/check-in", json=payload, headers=headers)
+    assert response_exempt.status_code == status.HTTP_201_CREATED
+    assert response_exempt.json()["data"]["is_mocked_location"] is True
+    assert "[GEOFENCE_EXEMPTION:" in response_exempt.json()["data"]["remarks"]
+
+    # Restore enabled
+    school.settings["geofence"]["enabled"] = True
+    db_session.add(school)
+    await db_session.commit()
 
     app.dependency_overrides.pop(get_current_user, None)
 
@@ -534,6 +572,7 @@ async def test_tenant_isolation(client: AsyncClient, setup_attendance_test_data)
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
@@ -559,11 +598,73 @@ async def test_permission_enforcement(client: AsyncClient, setup_attendance_test
     payload = {
         "latitude": SCHOOL_LAT,
         "longitude": SCHOOL_LON,
+        "accuracy": 10.0,
         "is_mocked": False
     }
 
     response = await client.post("/api/v1/staff-attendance/check-in", json=payload, headers=headers)
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "insufficient system permissions" in response.json()["message"]
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.anyio
+async def test_check_in_geofencing_disabled_allows_attendance(client: AsyncClient, setup_attendance_test_data, db_session: AsyncSession):
+    data = setup_attendance_test_data
+    user = data["user_teacher"]
+    tenant = data["tenant_a"]
+    school = data["school_a"]
+
+    # Explicitly disable geofencing in school settings
+    school.settings = {"geofence": {"enabled": False}}
+    db_session.add(school)
+    await db_session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    headers = {"X-Tenant-ID": str(tenant.id)}
+
+    # Check in from 10km away
+    payload = {
+        "latitude": 17.5500,
+        "longitude": 78.4800,
+        "accuracy": 10.0,
+        "is_mocked": False,
+        "remarks": "Remote check-in when geofence disabled"
+    }
+
+    response = await client.post("/api/v1/staff-attendance/check-in", json=payload, headers=headers)
+    assert response.status_code == status.HTTP_201_CREATED
+    res_json = response.json()
+    assert res_json["success"] is True
+    assert res_json["data"]["status"] == "CHECKED_IN"
+    assert res_json["data"]["check_in_distance_meters"] > 5000.0
+    assert "[GEOFENCE_EXEMPTION" in res_json["data"]["remarks"]
+
+    # Cleanup: restore geofence enabled = True
+    school.settings = {"geofence": {"enabled": True}}
+    db_session.add(school)
+    await db_session.commit()
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.anyio
+async def test_check_in_invalid_coordinates_rejected(client: AsyncClient, setup_attendance_test_data):
+    data = setup_attendance_test_data
+    user = data["user_teacher"]
+    tenant = data["tenant_a"]
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    headers = {"X-Tenant-ID": str(tenant.id)}
+
+    # Out of range latitude (> 90)
+    payload_invalid = {
+        "latitude": 195.0,
+        "longitude": 78.3741,
+        "is_mocked": False
+    }
+    response = await client.post("/api/v1/staff-attendance/check-in", json=payload_invalid, headers=headers)
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     app.dependency_overrides.pop(get_current_user, None)

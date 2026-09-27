@@ -1,3 +1,25 @@
+enum AttendanceSource {
+  MANUAL,
+  BIOMETRIC,
+  RFID,
+  FACE_RECOGNITION,
+  IMPORT;
+
+  String get wireValue => name;
+
+  static AttendanceSource fromString(String? value) {
+    if (value == null) return AttendanceSource.MANUAL;
+    final upper = value.toUpperCase().trim();
+    if (upper == 'BULK_IMPORT' || upper == 'EXCEL_IMPORT') {
+      return AttendanceSource.IMPORT;
+    }
+    return AttendanceSource.values.firstWhere(
+      (e) => e.name == upper,
+      orElse: () => AttendanceSource.MANUAL,
+    );
+  }
+}
+
 class AttendanceSessionDto {
   final String id;
   final String tenantId;
@@ -198,7 +220,7 @@ class AttendanceLogDto {
       subjectId: json['subject_id'] as String? ?? sessionMap?['subject_id'] as String?,
       attendanceDate: json['attendance_date'] as String? ?? sessionMap?['attendance_date'] as String? ?? '',
       attendanceStatus: json['attendance_status'] as String? ?? json['status'] as String? ?? 'ABSENT',
-      attendanceSource: json['attendance_source'] as String? ?? 'MANUAL',
+      attendanceSource: AttendanceSource.fromString(json['attendance_source'] as String?).wireValue,
       attendanceReason: json['attendance_reason'] as String? ?? 'UNKNOWN',
       remarks: json['remarks'] as String?,
       parentViewed: json['parent_viewed'] as bool? ?? false,
@@ -359,24 +381,24 @@ class AttendanceAuditLogDto {
 
   factory AttendanceAuditLogDto.fromJson(Map<String, dynamic> json) {
     return AttendanceAuditLogDto(
-      id: json['id'] as String,
-      tenantId: json['tenant_id'] as String,
-      schoolId: json['school_id'] as String,
+      id: (json['id'] ?? '') as String,
+      tenantId: (json['tenant_id'] ?? '') as String,
+      schoolId: (json['school_id'] ?? '') as String,
       attendanceId: json['attendance_id'] as String?,
-      studentId: json['student_id'] as String,
+      studentId: (json['student_id'] ?? json['attendance_session_id'] ?? '') as String,
       studentName: json['student_name'] as String?,
       admissionNumber: json['admission_number'] as String?,
       className: json['class_name'] as String?,
       sectionName: json['section_name'] as String?,
-      attendanceDate: json['attendance_date'] as String,
+      attendanceDate: (json['attendance_date'] ?? '') as String,
       sessionType: json['session_type'] as String? ?? 'FULL_DAY',
       oldStatus: json['old_status'] as String?,
-      newStatus: json['new_status'] as String,
-      action: json['action'] as String,
+      newStatus: (json['new_status'] ?? '') as String,
+      action: (json['action'] ?? '') as String,
       changedBy: json['changed_by'] as String?,
       changedByName: json['changed_by_name'] as String?,
       changedByRole: json['changed_by_role'] as String?,
-      timestamp: json['timestamp'] as String,
+      timestamp: (json['timestamp'] ?? '') as String,
       source: json['source'] as String? ?? 'MANUAL',
       reason: json['reason'] as String?,
     );
@@ -607,6 +629,7 @@ class AttendanceImportJobDto {
   final String createdAt;
   final String? completedAt;
   final String? errorSummary;
+  final String? academicYear;
 
   const AttendanceImportJobDto({
     required this.id,
@@ -625,14 +648,19 @@ class AttendanceImportJobDto {
     required this.createdAt,
     this.completedAt,
     this.errorSummary,
+    this.academicYear,
   });
 
   factory AttendanceImportJobDto.fromJson(Map<String, dynamic> json) {
     String? dateRange;
+    String? academicYear;
     if (json['job_metadata'] is Map) {
-      dateRange = (json['job_metadata'] as Map)['date_range']?.toString();
+      final meta = json['job_metadata'] as Map;
+      dateRange = meta['date_range']?.toString();
+      academicYear = meta['academic_year_name']?.toString() ?? meta['academic_year_id']?.toString();
     }
     dateRange ??= json['date_range'] as String?;
+    academicYear ??= json['academic_year'] as String?;
 
     return AttendanceImportJobDto(
       id: json['id'] as String,
@@ -651,6 +679,7 @@ class AttendanceImportJobDto {
       createdAt: json['created_at'] as String? ?? '',
       completedAt: json['completed_at'] as String?,
       errorSummary: json['error_summary']?.toString(),
+      academicYear: academicYear,
     );
   }
 }

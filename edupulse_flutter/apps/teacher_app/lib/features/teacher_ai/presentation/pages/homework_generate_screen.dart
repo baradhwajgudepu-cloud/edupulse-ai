@@ -19,7 +19,7 @@ class _HomeworkGenerateScreenState extends ConsumerState<HomeworkGenerateScreen>
   TeacherSubjectAssignmentEntity? _selectedSubject;
   
   final _topicController = TextEditingController();
-  final _marksController = TextEditingController(text: '20');
+  final _marksController = TextEditingController(text: '10');
   
   String _selectedDifficulty = 'MEDIUM';
   int _numberOfQuestions = 5;
@@ -231,6 +231,7 @@ class _HomeworkGenerateScreenState extends ConsumerState<HomeworkGenerateScreen>
                   onChanged: (val) {
                     setState(() {
                       _numberOfQuestions = val ?? 5;
+                      _marksController.text = (_numberOfQuestions * 2).toString();
                     });
                   },
                 ),
@@ -400,6 +401,7 @@ class _HomeworkGenerateScreenState extends ConsumerState<HomeworkGenerateScreen>
                 _buildMetadataRow('Learning Objective', homework.learningObjective, theme, spacing),
                 _buildMetadataRow('Estimated Duration', '${homework.estimatedMinutes} minutes', theme, spacing),
                 _buildMetadataRow('Difficulty Level', homework.difficulty, theme, spacing),
+                _buildMetadataRow('Total Marks', '${homework.questions.fold<int>(0, (sum, q) => sum + (q.marks as int))} Marks', theme, spacing),
                 SizedBox(height: spacing.sm),
                 const Divider(),
                 SizedBox(height: spacing.sm),
